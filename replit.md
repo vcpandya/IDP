@@ -73,3 +73,9 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Search flow**: `_flatten_tree()` unwraps the `structure` key, flattens all nodes recursively, LLM ranks by title+summary, then actual PDF text is loaded on-demand for matched page ranges
 - **Text loading**: Nodes typically don't store inline text (config `if_add_node_text: "no"`). The search tool loads PDF pages from storage using `get_page_tokens()` for matched sections
 - **Config defaults** (`idpkit/engine/config.yaml`): model=gpt-4o, toc_check_page_num=20, max_page_num_each_node=10, if_add_node_id=yes, if_add_node_summary=yes, if_add_node_text=no
+
+## UI/UX Features
+- **Favicon**: SVG favicon at `idpkit/web/static/favicon.svg` — document with search icon in indigo gradient
+- **Agent Chat**: Tool call messages render as collapsible accordions; source citations open in popup modal with text preview
+- **Batch Processing**: Redesigned with 3-step flow (Instructions → Documents → Settings), reference document attachment, and processing history
+- **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering

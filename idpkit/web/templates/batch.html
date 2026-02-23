@@ -3,268 +3,296 @@
 {% block content %}
 <div class="page-header">
     <h2><i class="fas fa-layer-group"></i> Batch Processing</h2>
+    <p class="page-subtitle">Process multiple documents with AI-powered analysis</p>
 </div>
 
 <div x-data="batchPage()" x-init="init()">
 
-    <!-- Section 1: Batch History Banner -->
-    <div class="batch-history-banner">
-        <div class="banner-content">
-            <h3><i class="fas fa-history"></i> Batch History</h3>
-            <p><span x-text="historyJobs.length"></span> completed batch jobs</p>
-        </div>
-        <div class="banner-actions">
-            <button class="btn" @click="showHistory = !showHistory">
-                <i class="fas" :class="showHistory ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
-                <span x-text="showHistory ? 'Hide History' : 'View History'"></span>
-            </button>
-        </div>
-    </div>
-
-    <!-- Section 5: History Panel (toggleable) -->
-    <div x-show="showHistory" x-collapse class="section-card" style="margin-bottom:24px;">
-        <h3><i class="fas fa-history"></i> Processing History</h3>
-        <table style="width:100%;border-collapse:collapse;">
-            <thead>
-                <tr style="text-align:left;border-bottom:2px solid var(--border);">
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Tool</th>
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Status</th>
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Progress</th>
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Items</th>
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Date</th>
-                    <th style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <template x-for="job in historyJobs" :key="job.id">
-                    <tr style="border-bottom:1px solid var(--border-light);cursor:pointer;" @click="viewJob(job.id)">
-                        <td style="padding:10px 12px;font-size:.9rem;" x-text="job.tool_name"></td>
-                        <td style="padding:10px 12px;">
-                            <span class="status-badge" :class="'status-' + job.status" x-text="job.status"></span>
-                        </td>
-                        <td style="padding:10px 12px;">
-                            <div style="background:var(--border-light);border-radius:4px;height:8px;width:100px;">
-                                <div style="height:100%;border-radius:4px;transition:width .3s;"
-                                    :style="'width:' + job.progress + '%;background:' + (job.status === 'failed' ? 'var(--danger)' : 'var(--primary)')"></div>
-                            </div>
-                        </td>
-                        <td style="padding:10px 12px;font-size:.9rem;" x-text="job.completed_items + '/' + job.total_items"></td>
-                        <td style="padding:10px 12px;font-size:.85rem;color:var(--text-secondary);" x-text="new Date(job.created_at).toLocaleString()"></td>
-                        <td style="padding:10px 12px;">
-                            <button @click.stop="viewJob(job.id)" class="btn btn-sm"><i class="fas fa-eye"></i></button>
-                        </td>
-                    </tr>
-                </template>
-                <tr x-show="historyJobs.length === 0">
-                    <td colspan="6" class="empty-state">No batch jobs yet</td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Section 2: Processing Settings Card -->
-    <div class="section-card">
-        <h3><i class="fas fa-sliders-h"></i> Processing Settings</h3>
-
-        <!-- Row 1: Tool + Template -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Smart Tool</label>
-                <select x-model="toolName">
-                    <option value="custom">Custom (raw LLM)</option>
-                    <template x-for="t in tools" :key="t.name">
-                        <option :value="t.name" x-text="t.display_name"></option>
-                    </template>
-                </select>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Processing Template</label>
-                <select x-model="templateId" @change="onTemplateChange()">
-                    <option value="">Ad-hoc (no template)</option>
-                    <template x-for="t in templates" :key="t.id">
-                        <option :value="t.id" x-text="t.name"></option>
-                    </template>
-                </select>
+    <!-- Step 1: Instructions -->
+    <div class="bp-card">
+        <div class="bp-card-header">
+            <div class="bp-step-badge">1</div>
+            <div>
+                <h3>Instructions</h3>
+                <p class="bp-card-desc">Define what the AI should do with each document</p>
             </div>
         </div>
-
-        <!-- Row 2: Prompt / Instructions -->
-        <div class="form-group">
-            <label>Prompt / Instructions</label>
-            <textarea x-model="prompt" rows="4" placeholder="Instructions to apply to each document..."
-                style="width:100%;resize:vertical;"></textarea>
-            <!-- Prompt Management -->
-            <div class="prompt-actions">
-                <select x-model="selectedPromptId" @change="onSavedPromptChange()">
-                    <option value="">-- Saved Prompts --</option>
+        <div class="bp-card-body">
+            <div class="bp-prompt-toolbar">
+                <select x-model="selectedPromptId" @change="onSavedPromptChange()" class="bp-prompt-select">
+                    <option value="">Load saved prompt...</option>
                     <template x-for="p in savedPrompts" :key="p.id">
                         <option :value="p.id" x-text="p.name"></option>
                     </template>
                 </select>
-                <button class="btn btn-sm" @click="savePrompt()" :disabled="!prompt.trim()">
+                <button class="btn btn-sm" @click="savePrompt()" :disabled="!prompt.trim()" title="Save current prompt">
                     <i class="fas fa-save"></i> Save
                 </button>
-                <button class="btn btn-sm btn-danger" x-show="selectedPromptId" @click="deletePrompt()">
+                <button class="btn btn-sm btn-danger" x-show="selectedPromptId" @click="deletePrompt()" title="Delete saved prompt">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>
+            <textarea x-model="prompt" rows="5" class="bp-prompt-textarea"
+                placeholder="Enter your instructions for AI processing. For example:&#10;&#10;Analyze this document and extract key findings, recommendations, and actionable insights. Structure the output with clear sections and bullet points."></textarea>
+            <div class="bp-prompt-hint">
+                <i class="fas fa-lightbulb"></i>
+                Tip: Be specific about the output format you want. The AI will apply these instructions to each document.
+            </div>
         </div>
+    </div>
 
-        <!-- Row 3: Model + Options + Concurrency -->
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px;">
-            <!-- Provider → Model selection -->
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Model
-                    <span x-show="models.length > 0" style="font-weight:400;color:var(--text-muted);font-size:.78rem;">
-                        (<span x-text="models.length"></span> available)
-                    </span>
+    <!-- Step 2: Documents -->
+    <div class="bp-card">
+        <div class="bp-card-header">
+            <div class="bp-step-badge">2</div>
+            <div>
+                <h3>Documents</h3>
+                <p class="bp-card-desc">Select documents to process or upload new ones</p>
+            </div>
+        </div>
+        <div class="bp-card-body">
+            <div class="bp-doc-tabs">
+                <button class="bp-doc-tab" :class="{'active': docMode === 'existing'}" @click="docMode = 'existing'">
+                    <i class="fas fa-database"></i> Existing Documents
+                    <span class="bp-tab-count" x-show="documents.length > 0" x-text="documents.length"></span>
+                </button>
+                <button class="bp-doc-tab" :class="{'active': docMode === 'upload'}" @click="docMode = 'upload'">
+                    <i class="fas fa-cloud-upload-alt"></i> Upload New
+                    <span class="bp-tab-count" x-show="uploadFiles.length > 0" x-text="uploadFiles.length"></span>
+                </button>
+            </div>
+
+            <!-- Existing Documents -->
+            <div x-show="docMode === 'existing'" class="bp-doc-panel">
+                <div class="bp-doc-toolbar">
+                    <div class="bp-search-box">
+                        <i class="fas fa-search"></i>
+                        <input type="text" x-model="docSearch" placeholder="Search documents...">
+                    </div>
+                    <div class="bp-doc-actions">
+                        <label class="bp-select-all">
+                            <input type="checkbox" @change="toggleAllDocs($event)">
+                            <span>Select all indexed</span>
+                        </label>
+                        <span class="bp-selected-count" x-show="selectedDocs.length > 0">
+                            <i class="fas fa-check-circle"></i>
+                            <span x-text="selectedDocs.length"></span> selected
+                        </span>
+                    </div>
+                </div>
+                <div class="bp-doc-list">
+                    <template x-for="doc in getFilteredDocuments()" :key="doc.id">
+                        <label class="bp-doc-item" :class="{'selected': selectedDocs.includes(doc.id)}">
+                            <input type="checkbox" :value="doc.id" x-model="selectedDocs">
+                            <div class="bp-doc-icon">
+                                <i :class="doc.format === 'pdf' ? 'fas fa-file-pdf' : doc.format === 'docx' ? 'fas fa-file-word' : 'fas fa-file-alt'"
+                                   :style="doc.format === 'pdf' ? 'color:#ef4444' : doc.format === 'docx' ? 'color:#3b82f6' : 'color:var(--text-muted)'"></i>
+                            </div>
+                            <div class="bp-doc-info">
+                                <span class="bp-doc-name" x-text="doc.filename"></span>
+                                <span class="bp-doc-meta">
+                                    <span x-show="doc.file_size" x-text="formatSize(doc.file_size)"></span>
+                                </span>
+                            </div>
+                            <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
+                        </label>
+                    </template>
+                    <div x-show="getFilteredDocuments().length === 0" class="bp-empty">
+                        <i class="fas fa-inbox"></i>
+                        <span x-text="docSearch ? 'No documents match your search' : 'No documents uploaded yet'"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Upload New Files -->
+            <div x-show="docMode === 'upload'" class="bp-doc-panel">
+                <div class="bp-upload-zone" :class="{'dragover': dragOver}"
+                     @dragover.prevent="dragOver=true" @dragleave="dragOver=false"
+                     @drop.prevent="handleDrop($event)"
+                     @click="$refs.fileInput.click()">
+                    <div class="bp-upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                    <h4>Drag & drop files here</h4>
+                    <p>or <strong>click to browse</strong></p>
+                    <span class="bp-upload-formats">PDF, DOCX, HTML, XLSX, PPTX, Images</span>
+                    <input type="file" multiple x-ref="fileInput" @change="handleFileSelect($event)" style="display:none;"
+                        accept=".pdf,.docx,.doc,.md,.html,.htm,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.bmp,.tiff,.tif,.webp">
+                </div>
+                <div class="bp-file-tags" x-show="uploadFiles.length > 0">
+                    <template x-for="(f, i) in uploadFiles" :key="i">
+                        <div class="bp-file-tag">
+                            <i class="fas fa-file"></i>
+                            <span class="bp-tag-name" x-text="f.name"></span>
+                            <span class="bp-tag-size" x-text="formatSize(f.size)"></span>
+                            <button class="bp-tag-remove" @click.stop="uploadFiles.splice(i, 1)">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+                <label class="bp-auto-index">
+                    <input type="checkbox" x-model="autoIndex">
+                    <span>Auto-index documents before processing</span>
+                    <span class="bp-hint">(recommended for first-time uploads)</span>
                 </label>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                    <select x-model="selectedProvider" @change="onProviderChange()">
-                        <option value="">Provider...</option>
-                        <template x-for="p in providers" :key="p.id">
-                            <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (N/A)')"></option>
+            </div>
+
+            <!-- Reference Documents (Context for Prompt) -->
+            <div class="bp-ref-section">
+                <div class="bp-ref-header" @click="showRefDocs = !showRefDocs" style="cursor:pointer;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <i class="fas fa-paperclip"></i>
+                        <strong>Reference Documents</strong>
+                        <span class="bp-hint">(optional context for the AI)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="bp-tab-count" x-show="refDocs.length > 0" x-text="refDocs.length"></span>
+                        <i class="fas" :class="showRefDocs ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:.7rem;color:var(--text-muted);"></i>
+                    </div>
+                </div>
+                <div x-show="showRefDocs" x-collapse class="bp-ref-body">
+                    <p class="bp-ref-desc">Attach documents as additional context. The AI will reference these when processing each target document.</p>
+                    <div class="bp-ref-search">
+                        <i class="fas fa-search"></i>
+                        <input type="text" x-model="refSearch" placeholder="Search documents to attach...">
+                    </div>
+                    <div class="bp-ref-list">
+                        <template x-for="doc in getFilteredRefDocs()" :key="doc.id">
+                            <label class="bp-doc-item compact" :class="{'selected': refDocs.includes(doc.id)}">
+                                <input type="checkbox" :value="doc.id" x-model="refDocs">
+                                <span class="bp-doc-name" x-text="doc.filename" style="flex:1;"></span>
+                                <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:.65rem;padding:1px 6px;"></span>
+                            </label>
+                        </template>
+                    </div>
+                    <div class="bp-ref-chips" x-show="refDocs.length > 0">
+                        <template x-for="rid in refDocs" :key="rid">
+                            <div class="bp-ref-chip">
+                                <i class="fas fa-paperclip"></i>
+                                <span x-text="documents.find(d => d.id === rid)?.filename || rid"></span>
+                                <button @click="refDocs = refDocs.filter(r => r !== rid)" class="bp-tag-remove">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Step 3: Processing Settings -->
+    <div class="bp-card">
+        <div class="bp-card-header">
+            <div class="bp-step-badge">3</div>
+            <div>
+                <h3>Processing Settings</h3>
+                <p class="bp-card-desc">Configure how documents are processed</p>
+            </div>
+        </div>
+        <div class="bp-card-body">
+            <div class="bp-settings-grid">
+                <div class="bp-setting">
+                    <label><i class="fas fa-cogs"></i> Smart Tool</label>
+                    <select x-model="toolName">
+                        <option value="custom">Custom (raw LLM)</option>
+                        <template x-for="t in tools" :key="t.name">
+                            <option :value="t.name" x-text="t.display_name"></option>
                         </template>
                     </select>
-                    <div style="position:relative;">
-                        <select x-model="modelOverride" :disabled="!selectedProvider || loadingModels">
-                            <option value="" x-text="loadingModels ? 'Loading models...' : (selectedProvider ? 'Select model...' : 'Select provider first')"></option>
-                            <template x-for="m in models" :key="m.id">
-                                <option :value="m.id" x-text="m.name"></option>
+                    <span class="bp-setting-hint">Choose a pre-built processing tool or use custom LLM</span>
+                </div>
+                <div class="bp-setting">
+                    <label><i class="fas fa-file-export"></i> Output Template</label>
+                    <select x-model="templateId" @change="onTemplateChange()">
+                        <option value="">Default (AI auto-formats)</option>
+                        <template x-for="t in templates" :key="t.id">
+                            <option :value="t.id" x-text="t.name"></option>
+                        </template>
+                    </select>
+                    <span class="bp-setting-hint">Templates define the output format and structure</span>
+                </div>
+            </div>
+
+            <div class="bp-settings-grid three-col">
+                <div class="bp-setting">
+                    <label><i class="fas fa-robot"></i> AI Model</label>
+                    <div class="bp-model-row">
+                        <select x-model="selectedProvider" @change="onProviderChange()">
+                            <option value="">Provider...</option>
+                            <template x-for="p in providers" :key="p.id">
+                                <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (N/A)')"></option>
                             </template>
                         </select>
-                        <div x-show="loadingModels" style="position:absolute;right:28px;top:50%;transform:translateY(-50%);">
-                            <i class="fas fa-spinner fa-spin" style="color:var(--text-muted);font-size:.8rem;"></i>
+                        <div style="position:relative;flex:1;">
+                            <select x-model="modelOverride" :disabled="!selectedProvider || loadingModels">
+                                <option value="" x-text="loadingModels ? 'Loading...' : (selectedProvider ? 'Select model...' : 'Select provider first')"></option>
+                                <template x-for="m in models" :key="m.id">
+                                    <option :value="m.id" x-text="m.name"></option>
+                                </template>
+                            </select>
+                            <i x-show="loadingModels" class="fas fa-spinner fa-spin" style="position:absolute;right:28px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:.75rem;"></i>
                         </div>
                     </div>
-                </div>
-                <div x-show="modelOverride" style="margin-top:4px;font-size:.78rem;color:var(--text-secondary);">
-                    <i class="fas fa-microchip" style="color:var(--primary);"></i> <span x-text="modelOverride"></span>
-                </div>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Options (JSON)</label>
-                <textarea x-model="optionsJson" rows="2" placeholder='{"length": "brief"}'
-                    style="width:100%;resize:vertical;font-family:monospace;font-size:0.82rem;"></textarea>
-            </div>
-            <div class="form-group" style="margin-bottom:0;">
-                <label>Concurrency: <span x-text="concurrency" style="font-weight:700;color:var(--primary);"></span></label>
-                <input type="range" x-model="concurrency" min="1" max="10" style="width:100%;margin-top:4px;">
-            </div>
-        </div>
-    </div>
-
-    <!-- Section 3: Document Selection Card -->
-    <div class="section-card">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-            <h3 style="margin-bottom:0;"><i class="fas fa-file-alt"></i> Documents</h3>
-            <div class="tab-toggle">
-                <button :class="{'active': docMode === 'existing'}" @click="docMode = 'existing'">
-                    <i class="fas fa-database"></i> Existing
-                </button>
-                <button :class="{'active': docMode === 'upload'}" @click="docMode = 'upload'">
-                    <i class="fas fa-cloud-upload-alt"></i> Upload New
-                </button>
-            </div>
-        </div>
-
-        <!-- 3A: Select Existing Documents -->
-        <div x-show="docMode === 'existing'">
-            <div class="doc-search">
-                <i class="fas fa-search search-icon"></i>
-                <input type="text" x-model="docSearch" placeholder="Filter documents...">
-            </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                <label style="cursor:pointer;font-size:.85rem;display:flex;align-items:center;gap:6px;">
-                    <input type="checkbox" @change="toggleAllDocs($event)"> <strong>Select All Indexed</strong>
-                </label>
-                <span class="badge" x-text="selectedDocs.length + ' selected'" style="font-size:.75rem;"></span>
-            </div>
-            <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:4px;">
-                <template x-for="doc in getFilteredDocuments()" :key="doc.id">
-                    <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-radius:4px;transition:background .15s;"
-                        :style="selectedDocs.includes(doc.id) ? 'background:var(--primary-light)' : ''"
-                        @mouseenter="$el.style.background = selectedDocs.includes(doc.id) ? 'var(--primary-light)' : 'var(--border-light)'"
-                        @mouseleave="$el.style.background = selectedDocs.includes(doc.id) ? 'var(--primary-light)' : ''">
-                        <input type="checkbox" :value="doc.id" x-model="selectedDocs">
-                        <span x-text="doc.filename" style="flex:1;font-size:.9rem;"></span>
-                        <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"
-                            style="font-size:.7rem;padding:2px 8px;"></span>
-                    </label>
-                </template>
-                <div x-show="getFilteredDocuments().length === 0" class="empty-state">
-                    No documents found
-                </div>
-            </div>
-        </div>
-
-        <!-- 3B: Upload New Files -->
-        <div x-show="docMode === 'upload'">
-            <div @dragover.prevent="dragOver=true" @dragleave="dragOver=false"
-                 @drop.prevent="handleDrop($event)"
-                 class="upload-zone"
-                 :class="{'dragover': dragOver}"
-                 @click="$refs.fileInput.click()"
-                 style="padding:40px 20px;margin-bottom:12px;">
-                <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-                <h3>Drag & drop files here</h3>
-                <p style="color:var(--text-secondary);font-size:.85rem;">or <span class="file-label">click to browse</span></p>
-                <p class="upload-hint">PDF, DOCX, HTML, XLSX, PPTX, Images</p>
-                <input type="file" multiple x-ref="fileInput" @change="handleFileSelect($event)" style="display:none;"
-                    accept=".pdf,.docx,.doc,.md,.html,.htm,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.bmp,.tiff,.tif,.webp">
-            </div>
-
-            <!-- File tags -->
-            <div class="file-tags" x-show="uploadFiles.length > 0">
-                <template x-for="(f, i) in uploadFiles" :key="i">
-                    <div class="file-tag">
-                        <i class="fas fa-file" style="font-size:.7rem;"></i>
-                        <span class="tag-name" x-text="f.name"></span>
-                        <span class="tag-size" x-text="(f.size/1024).toFixed(0) + 'KB'"></span>
-                        <button class="tag-remove" @click="uploadFiles.splice(i, 1)">
-                            <i class="fas fa-times"></i>
-                        </button>
+                    <div x-show="modelOverride" class="bp-model-badge">
+                        <i class="fas fa-microchip"></i> <span x-text="modelOverride"></span>
                     </div>
-                </template>
-            </div>
-
-            <div style="margin-top:12px;">
-                <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;cursor:pointer;">
-                    <input type="checkbox" x-model="autoIndex"> Auto-index before processing
-                </label>
+                </div>
+                <div class="bp-setting">
+                    <label><i class="fas fa-code"></i> Options (JSON)</label>
+                    <textarea x-model="optionsJson" rows="2" placeholder='{"length": "brief"}'
+                        style="font-family:monospace;font-size:.82rem;"></textarea>
+                </div>
+                <div class="bp-setting">
+                    <label><i class="fas fa-tachometer-alt"></i> Concurrency: <strong x-text="concurrency" style="color:var(--primary);"></strong></label>
+                    <input type="range" x-model="concurrency" min="1" max="10" class="bp-range">
+                    <span class="bp-setting-hint">Number of documents processed simultaneously</span>
+                </div>
             </div>
         </div>
     </div>
 
-    <!-- Section 4: Action + Progress -->
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
-        <template x-if="docMode === 'existing'">
-            <button @click="runBatch()" class="btn btn-primary"
-                :disabled="selectedDocs.length === 0 || activeBatch"
-                style="padding:10px 28px;font-size:.95rem;">
-                <i class="fas fa-play"></i> Process Documents
-                <span class="badge" style="background:rgba(255,255,255,0.25);color:#fff;margin-left:6px;"
-                    x-text="selectedDocs.length"></span>
-            </button>
-        </template>
-        <template x-if="docMode === 'upload'">
-            <button @click="uploadAndProcess()" class="btn btn-primary"
-                :disabled="uploadFiles.length === 0 || activeBatch"
-                style="padding:10px 28px;font-size:.95rem;">
-                <i class="fas fa-rocket"></i> Upload & Process
-                <span class="badge" style="background:rgba(255,255,255,0.25);color:#fff;margin-left:6px;"
-                    x-text="uploadFiles.length"></span>
-            </button>
-        </template>
-        <span x-show="activeBatch" style="font-size:.85rem;color:var(--text-secondary);">
-            <i class="fas fa-spinner fa-spin"></i> Processing in progress...
-        </span>
+    <!-- Action Bar -->
+    <div class="bp-action-bar">
+        <div class="bp-action-summary">
+            <template x-if="docMode === 'existing' && selectedDocs.length > 0">
+                <span><i class="fas fa-file-alt"></i> <strong x-text="selectedDocs.length"></strong> document(s) ready</span>
+            </template>
+            <template x-if="docMode === 'upload' && uploadFiles.length > 0">
+                <span><i class="fas fa-cloud-upload-alt"></i> <strong x-text="uploadFiles.length"></strong> file(s) to upload</span>
+            </template>
+            <template x-if="refDocs.length > 0">
+                <span><i class="fas fa-paperclip"></i> <strong x-text="refDocs.length"></strong> reference doc(s)</span>
+            </template>
+            <template x-if="modelOverride">
+                <span><i class="fas fa-microchip"></i> <span x-text="modelOverride.split('/').pop()"></span></span>
+            </template>
+        </div>
+        <div class="bp-action-buttons">
+            <template x-if="docMode === 'existing'">
+                <button @click="runBatch()" class="btn btn-primary btn-lg"
+                    :disabled="selectedDocs.length === 0 || activeBatch">
+                    <i class="fas fa-play"></i> Process Documents
+                    <span class="bp-btn-count" x-show="selectedDocs.length > 0" x-text="selectedDocs.length"></span>
+                </button>
+            </template>
+            <template x-if="docMode === 'upload'">
+                <button @click="uploadAndProcess()" class="btn btn-primary btn-lg"
+                    :disabled="uploadFiles.length === 0 || activeBatch">
+                    <i class="fas fa-rocket"></i> Upload & Process
+                    <span class="bp-btn-count" x-show="uploadFiles.length > 0" x-text="uploadFiles.length"></span>
+                </button>
+            </template>
+        </div>
     </div>
 
-    <!-- Progress Panel -->
-    <div x-show="activeBatch" class="section-card" style="border:2px solid var(--primary);">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-            <h3 style="margin-bottom:0;"><i class="fas fa-spinner fa-spin"></i> Batch Processing</h3>
+    <!-- Active Progress Panel -->
+    <div x-show="activeBatch" class="bp-card bp-progress-card" x-transition>
+        <div class="bp-card-header">
+            <div class="bp-step-badge running"><i class="fas fa-spinner fa-spin"></i></div>
+            <div style="flex:1;">
+                <h3>Processing in Progress</h3>
+                <p class="bp-card-desc" x-text="(activeBatch?.completed_items || 0) + ' of ' + (activeBatch?.total_items || 0) + ' documents processed'"></p>
+            </div>
             <div style="display:flex;gap:8px;align-items:center;">
                 <span class="status-badge" :class="'status-' + (activeBatch?.status || '')" x-text="activeBatch?.status"></span>
                 <button x-show="activeBatch?.status === 'running' || activeBatch?.status === 'pending'"
@@ -273,50 +301,96 @@
                 </button>
             </div>
         </div>
-        <div style="margin-bottom:16px;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:.85rem;">
-                <span>Progress</span>
-                <span style="font-weight:700;" x-text="(activeBatch?.progress || 0) + '%'"></span>
+        <div class="bp-card-body">
+            <div class="bp-progress-bar-container">
+                <div class="bp-progress-bar">
+                    <div class="bp-progress-fill" :class="activeBatch?.status === 'failed' ? 'failed' : ''"
+                        :style="'width:' + (activeBatch?.progress || 0) + '%'"></div>
+                </div>
+                <span class="bp-progress-pct" x-text="(activeBatch?.progress || 0) + '%'"></span>
             </div>
-            <div style="background:var(--border-light);border-radius:8px;height:12px;overflow:hidden;">
-                <div style="height:100%;border-radius:8px;transition:width .3s;background:var(--primary);"
-                    :style="'width:' + (activeBatch?.progress || 0) + '%'"></div>
+            <div class="bp-progress-stats">
+                <span class="bp-stat success"><i class="fas fa-check-circle"></i> <span x-text="activeBatch?.completed_items || 0"></span> completed</span>
+                <span class="bp-stat danger"><i class="fas fa-times-circle"></i> <span x-text="activeBatch?.failed_items || 0"></span> failed</span>
+                <span class="bp-stat"><i class="fas fa-list"></i> <span x-text="activeBatch?.total_items || 0"></span> total</span>
             </div>
-            <div style="display:flex;gap:20px;margin-top:8px;font-size:.85rem;color:var(--text-secondary);">
-                <span><i class="fas fa-check-circle" style="color:var(--success);"></i> <span x-text="activeBatch?.completed_items || 0"></span> completed</span>
-                <span><i class="fas fa-times-circle" style="color:var(--danger);"></i> <span x-text="activeBatch?.failed_items || 0"></span> failed</span>
-                <span><i class="fas fa-list"></i> <span x-text="activeBatch?.total_items || 0"></span> total</span>
+            <div class="bp-item-list" x-show="activeBatch?.items">
+                <template x-for="item in (activeBatch?.items || [])" :key="item.id">
+                    <div class="bp-item" :class="'bp-item-' + item.status">
+                        <span class="bp-item-icon">
+                            <i x-show="item.status==='pending'" class="fas fa-clock"></i>
+                            <i x-show="item.status==='running'" class="fas fa-spinner fa-spin"></i>
+                            <i x-show="item.status==='completed'" class="fas fa-check-circle"></i>
+                            <i x-show="item.status==='failed'" class="fas fa-times-circle"></i>
+                            <i x-show="item.status==='skipped'" class="fas fa-forward"></i>
+                        </span>
+                        <span class="bp-item-name" x-text="item.filename || item.document_id"></span>
+                        <span class="status-badge" :class="'status-' + item.status" x-text="item.status"></span>
+                        <span x-show="item.error" class="bp-item-error" x-text="item.error"></span>
+                    </div>
+                </template>
             </div>
         </div>
-        <!-- Per-item status -->
-        <div x-show="activeBatch?.items" style="max-height:260px;overflow-y:auto;border:1px solid var(--border-light);border-radius:var(--radius);padding:4px;">
-            <template x-for="item in (activeBatch?.items || [])" :key="item.id">
-                <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border-light);">
-                    <span x-show="item.status==='pending'" style="color:var(--text-muted);"><i class="fas fa-clock"></i></span>
-                    <span x-show="item.status==='running'" style="color:var(--primary);"><i class="fas fa-spinner fa-spin"></i></span>
-                    <span x-show="item.status==='completed'" style="color:var(--success);"><i class="fas fa-check-circle"></i></span>
-                    <span x-show="item.status==='failed'" style="color:var(--danger);"><i class="fas fa-times-circle"></i></span>
-                    <span x-show="item.status==='skipped'" style="color:var(--text-muted);"><i class="fas fa-forward"></i></span>
-                    <span x-text="item.filename || item.document_id" style="flex:1;font-size:.85rem;"></span>
-                    <span class="status-badge" :class="'status-' + item.status" x-text="item.status"
-                        style="font-size:.7rem;padding:2px 8px;"></span>
-                    <span x-show="item.error" style="color:var(--danger);font-size:.78rem;" x-text="item.error"></span>
+    </div>
+
+    <!-- History Section -->
+    <div class="bp-card bp-history-card">
+        <div class="bp-card-header clickable" @click="showHistory = !showHistory">
+            <div style="display:flex;align-items:center;gap:10px;">
+                <i class="fas fa-history" style="color:var(--primary);font-size:1.1rem;"></i>
+                <div>
+                    <h3 style="margin:0;">Processing History</h3>
+                    <p class="bp-card-desc" style="margin:0;" x-text="historyJobs.length + ' batch job' + (historyJobs.length !== 1 ? 's' : '')"></p>
                 </div>
-            </template>
+            </div>
+            <i class="fas" :class="showHistory ? 'fa-chevron-up' : 'fa-chevron-down'" style="color:var(--text-muted);"></i>
+        </div>
+        <div x-show="showHistory" x-collapse class="bp-card-body" style="padding-top:0;">
+            <table class="bp-history-table">
+                <thead>
+                    <tr>
+                        <th>Tool</th>
+                        <th>Status</th>
+                        <th>Progress</th>
+                        <th>Items</th>
+                        <th>Date</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="job in historyJobs" :key="job.id">
+                        <tr @click="viewJob(job.id)" style="cursor:pointer;">
+                            <td x-text="job.tool_name"></td>
+                            <td><span class="status-badge" :class="'status-' + job.status" x-text="job.status"></span></td>
+                            <td>
+                                <div class="bp-mini-progress">
+                                    <div :style="'width:' + job.progress + '%;background:' + (job.status === 'failed' ? 'var(--danger)' : 'var(--primary)')"></div>
+                                </div>
+                            </td>
+                            <td x-text="job.completed_items + '/' + job.total_items"></td>
+                            <td class="bp-date" x-text="new Date(job.created_at).toLocaleString()"></td>
+                            <td><button @click.stop="viewJob(job.id)" class="btn btn-sm"><i class="fas fa-eye"></i></button></td>
+                        </tr>
+                    </template>
+                    <tr x-show="historyJobs.length === 0">
+                        <td colspan="6" class="bp-empty" style="padding:24px;">No batch jobs yet</td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
     <!-- Job Detail Modal -->
-    <div x-show="viewingJob" class="modal-overlay" @click.self="viewingJob=null">
-        <div class="modal" style="max-width:800px;">
+    <div x-show="viewingJob" class="modal-overlay" x-cloak @click.self="viewingJob=null" x-transition.opacity>
+        <div class="modal" style="max-width:800px;" @click.stop>
             <div class="modal-header">
                 <h3>Batch Job Details</h3>
-                <button @click="viewingJob=null" class="btn-close"><i class="fas fa-times"></i></button>
+                <button @click="viewingJob=null" class="btn-close">&times;</button>
             </div>
             <div class="modal-body">
                 <template x-if="viewingJob">
                     <div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+                        <div class="bp-job-meta">
                             <div><strong>Tool:</strong> <span x-text="viewingJob.tool_name"></span></div>
                             <div><strong>Status:</strong> <span class="status-badge" :class="'status-' + viewingJob.status" x-text="viewingJob.status"></span></div>
                             <div><strong>Items:</strong> <span x-text="viewingJob.completed_items + ' / ' + viewingJob.total_items"></span></div>
@@ -324,19 +398,18 @@
                         </div>
                         <div x-show="viewingJob.prompt" style="margin-bottom:16px;">
                             <strong>Prompt:</strong>
-                            <pre style="background:var(--bg);padding:10px;border-radius:var(--radius);white-space:pre-wrap;max-height:120px;overflow-y:auto;font-size:.82rem;border:1px solid var(--border);" x-text="viewingJob.prompt"></pre>
+                            <pre class="bp-job-prompt" x-text="viewingJob.prompt"></pre>
                         </div>
                         <h4 style="margin-bottom:8px;">Results</h4>
                         <template x-for="item in (viewingJob.items || [])" :key="item.id">
-                            <div style="background:var(--bg);padding:12px;border-radius:var(--radius);margin-bottom:8px;border:1px solid var(--border-light);">
+                            <div class="bp-job-result">
                                 <div style="display:flex;justify-content:space-between;align-items:center;">
-                                    <span x-text="item.filename || item.document_id" style="font-weight:600;font-size:.9rem;"></span>
-                                    <span class="status-badge" :class="'status-' + item.status" x-text="item.status" style="font-size:.7rem;padding:2px 8px;"></span>
+                                    <span style="font-weight:600;font-size:.9rem;" x-text="item.filename || item.document_id"></span>
+                                    <span class="status-badge" :class="'status-' + item.status" x-text="item.status"></span>
                                 </div>
                                 <div x-show="item.error" style="color:var(--danger);margin-top:4px;font-size:.82rem;" x-text="item.error"></div>
                                 <div x-show="item.result" style="margin-top:8px;">
-                                    <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:var(--radius);font-size:.78rem;max-height:180px;overflow-y:auto;white-space:pre-wrap;"
-                                        x-text="JSON.stringify(item.result, null, 2)"></pre>
+                                    <pre class="bp-result-pre" x-text="JSON.stringify(item.result, null, 2)"></pre>
                                 </div>
                             </div>
                         </template>
@@ -350,45 +423,54 @@
 <script>
 function batchPage() {
     return {
-        // Data
         documents: [],
         tools: [],
         templates: [],
-        // Settings state
         toolName: 'custom',
         templateId: '',
         prompt: '',
         optionsJson: '',
         concurrency: 3,
-        // Provider / Model
         providers: [],
         selectedProvider: '',
         models: [],
         loadingModels: false,
         modelOverride: '',
-        // Document selection
         docMode: 'existing',
         selectedDocs: [],
         docSearch: '',
-        // Upload state
         uploadFiles: [],
         autoIndex: true,
         dragOver: false,
-        // Prompt management
         savedPrompts: [],
         selectedPromptId: '',
-        // Active batch tracking
         activeBatch: null,
         pollInterval: null,
-        // History
         showHistory: false,
         historyJobs: [],
         viewingJob: null,
+        refDocs: [],
+        refSearch: '',
+        showRefDocs: false,
+
+        formatSize(bytes) {
+            if (!bytes) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(0) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        },
 
         getFilteredDocuments() {
             if (!this.docSearch) return this.documents;
             const q = this.docSearch.toLowerCase();
             return this.documents.filter(d => d.filename.toLowerCase().includes(q));
+        },
+
+        getFilteredRefDocs() {
+            const pool = this.documents.filter(d => d.status === 'indexed');
+            if (!this.refSearch) return pool;
+            const q = this.refSearch.toLowerCase();
+            return pool.filter(d => d.filename.toLowerCase().includes(q));
         },
 
         async init() {
@@ -400,7 +482,6 @@ function batchPage() {
                 this.loadSavedPrompts(),
                 this.loadHistory(),
             ]);
-            // Restore saved provider/model
             const savedProvider = localStorage.getItem('idpkit_provider');
             const savedModel = localStorage.getItem('idpkit_model');
             if (savedProvider) {
@@ -413,7 +494,7 @@ function batchPage() {
         },
 
         async loadDocuments() {
-            const res = await fetch('/api/documents/?limit=200');
+            const res = await fetch('/api/documents/?limit=500');
             if (res.ok) { const data = await res.json(); this.documents = data.items || []; }
         },
 
@@ -441,7 +522,6 @@ function batchPage() {
             } catch(e) {}
         },
 
-        // Provider / Model methods
         async onProviderChange() {
             this.models = [];
             this.modelOverride = '';
@@ -456,20 +536,11 @@ function batchPage() {
             this.loadingModels = true;
             try {
                 const res = await fetch('/api/settings/models?provider=' + encodeURIComponent(this.selectedProvider));
-                if (res.ok) {
-                    this.models = await res.json();
-                    console.log('Loaded', this.models.length, 'models for', this.selectedProvider);
-                } else {
-                    console.error('Failed to fetch models:', res.status);
-                }
-            } catch(e) {
-                console.error('Error fetching models:', e);
-            } finally {
-                this.loadingModels = false;
-            }
+                if (res.ok) this.models = await res.json();
+            } catch(e) {}
+            finally { this.loadingModels = false; }
         },
 
-        // Prompt management
         onSavedPromptChange() {
             const p = this.savedPrompts.find(x => x.id === this.selectedPromptId);
             if (p) this.prompt = p.content;
@@ -500,7 +571,6 @@ function batchPage() {
             }
         },
 
-        // Template
         onTemplateChange() {
             const tmpl = this.templates.find(t => t.id === this.templateId);
             if (tmpl) {
@@ -511,14 +581,12 @@ function batchPage() {
             }
         },
 
-        // Document selection
         toggleAllDocs(e) {
             this.selectedDocs = e.target.checked
                 ? this.getFilteredDocuments().filter(d => d.status === 'indexed').map(d => d.id)
                 : [];
         },
 
-        // Upload
         handleDrop(e) {
             this.dragOver = false;
             this.uploadFiles = [...this.uploadFiles, ...Array.from(e.dataTransfer.files)];
@@ -529,7 +597,6 @@ function batchPage() {
             e.target.value = '';
         },
 
-        // Run Batch
         async runBatch() {
             let options = {};
             if (this.optionsJson.trim()) {
@@ -544,6 +611,7 @@ function batchPage() {
                 options: Object.keys(options).length ? options : null,
                 model: this.modelOverride || null,
                 concurrency: parseInt(this.concurrency),
+                reference_doc_ids: this.refDocs.length > 0 ? this.refDocs : null,
             };
             const res = await fetch('/api/batch/', {
                 method: 'POST',
@@ -581,7 +649,6 @@ function batchPage() {
             }
         },
 
-        // Polling
         startPolling(batchId) {
             this.stopPolling();
             this.activeBatch = { id: batchId, status: 'pending', progress: 0, items: [] };
@@ -606,7 +673,6 @@ function batchPage() {
             await fetch(`/api/batch/${this.activeBatch.id}/cancel`, { method: 'POST' });
         },
 
-        // History
         async loadHistory() {
             const res = await fetch('/api/batch/?limit=50');
             if (res.ok) { const data = await res.json(); this.historyJobs = data.jobs || []; }
