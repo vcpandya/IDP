@@ -12,6 +12,9 @@
             <button @click="triggerIndex()" class="btn btn-primary" x-show="doc.status === 'uploaded' || doc.status === 'failed'" :disabled="indexing">
                 <i class="fas fa-tree"></i> Index Document
             </button>
+            <button @click="triggerIndex()" class="btn btn-outline" x-show="doc.status === 'indexed'" :disabled="indexing">
+                <i class="fas fa-sync-alt"></i> Re-Index
+            </button>
             <a :href="'/api/documents/' + doc.id + '/download'" class="btn"><i class="fas fa-download"></i> Download</a>
             <button @click="deleteDocument()" class="btn btn-danger">
                 <i class="fas fa-trash"></i> Delete
@@ -198,6 +201,9 @@ function documentView(docId) {
             return (bytes / 1048576).toFixed(1) + ' MB';
         },
         async triggerIndex() {
+            if (this.doc.status === 'indexed') {
+                if (!confirm('This will overwrite the existing index. Continue?')) return;
+            }
             this.indexError = '';
             this.indexProgress = 0;
             this.indexStatusText = 'Starting indexing...';
