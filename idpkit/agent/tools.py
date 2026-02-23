@@ -335,10 +335,27 @@ _TOOL_MAP: dict[str, dict] = {
 # Helper: traverse a tree index
 # ======================================================================
 
+def _unwrap_tree(tree_index: Any) -> list:
+    """Extract the node list from a tree index wrapper.
+
+    The stored tree_index has the shape
+    ``{"doc_name": ..., "doc_description": ..., "structure": [...]}``.
+    This helper returns the ``structure`` list so that flatten / find
+    helpers operate on the actual section nodes.
+    """
+    if isinstance(tree_index, dict) and "structure" in tree_index:
+        return tree_index["structure"]
+    if isinstance(tree_index, list):
+        return tree_index
+    return [tree_index] if tree_index else []
+
+
 def _flatten_tree(tree: Any) -> list[dict]:
     """Recursively flatten a tree index into a list of node dicts."""
     nodes: list[dict] = []
     if isinstance(tree, dict):
+        if "structure" in tree and "doc_name" in tree:
+            return _flatten_tree(tree["structure"])
         node_copy = {k: v for k, v in tree.items() if k != "nodes"}
         nodes.append(node_copy)
         for child in tree.get("nodes", []):
@@ -352,6 +369,8 @@ def _flatten_tree(tree: Any) -> list[dict]:
 def _find_node_by_id(tree: Any, node_id: str) -> dict | None:
     """Find a specific node in the tree by ``node_id``."""
     if isinstance(tree, dict):
+        if "structure" in tree and "doc_name" in tree:
+            return _find_node_by_id(tree["structure"], node_id)
         if tree.get("node_id") == node_id:
             return tree
         for child in tree.get("nodes", []):
@@ -438,11 +457,38 @@ async def _execute_search_document(
                     "node_id": nid,
                     "title": node.get("title"),
                     "summary": node.get("summary") or node.get("prefix_summary") or "",
-                    "text_preview": (node.get("text") or "")[:500],
+                    "text": node.get("text") or "",
                     "start_page": node.get("start_index"),
                     "end_page": node.get("end_index"),
                 })
                 break
+
+    # If nodes lack inline text, load it from the PDF on-demand
+    needs_text = any(not r.get("text") for r in results)
+    if needs_text and doc.file_path and results:
+        try:
+            from idpkit.api.deps import get_storage
+            from idpkit.engine.page_index import get_page_tokens
+
+            storage = get_storage()
+            pdf_bytes = storage.load(doc.file_path)
+            from io import BytesIO
+            page_list = get_page_tokens(BytesIO(pdf_bytes), pdf_parser="PyMuPDF")
+
+            for r in results:
+                if r.get("text"):
+                    continue
+                s = (r.get("start_page") or 1) - 1
+                e = r.get("end_page") or s + 1
+                pages_text = "\n".join(
+                    page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+                )
+                r["text"] = pages_text[:2000]
+        except Exception as exc:
+            logger.warning("Could not load PDF text for search results: %s", exc)
+
+    for r in results:
+        r["text_preview"] = (r.pop("text", "") or "")[:1500]
 
     return {
         "document_id": document_id,
