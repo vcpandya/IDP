@@ -31,7 +31,7 @@ from idpkit.db.models import (
 )
 from idpkit.api.deps import get_current_user, get_llm, get_storage
 from idpkit.core.llm import LLMClient
-from idpkit.core.storage import LocalStorageBackend
+from idpkit.core.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -517,7 +517,7 @@ async def upload_and_process(
     concurrency: int = Form(3),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    storage: LocalStorageBackend = Depends(get_storage),
+    storage: StorageBackend = Depends(get_storage),
 ):
     """Upload multiple files and immediately process them as a batch."""
     if not files:

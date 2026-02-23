@@ -389,9 +389,9 @@ async def _auto_index_document(doc, session_factory):
     """Index a document inline (for upload-and-process flow)."""
     import os
     from idpkit.indexing import get_indexer
-    from idpkit.core.storage import LocalStorageBackend
+    from idpkit.api.deps import get_storage
 
-    storage = LocalStorageBackend(os.getenv("IDP_STORAGE_PATH", "./storage"))
+    storage = get_storage()
 
     if not doc.file_path or not storage.exists(doc.file_path):
         raise ValueError(f"Document file not found: {doc.file_path}")

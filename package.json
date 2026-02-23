@@ -1,0 +1,23 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "**IDP Kit** is a full-stack Python toolkit for intelligent document processing. It combines tree-based document indexing, a knowledge graph, an AI agent with tool-calling, 13 smart document tools, and a web UI — all in one package.",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
+    "@uppy/aws-s3": "^5.1.0",
+    "@uppy/core": "^5.2.0",
+    "@uppy/dashboard": "^5.1.1",
+    "@uppy/react": "^5.2.0",
+    "google-auth-library": "^10.5.0"
+  }
+}
