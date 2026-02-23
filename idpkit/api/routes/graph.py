@@ -2,8 +2,9 @@
 
 import logging
 
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.api.deps import get_current_user, get_db, get_llm
@@ -301,3 +302,89 @@ async def get_multi_doc_visualization(
         nodes=[VisualizationNode(**n) for n in data["nodes"]],
         edges=[VisualizationEdge(**e) for e in data["edges"]],
     )
+
+
+class BulkBuildRequest(BaseModel):
+    document_ids: List[str]
+
+
+@router.post(
+    "/build-bulk",
+    summary="Build graphs for multiple documents",
+)
+async def build_bulk_graphs(
+    body: BulkBuildRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+):
+    from sqlalchemy import select, func
+    from idpkit.graph.builder import build_document_graph
+    from idpkit.graph.linker import link_entities_across_documents
+    from idpkit.graph.models import EntityMention
+
+    unique_ids = list(dict.fromkeys(body.document_ids))
+
+    docs = (await db.execute(
+        select(Document).where(
+            Document.id.in_(unique_ids),
+            Document.owner_id == user.id,
+        )
+    )).scalars().all()
+
+    doc_map = {d.id: d for d in docs}
+
+    mention_counts = {}
+    if docs:
+        rows = (await db.execute(
+            select(EntityMention.document_id, func.count(EntityMention.id))
+            .where(EntityMention.document_id.in_([d.id for d in docs]))
+            .group_by(EntityMention.document_id)
+        )).all()
+        mention_counts = {r[0]: r[1] for r in rows}
+
+    built = 0
+    skipped = 0
+    failed = 0
+    results = []
+
+    for doc_id in unique_ids:
+        doc = doc_map.get(doc_id)
+        if not doc:
+            results.append({"document_id": doc_id, "status": "not_found"})
+            failed += 1
+            continue
+        if not doc.tree_index:
+            results.append({"document_id": doc_id, "status": "no_tree_index", "filename": doc.filename})
+            skipped += 1
+            continue
+        if mention_counts.get(doc_id, 0) > 0:
+            results.append({"document_id": doc_id, "status": "already_built", "filename": doc.filename})
+            skipped += 1
+            continue
+
+        try:
+            tree_index = {"structure": doc.tree_index}
+            build_result = await build_document_graph(doc_id, tree_index, llm, db)
+            await link_entities_across_documents(doc_id, db, llm)
+            results.append({
+                "document_id": doc_id,
+                "status": "built",
+                "filename": doc.filename,
+                "entities": build_result.get("entities_created", 0),
+                "edges": build_result.get("edges_created", 0),
+            })
+            built += 1
+            logger.info("Bulk graph build: built graph for %s (%s)", doc_id, doc.filename)
+        except Exception as e:
+            logger.error("Bulk graph build failed for %s: %s", doc_id, e)
+            results.append({"document_id": doc_id, "status": "error", "filename": doc.filename, "error": str(e)})
+            failed += 1
+
+    return {
+        "total": len(unique_ids),
+        "built": built,
+        "skipped": skipped,
+        "failed": failed,
+        "results": results,
+    }

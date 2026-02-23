@@ -143,8 +143,13 @@
             <button class="btn btn-sm" @click="zoomIn()" title="Zoom in"><i class="fas fa-search-plus"></i></button>
             <button class="btn btn-sm" @click="zoomOut()" title="Zoom out"><i class="fas fa-search-minus"></i></button>
             <button class="btn btn-sm" @click="resetZoom()" title="Reset view"><i class="fas fa-expand"></i></button>
-            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building">
+            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building || bulkBuilding">
                 <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
+            </button>
+            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length > 0" @click="bulkBuildGraphs()" :disabled="bulkBuilding || building">
+                <i class="fas" :class="bulkBuilding ? 'fa-spinner fa-spin' : 'fa-hammer'"></i>
+                <span x-show="!bulkBuilding">Build Graphs</span>
+                <span x-show="bulkBuilding" x-text="bulkBuildStatus"></span>
             </button>
             <div style="position:relative" x-data="{ downloadOpen: false }">
                 <button class="btn btn-sm" @click="downloadOpen = !downloadOpen" :disabled="graphNodes.length === 0" title="Download graph data">
@@ -169,7 +174,7 @@
                 <i class="fas fa-project-diagram"></i>
                 <p x-show="selectedDocIds.length === 0">Select documents or a tag group to visualize the entity graph, or search for entities across all documents.</p>
                 <p x-show="selectedDocIds.length === 1">No graph data for this document yet. Click <strong>Build Graph</strong> to extract entities and relationships.</p>
-                <p x-show="selectedDocIds.length > 1">No graph data found for the selected documents. Build individual document graphs first.</p>
+                <p x-show="selectedDocIds.length > 1">No graph data found for the selected documents. Click <strong>Build Graphs</strong> to extract entities and relationships.</p>
             </div>
         </div>
 
@@ -298,6 +303,8 @@ function graphExplorer() {
         loadingEntities: false,
         loadingGraph: false,
         building: false,
+        bulkBuilding: false,
+        bulkBuildStatus: '',
         simulation: null,
         svg: null,
         zoom: null,
@@ -313,7 +320,7 @@ function graphExplorer() {
 
         async init() {
             const [docRes, typesRes, tagsRes] = await Promise.all([
-                fetch('/api/documents/?limit=100'),
+                fetch('/api/documents/?limit=500'),
                 fetch('/api/graph/entity-types'),
                 fetch('/api/tags/')
             ]);
@@ -435,6 +442,33 @@ function graphExplorer() {
                 }
             } catch(e) {}
             this.building = false;
+        },
+
+        async bulkBuildGraphs() {
+            if (this.selectedDocIds.length === 0) return;
+            this.bulkBuilding = true;
+            this.bulkBuildStatus = `Building 0/${this.selectedDocIds.length}...`;
+            try {
+                const res = await fetch('/api/graph/build-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: this.selectedDocIds })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.bulkBuildStatus = `Done: ${data.built} built, ${data.skipped} skipped`;
+                    await this.loadDocGraph();
+                    await this.searchEntities();
+                    setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
+                } else {
+                    this.bulkBuildStatus = 'Build failed';
+                    setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
+                }
+            } catch(e) {
+                this.bulkBuildStatus = 'Build failed';
+                setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
+            }
+            this.bulkBuilding = false;
         },
 
         clearGraph() {
