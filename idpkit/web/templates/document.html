@@ -13,6 +13,9 @@
                 <i class="fas fa-tree"></i> Index Document
             </button>
             <a :href="'/api/documents/' + doc.id + '/download'" class="btn"><i class="fas fa-download"></i> Download</a>
+            <button @click="deleteDocument()" class="btn btn-danger">
+                <i class="fas fa-trash"></i> Delete
+            </button>
         </div>
     </div>
 
@@ -197,6 +200,16 @@ function documentView(docId) {
             return nodes.map(n => ({
                 name: n.title, children: n.nodes ? this.convertToD3(n.nodes) : undefined
             }));
+        },
+        async deleteDocument() {
+            if (!confirm('Delete this document and its index? This cannot be undone.')) return;
+            const res = await fetch(`/api/documents/${this.doc.id}`, { method: 'DELETE' });
+            if (res.ok) {
+                window.location.href = '/knowledge-base';
+            } else {
+                const data = await res.json().catch(() => ({}));
+                alert(data.detail || 'Failed to delete document');
+            }
         },
         async runQuery() {
             if (!this.query.trim()) return;
