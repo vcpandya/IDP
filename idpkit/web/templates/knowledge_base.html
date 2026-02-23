@@ -226,17 +226,42 @@
                 <h3><i class="fab fa-youtube" style="color:#ff0000;margin-right:6px"></i> Select Videos to Import</h3>
                 <button class="btn-close" @click="showYtSelectModal = false"><i class="fas fa-times"></i></button>
             </div>
-            <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+            <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px">
                 <span class="badge" x-text="ytPreviewType === 'playlist' ? 'Playlist' : 'Channel'" style="text-transform:capitalize"></span>
-                <span class="text-muted" style="font-size:0.85rem" x-text="ytPreviewVideos.length + ' videos found'"></span>
-                <div style="margin-left:auto;display:flex;gap:8px">
-                    <button class="btn btn-sm" @click="ytSelectAll(true)">Select All</button>
-                    <button class="btn btn-sm" @click="ytSelectAll(false)">Deselect All</button>
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytFilteredVideos.length + ' of ' + ytPreviewVideos.length + ' videos'"></span>
+                <div style="margin-left:auto;display:flex;gap:6px">
+                    <button class="btn btn-sm" @click="ytSelectFiltered(true)">Select Shown</button>
+                    <button class="btn btn-sm" @click="ytSelectFiltered(false)">Deselect Shown</button>
                 </div>
             </div>
+            <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--bg-secondary,#f9fafb)">
+                <input type="text" x-model="ytFilterSearch" placeholder="Search titles..."
+                       style="padding:5px 10px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem;width:160px">
+                <select x-model="ytFilterSort" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="most_viewed">Most viewed</option>
+                    <option value="most_liked">Most liked</option>
+                    <option value="default">Playlist order</option>
+                </select>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">From:</label>
+                    <input type="date" x-model="ytFilterDateFrom" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">To:</label>
+                    <input type="date" x-model="ytFilterDateTo" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">Latest:</label>
+                    <input type="number" x-model.number="ytFilterLatestN" min="0" placeholder="N"
+                           style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem;width:60px">
+                </div>
+                <button class="btn btn-sm" @click="ytClearFilters()" style="font-size:0.75rem"><i class="fas fa-times"></i> Clear</button>
+            </div>
             <div class="modal-body" style="overflow-y:auto;flex:1;padding:0">
-                <div style="max-height:400px;overflow-y:auto">
-                    <template x-for="(vid, idx) in ytPreviewVideos" :key="vid.video_id">
+                <div style="max-height:380px;overflow-y:auto">
+                    <template x-for="(vid, idx) in ytFilteredVideos" :key="vid.video_id">
                         <label style="display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--border);cursor:pointer"
                                :style="vid.selected ? 'background:var(--bg-hover,#f0f4ff)' : ''">
                             <input type="checkbox" x-model="vid.selected" style="width:16px;height:16px;flex-shrink:0">
@@ -245,10 +270,18 @@
                                  onerror="this.style.display='none'">
                             <div style="flex:1;min-width:0">
                                 <div style="font-size:0.85rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="vid.title || vid.video_id"></div>
-                                <div style="font-size:0.75rem;color:var(--text-muted)" x-text="vid.video_id"></div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);display:flex;gap:10px;flex-wrap:wrap">
+                                    <span x-text="vid.video_id"></span>
+                                    <span x-show="vid.published_at" x-text="vid.published_at ? vid.published_at.substring(0,10) : ''"></span>
+                                    <span x-show="vid.view_count" x-text="(vid.view_count||0).toLocaleString() + ' views'"></span>
+                                    <span x-show="vid.duration_seconds" x-text="ytFormatDuration(vid.duration_seconds)"></span>
+                                </div>
                             </div>
                         </label>
                     </template>
+                    <div x-show="ytFilteredVideos.length === 0" style="padding:30px 20px;text-align:center;color:var(--text-muted)">
+                        No videos match your filters
+                    </div>
                 </div>
             </div>
             <div class="modal-footer" style="display:flex;align-items:center;gap:12px">
@@ -323,6 +356,11 @@ function knowledgeBase() {
         ytPreviewVideos: [],
         ytPreviewType: '',
         ytPendingTagId: null,
+        ytFilterSearch: '',
+        ytFilterSort: 'newest',
+        ytFilterDateFrom: '',
+        ytFilterDateTo: '',
+        ytFilterLatestN: 0,
 
         async init() { await this.loadData(); },
 
@@ -407,8 +445,46 @@ function knowledgeBase() {
             return this.ytPreviewVideos.filter(v => v.selected).length;
         },
 
-        ytSelectAll(val) {
-            this.ytPreviewVideos.forEach(v => v.selected = val);
+        get ytFilteredVideos() {
+            let vids = [...this.ytPreviewVideos];
+            const q = this.ytFilterSearch.toLowerCase().trim();
+            if (q) vids = vids.filter(v => (v.title || '').toLowerCase().includes(q) || (v.video_id || '').includes(q));
+            if (this.ytFilterDateFrom) {
+                const from = this.ytFilterDateFrom;
+                vids = vids.filter(v => v.published_at && v.published_at.substring(0, 10) >= from);
+            }
+            if (this.ytFilterDateTo) {
+                const to = this.ytFilterDateTo;
+                vids = vids.filter(v => v.published_at && v.published_at.substring(0, 10) <= to);
+            }
+            if (this.ytFilterSort === 'newest') vids.sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+            else if (this.ytFilterSort === 'oldest') vids.sort((a, b) => (a.published_at || '').localeCompare(b.published_at || ''));
+            else if (this.ytFilterSort === 'most_viewed') vids.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+            else if (this.ytFilterSort === 'most_liked') vids.sort((a, b) => (b.like_count || 0) - (a.like_count || 0));
+            if (this.ytFilterLatestN > 0) vids = vids.slice(0, this.ytFilterLatestN);
+            return vids;
+        },
+
+        ytSelectFiltered(val) {
+            const ids = new Set(this.ytFilteredVideos.map(v => v.video_id));
+            this.ytPreviewVideos.forEach(v => { if (ids.has(v.video_id)) v.selected = val; });
+        },
+
+        ytClearFilters() {
+            this.ytFilterSearch = '';
+            this.ytFilterSort = 'newest';
+            this.ytFilterDateFrom = '';
+            this.ytFilterDateTo = '';
+            this.ytFilterLatestN = 0;
+        },
+
+        ytFormatDuration(secs) {
+            if (!secs) return '';
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = secs % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            return `${m}:${String(s).padStart(2,'0')}`;
         },
 
         async ingestYouTube(tagId) {
@@ -439,6 +515,7 @@ function knowledgeBase() {
                     this.ytPreviewVideos = preview.videos.map(v => ({ ...v, selected: true }));
                     this.ytPreviewType = preview.url_type;
                     this.ytPendingTagId = tagId || null;
+                    this.ytClearFilters();
                     this.showYtSelectModal = true;
                     this.ytStatus = '';
                     this.ytIngesting = false;
