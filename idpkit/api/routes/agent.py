@@ -57,6 +57,7 @@ class ChatSourceInfo(BaseModel):
     start_page: Optional[int] = None
     end_page: Optional[int] = None
     summary: Optional[str] = None
+    text_preview: Optional[str] = None
 
 
 class SearchAttemptInfo(BaseModel):
@@ -126,7 +127,8 @@ def _extract_sources(tool_call_log: list[dict]) -> list[ChatSourceInfo]:
     seen: set[tuple[str, str]] = set()
 
     def _add(doc_id: str, filename: str, node_id: str, title: str | None,
-             start_page: int | None, end_page: int | None, summary: str | None = None):
+             start_page: int | None, end_page: int | None, summary: str | None = None,
+             text_preview: str | None = None):
         key = (doc_id, node_id or "")
         if key in seen or not doc_id:
             return
@@ -139,6 +141,7 @@ def _extract_sources(tool_call_log: list[dict]) -> list[ChatSourceInfo]:
             start_page=start_page,
             end_page=end_page,
             summary=(summary or "")[:200] or None,
+            text_preview=(text_preview or "")[:3000] or None,
         ))
 
     for tc in tool_call_log:
@@ -151,7 +154,8 @@ def _extract_sources(tool_call_log: list[dict]) -> list[ChatSourceInfo]:
             for node in result.get("results", []):
                 _add(doc_id, filename, node.get("node_id", ""),
                      node.get("title"), node.get("start_page"),
-                     node.get("end_page"), node.get("summary"))
+                     node.get("end_page"), node.get("summary"),
+                     node.get("text_preview"))
 
         elif name == "find_cross_references":
             for ref in result.get("references", []):

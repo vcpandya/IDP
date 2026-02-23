@@ -168,7 +168,7 @@
             <div>
                 <h4><i class="fas fa-quote-left"></i> Sources</h4>
                 <template x-for="(src, si) in currentSources" :key="si">
-                    <a :href="'/documents/' + src.document_id" class="source-card" target="_blank">
+                    <div class="source-card" style="cursor:pointer" @click="openSourceModal(src)">
                         <div class="source-title" x-text="src.title || 'Untitled section'"></div>
                         <div class="source-meta">
                             <span class="source-filename" x-text="src.filename"></span>
@@ -177,10 +177,53 @@
                             </span>
                         </div>
                         <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
-                    </a>
+                    </div>
                 </template>
             </div>
         </template>
+    </div>
+
+    <!-- Source Detail Modal -->
+    <div class="source-modal-overlay" x-show="showSourceModal" x-cloak @click.self="showSourceModal = false" x-transition.opacity>
+        <div class="source-modal" @click.stop>
+            <div class="source-modal-header">
+                <div>
+                    <h3 x-text="sourceModalData.title || 'Untitled section'"></h3>
+                    <div class="source-modal-meta">
+                        <span><i class="fas fa-file-alt"></i> <span x-text="sourceModalData.filename"></span></span>
+                        <span x-show="sourceModalData.start_page != null">
+                            <i class="fas fa-file-invoice"></i> pp. <span x-text="sourceModalData.start_page"></span><span x-show="sourceModalData.end_page != null && sourceModalData.end_page !== sourceModalData.start_page">–<span x-text="sourceModalData.end_page"></span></span>
+                        </span>
+                    </div>
+                </div>
+                <button class="btn-close" @click="showSourceModal = false">&times;</button>
+            </div>
+            <div class="source-modal-body">
+                <template x-if="sourceModalData.summary">
+                    <div class="source-modal-summary">
+                        <h4>Summary</h4>
+                        <p x-text="sourceModalData.summary"></p>
+                    </div>
+                </template>
+                <template x-if="sourceModalData.text_preview">
+                    <div class="source-modal-text">
+                        <h4>Full Text</h4>
+                        <pre x-text="sourceModalData.text_preview"></pre>
+                    </div>
+                </template>
+                <template x-if="!sourceModalData.text_preview && !sourceModalLoading">
+                    <div class="source-modal-text">
+                        <p style="color:var(--text-muted);font-style:italic">No text preview available for this source.</p>
+                    </div>
+                </template>
+            </div>
+            <div class="source-modal-footer">
+                <a :href="'/documents/' + sourceModalData.document_id" target="_blank" class="btn btn-sm btn-outline">
+                    <i class="fas fa-external-link-alt"></i> Open Document
+                </a>
+                <button class="btn btn-sm" @click="showSourceModal = false">Close</button>
+            </div>
+        </div>
     </div>
 
     <!-- Attach Modal -->
@@ -279,6 +322,9 @@ function agentChat() {
         showTagMention: false,
         tagMentionFilter: '',
         selectedTagChips: [],
+        showSourceModal: false,
+        sourceModalData: {},
+        sourceModalLoading: false,
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -440,6 +486,10 @@ function agentChat() {
         showSources(sources, searchAttempts) {
             this.currentSources = sources || [];
             this.currentSearchAttempts = searchAttempts || [];
+        },
+        openSourceModal(src) {
+            this.sourceModalData = { ...src };
+            this.showSourceModal = true;
         },
         async sendMessage(text) {
             const msg = text || this.input.trim();
