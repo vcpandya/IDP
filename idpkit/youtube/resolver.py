@@ -10,8 +10,8 @@ from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
-_MAX_PLAYLIST_VIDEOS = 100
-_MAX_CHANNEL_VIDEOS = 100
+_MAX_PLAYLIST_VIDEOS = 200
+_MAX_CHANNEL_VIDEOS = 200
 
 
 class YouTubeURLType(str, enum.Enum):
@@ -174,6 +174,43 @@ def _resolve_channel_id(identifier: str) -> str:
 def get_channel_videos(channel_identifier: str) -> list[dict]:
     uploads_playlist = _resolve_channel_id(channel_identifier)
     return get_playlist_videos(uploads_playlist)
+
+
+def enrich_videos(videos: list[dict]) -> list[dict]:
+    if not videos:
+        return videos
+    yt = _build_youtube()
+    ids = [v["video_id"] for v in videos if v.get("video_id")]
+    meta_map: dict[str, dict] = {}
+
+    for i in range(0, len(ids), 50):
+        batch = ids[i:i + 50]
+        resp = yt.videos().list(
+            part="snippet,contentDetails,statistics",
+            id=",".join(batch),
+        ).execute()
+        for item in resp.get("items", []):
+            vid = item["id"]
+            snippet = item.get("snippet", {})
+            stats = item.get("statistics", {})
+            details = item.get("contentDetails", {})
+            meta_map[vid] = {
+                "published_at": snippet.get("publishedAt", ""),
+                "view_count": int(stats.get("viewCount", 0)),
+                "like_count": int(stats.get("likeCount", 0)),
+                "duration_seconds": _parse_duration(details.get("duration", "")),
+                "channel_title": snippet.get("channelTitle", ""),
+            }
+
+    for v in videos:
+        meta = meta_map.get(v["video_id"], {})
+        v["published_at"] = meta.get("published_at", "")
+        v["view_count"] = meta.get("view_count", 0)
+        v["like_count"] = meta.get("like_count", 0)
+        v["duration_seconds"] = meta.get("duration_seconds", 0)
+        v["channel_title"] = meta.get("channel_title", "")
+
+    return videos
 
 
 def resolve_url(url: str) -> dict:

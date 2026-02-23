@@ -52,7 +52,7 @@ async def preview_url(
     user: User = Depends(get_current_user),
 ):
     try:
-        from idpkit.youtube.resolver import resolve_url, detect_url_type
+        from idpkit.youtube.resolver import resolve_url, detect_url_type, enrich_videos
         url_type, _ = detect_url_type(body.url)
         resolved = resolve_url(body.url)
     except ValueError as exc:
@@ -61,12 +61,24 @@ async def preview_url(
         logger.error("YouTube preview failed: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to resolve YouTube URL")
 
+    raw_videos = resolved["videos"]
+    if resolved["type"] != "video":
+        try:
+            raw_videos = enrich_videos(raw_videos)
+        except Exception as exc:
+            logger.warning("YouTube enrichment failed, using basic metadata: %s", exc)
+
     preview_videos = []
-    for v in resolved["videos"]:
+    for v in raw_videos:
         preview_videos.append({
             "video_id": v.get("video_id", ""),
             "title": v.get("title", ""),
             "url": v.get("url", f"https://www.youtube.com/watch?v={v.get('video_id', '')}"),
+            "published_at": v.get("published_at", ""),
+            "view_count": v.get("view_count", 0),
+            "like_count": v.get("like_count", 0),
+            "duration_seconds": v.get("duration_seconds", 0),
+            "channel_title": v.get("channel_title", ""),
         })
 
     return YouTubePreviewResponse(
