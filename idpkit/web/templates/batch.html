@@ -38,16 +38,58 @@
                 <i class="fas fa-lightbulb"></i>
                 Tip: Be specific about the output format you want. The AI will apply these instructions to each document.
             </div>
+
+            <!-- Reference Documents (Context for Prompt) -->
+            <div class="bp-ref-section">
+                <div class="bp-ref-header" @click="showRefDocs = !showRefDocs" style="cursor:pointer;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <i class="fas fa-paperclip"></i>
+                        <strong>Attach Reference Documents</strong>
+                        <span class="bp-hint">(optional context for the AI)</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <span class="bp-tab-count" x-show="refDocs.length > 0" x-text="refDocs.length"></span>
+                        <i class="fas" :class="showRefDocs ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:.7rem;color:var(--text-muted);"></i>
+                    </div>
+                </div>
+                <div x-show="showRefDocs" x-collapse class="bp-ref-body">
+                    <p class="bp-ref-desc">Attach documents as additional context for your prompt. The AI will reference these alongside the instructions when processing each target document.</p>
+                    <div class="bp-ref-search">
+                        <i class="fas fa-search"></i>
+                        <input type="text" x-model="refSearch" placeholder="Search documents to attach...">
+                    </div>
+                    <div class="bp-ref-list">
+                        <template x-for="doc in getFilteredRefDocs()" :key="doc.id">
+                            <label class="bp-doc-item compact" :class="{'selected': refDocs.includes(doc.id)}">
+                                <input type="checkbox" :value="doc.id" x-model="refDocs">
+                                <span class="bp-doc-name" x-text="doc.filename" style="flex:1;"></span>
+                                <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:.65rem;padding:1px 6px;"></span>
+                            </label>
+                        </template>
+                    </div>
+                    <div class="bp-ref-chips" x-show="refDocs.length > 0">
+                        <template x-for="rid in refDocs" :key="rid">
+                            <div class="bp-ref-chip">
+                                <i class="fas fa-paperclip"></i>
+                                <span x-text="documents.find(d => d.id === rid)?.filename || rid"></span>
+                                <button @click="refDocs = refDocs.filter(r => r !== rid)" class="bp-tag-remove">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Step 2: Documents -->
+    <!-- Step 2: Select Documents to Process -->
     <div class="bp-card">
         <div class="bp-card-header">
             <div class="bp-step-badge">2</div>
             <div>
-                <h3>Documents</h3>
-                <p class="bp-card-desc">Select documents to process or upload new ones</p>
+                <h3>Select Documents to Process</h3>
+                <p class="bp-card-desc">Choose which documents the AI will process using the instructions above</p>
             </div>
         </div>
         <div class="bp-card-body">
@@ -134,48 +176,6 @@
                     <span>Auto-index documents before processing</span>
                     <span class="bp-hint">(recommended for first-time uploads)</span>
                 </label>
-            </div>
-
-            <!-- Reference Documents (Context for Prompt) -->
-            <div class="bp-ref-section">
-                <div class="bp-ref-header" @click="showRefDocs = !showRefDocs" style="cursor:pointer;">
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <i class="fas fa-paperclip"></i>
-                        <strong>Reference Documents</strong>
-                        <span class="bp-hint">(optional context for the AI)</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <span class="bp-tab-count" x-show="refDocs.length > 0" x-text="refDocs.length"></span>
-                        <i class="fas" :class="showRefDocs ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:.7rem;color:var(--text-muted);"></i>
-                    </div>
-                </div>
-                <div x-show="showRefDocs" x-collapse class="bp-ref-body">
-                    <p class="bp-ref-desc">Attach documents as additional context. The AI will reference these when processing each target document.</p>
-                    <div class="bp-ref-search">
-                        <i class="fas fa-search"></i>
-                        <input type="text" x-model="refSearch" placeholder="Search documents to attach...">
-                    </div>
-                    <div class="bp-ref-list">
-                        <template x-for="doc in getFilteredRefDocs()" :key="doc.id">
-                            <label class="bp-doc-item compact" :class="{'selected': refDocs.includes(doc.id)}">
-                                <input type="checkbox" :value="doc.id" x-model="refDocs">
-                                <span class="bp-doc-name" x-text="doc.filename" style="flex:1;"></span>
-                                <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:.65rem;padding:1px 6px;"></span>
-                            </label>
-                        </template>
-                    </div>
-                    <div class="bp-ref-chips" x-show="refDocs.length > 0">
-                        <template x-for="rid in refDocs" :key="rid">
-                            <div class="bp-ref-chip">
-                                <i class="fas fa-paperclip"></i>
-                                <span x-text="documents.find(d => d.id === rid)?.filename || rid"></span>
-                                <button @click="refDocs = refDocs.filter(r => r !== rid)" class="bp-tag-remove">
-                                    <i class="fas fa-times"></i>
-                                </button>
-                            </div>
-                        </template>
-                    </div>
-                </div>
             </div>
         </div>
     </div>
