@@ -232,6 +232,8 @@ class BatchJob(Base):
     options = Column(JSON, nullable=True)
     model = Column(String(200), nullable=True)
     concurrency = Column(Integer, default=3)
+    reference_doc_ids = Column(JSON, nullable=True)
+    generated_schema = Column(JSON, nullable=True)
     result_summary = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     created_at = Column(TZDateTime, default=utcnow)

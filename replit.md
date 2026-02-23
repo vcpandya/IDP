@@ -77,5 +77,6 @@ All data lives in a single PostgreSQL database (15 tables):
 ## UI/UX Features
 - **Favicon**: SVG favicon at `idpkit/web/static/favicon.svg` — document with search icon in indigo gradient
 - **Agent Chat**: Tool call messages render as collapsible accordions; source citations open in popup modal with text preview
-- **Batch Processing**: Redesigned with 3-step flow (Instructions → Documents → Settings), reference document attachment, and processing history
+- **Batch Processing**: Redesigned with 3-step flow (Instructions → Select Documents to Process → Settings). Reference documents attach to the prompt (Step 1) as AI context. Two-pass schema generation: when no template is selected, Pass 1 generates a JSON schema from the prompt + reference docs, Pass 2 uses that schema as structured output constraint for all target documents.
 - **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering
+- **Settings**: LLM model lists fetched dynamically from provider APIs (OpenAI, Anthropic, Google, OpenRouter, Ollama) with curated fallbacks. Model filter search icon positioned on the right to avoid text overlap.
