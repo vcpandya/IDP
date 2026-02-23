@@ -7,11 +7,11 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import select, func, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.session import get_db, async_session
-from idpkit.db.models import Document, Job, Tag, User
+from idpkit.db.models import Document, Job, Tag, User, document_tags
 from idpkit.api.deps import get_current_user, get_storage, get_llm
 from idpkit.core.storage import StorageBackend
 from idpkit.core.llm import LLMClient
@@ -260,8 +260,12 @@ async def _run_youtube_ingest(
             }
 
             for i, video_info in enumerate(videos):
-                await db.refresh(job)
-                if job.status == "cancelled":
+                async with async_session() as check_db:
+                    check_result = await check_db.execute(
+                        select(Job.status).where(Job.id == job_id)
+                    )
+                    current_status = check_result.scalar_one_or_none()
+                if current_status == "cancelled":
                     logger.info("YouTube ingestion cancelled: job=%s after %d/%d videos", job_id, i, total)
                     job.result = {
                         "documents_created": len(created_doc_ids),
@@ -348,14 +352,12 @@ async def _run_youtube_ingest(
                     created_doc_ids.append(doc.id)
 
                     if tag_id:
-                        tag_result = await db.execute(
-                            select(Tag).where(Tag.id == tag_id, Tag.owner_id == user_id)
+                        await db.execute(
+                            insert(document_tags).values(
+                                document_id=doc.id, tag_id=tag_id
+                            )
                         )
-                        tag = tag_result.scalar_one_or_none()
-                        if tag:
-                            tag.documents.append(doc)
-                            db.add(tag)
-                            await db.commit()
+                        await db.commit()
 
                     if auto_index and doc.file_path and has_transcript:
                         await _trigger_indexing(doc.id, user_id, doc.file_path, db)
