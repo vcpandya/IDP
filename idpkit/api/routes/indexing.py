@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from idpkit.db.session import get_db, async_session
 from idpkit.db.models import Document, Job, User
 from idpkit.api.deps import get_current_user, get_storage, get_llm
-from idpkit.core.storage import LocalStorageBackend
+from idpkit.core.storage import StorageBackend
 from idpkit.core.llm import LLMClient
 
 logger = logging.getLogger(__name__)
