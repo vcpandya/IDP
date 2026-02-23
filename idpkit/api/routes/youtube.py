@@ -466,19 +466,24 @@ def _build_youtube_tree_index(transcript_result, metadata: dict) -> dict:
     for page in transcript_result.pages:
         label = page.get("timestamp_label", "")
         text = page.get("text", "")
-        summary = text[:200].replace("\n", " ").strip()
-        if not summary:
+        if not text.strip():
             continue
         children.append({
             "title": f"[{label}]" if label else f"Segment {len(children) + 1}",
-            "summary": summary,
+            "text": text,
+            "summary": text[:200].replace("\n", " ").strip(),
+            "node_id": f"seg_{len(children)}",
             "page_start": page.get("page", 0),
             "page_end": page.get("page", 0),
         })
 
+    full_text = "\n\n".join(p.get("text", "") for p in transcript_result.pages if p.get("text", "").strip())
+
     structure = [{
         "title": title,
+        "text": full_text,
         "summary": doc_description,
+        "node_id": "root",
         "page_start": 0,
         "page_end": max((p.get("page", 0) for p in transcript_result.pages), default=0),
         "children": children,
