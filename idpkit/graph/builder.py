@@ -36,9 +36,9 @@ def _flatten_tree(tree: Any) -> list[dict]:
     """Recursively flatten a tree index into a list of node dicts."""
     nodes: list[dict] = []
     if isinstance(tree, dict):
-        node_copy = {k: v for k, v in tree.items() if k != "nodes"}
+        node_copy = {k: v for k, v in tree.items() if k not in ("nodes", "children")}
         nodes.append(node_copy)
-        for child in tree.get("nodes", []):
+        for child in tree.get("nodes", []) or tree.get("children", []):
             nodes.extend(_flatten_tree(child))
     elif isinstance(tree, list):
         for item in tree:
