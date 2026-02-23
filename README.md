@@ -8,7 +8,7 @@ Upload PDFs, DOCX, HTML, spreadsheets, presentations, or images. IDP Kit indexes
 
 | Category | What you get |
 |----------|-------------|
-| **Document Indexing** | Hierarchical tree index (powered by [PageIndex](https://github.com/VectifyAI/PageIndex)) — no vector DB, no chunking |
+| **Document Indexing** | Hierarchical tree index — no vector DB, no chunking, pure LLM reasoning |
 | **Knowledge Graph** | Automatic entity extraction, cross-document linking, relationship discovery |
 | **AI Agent** | Tool-calling agent (6 tools) — search, summarize, extract, graph queries, cross-references |
 | **Smart Tools** | 13 tools: Summary, Classify, Extract, Compare, Q&A, Split, Redaction, Anonymize, Fill, Rewrite, Translate, Merge, Audit |
@@ -18,6 +18,168 @@ Upload PDFs, DOCX, HTML, spreadsheets, presentations, or images. IDP Kit indexes
 | **REST API** | 54 endpoints across 11 routers |
 | **Plugin System** | Entry-point + directory-based plugin discovery |
 | **Database** | SQLAlchemy 2.0 async — SQLite (dev) / PostgreSQL (prod) |
+
+---
+
+## Use Cases
+
+### Bulk Document Processing
+
+Process hundreds of documents at scale through the REST API or processing pipeline.
+
+- **Batch Upload & Index** — Upload entire document libraries via the API. Each document is automatically parsed, indexed into a tree structure, and added to the knowledge graph.
+- **Multi-Format Ingestion** — Process mixed collections containing PDFs, Word documents, HTML pages, spreadsheets, presentations, and scanned images in a single pipeline.
+- **Background Job Tracking** — All indexing runs as background jobs with status monitoring, so you can queue up large batches and track progress via the Jobs API.
+
+### Document Analysis & Intelligence
+
+Extract insights from documents without reading them cover to cover.
+
+- **Smart Summary** — Generate hierarchical summaries at configurable lengths (brief, standard, detailed) with custom tone and target audience. Summarize an entire 200-page report or drill into specific sections.
+- **Smart Classify** — Automatically categorize documents by type (contract, invoice, report, memo), topics, sentiment, or urgency level — with confidence scores.
+- **Smart Extract** — Pull structured data out of unstructured documents: tables, key-value pairs, named entities, financial figures, or any custom schema you define.
+- **Smart Q&A** — Auto-generate question-answer pairs from documents for training datasets, quizzes, FAQs, or knowledge base seeding.
+- **Smart Audit** — Audit documents against compliance standards, style guides, or completeness checklists. Get a scored report with violations and recommendations.
+
+### Document Comparison & Cross-Referencing
+
+Compare documents and discover connections across your entire library.
+
+- **Smart Compare** — Compare two documents structurally, semantically, or for regulatory alignment. Identify what changed between versions, what's missing, and what conflicts.
+- **Cross-Document Search** — Query across all indexed documents simultaneously. The AI agent finds and cites relevant sections from multiple sources.
+- **Knowledge Graph Links** — Automatically discover which documents share entities (people, organizations, regulations, concepts). Ask "Which other documents mention Algorithm X?" and get answers instantly.
+- **Entity Tracking** — Track people, organizations, regulations, products, and other entities across your entire document library. See every mention, every relationship, every cross-reference.
+
+### Data Privacy & Compliance
+
+Handle sensitive documents with built-in privacy tools.
+
+- **Smart Redaction** — Automatically detect and redact PII (names, emails, phone numbers, SSNs, addresses) with a full audit trail. Choose auto-detection or selective redaction by entity type.
+- **Smart Anonymize** — Replace real identities with consistent, realistic pseudonyms. "John Smith" becomes "David Brown" everywhere in the document — consistently, so relationships are preserved.
+- **Compliance Auditing** — Run automated compliance checks against regulatory standards. Get a scored report identifying gaps and violations.
+- **Audit Trail** — Every redaction and anonymization operation is logged for regulatory compliance.
+
+### Content Transformation & Rewriting
+
+Transform documents to meet different needs.
+
+- **Smart Rewrite** — Improve clarity, simplify language, formalize tone, or enrich context. Adjust reading level for different audiences (technical → executive summary, legal → plain language).
+- **Smart Translate** — Translate documents while preserving structure, formatting, and domain terminology. Supply a glossary for industry-specific terms.
+- **Format Conversion** — Convert between Markdown, DOCX, and other formats while preserving content and structure.
+- **Document Generation** — Generate polished DOCX or Markdown documents from templates, tree indices, or AI-generated content.
+
+### Document Assembly & Automation
+
+Combine, split, and automate document workflows.
+
+- **Smart Merge** — Combine multiple documents by concatenation, deduplication, or intelligent synthesis. Merge related reports into a single unified document.
+- **Smart Split** — Break large documents into meaningful chunks by heading structure, size, or semantic boundaries — preserving hierarchy and context.
+- **Smart Fill** — Auto-populate templates by extracting data from source documents and mapping it to template fields. Fill contracts, forms, and reports from source data.
+- **Processing Pipelines** — Chain multiple operations into automated workflows. Extract → Redact → Translate → Generate DOCX in a single pipeline.
+
+---
+
+### Industry Use Cases
+
+<details>
+<summary><b>Legal & Contract Management</b></summary>
+
+- Upload and index large contract libraries across clients
+- Extract key clauses, dates, obligations, and parties from contracts
+- Compare contract versions to identify changes and conflicts
+- Redact sensitive client information before sharing with third parties
+- Cross-reference regulatory citations across all legal documents
+- Auto-generate contract summaries for case review
+- Audit contracts against compliance checklists
+- Track specific clauses and terms across the entire document library via the knowledge graph
+
+</details>
+
+<details>
+<summary><b>Financial Services & Audit</b></summary>
+
+- Process quarterly and annual reports, 10-K filings, and financial statements
+- Extract financial figures, metrics, and KPIs from unstructured reports
+- Compare financial reports across periods to identify trends and anomalies
+- Cross-reference regulatory requirements across compliance documents
+- Generate audit reports with compliance scores
+- Anonymize client data in financial documents before external review
+- Track entities (companies, regulations, financial instruments) across all filings
+
+</details>
+
+<details>
+<summary><b>Human Resources</b></summary>
+
+- Batch-process resumes and extract structured candidate profiles (skills, experience, education)
+- Classify incoming documents (applications, policies, complaints, evaluations)
+- Anonymize employee information in documents shared for analytics or legal review
+- Compare policy versions across updates
+- Auto-fill offer letters, contracts, and onboarding forms from HR databases
+- Generate Q&A pairs from training materials for onboarding quizzes
+- Translate HR policies for international offices
+
+</details>
+
+<details>
+<summary><b>Research & Knowledge Management</b></summary>
+
+- Index research papers, whitepapers, and technical documentation
+- Build a knowledge graph connecting researchers, methodologies, findings, and citations across papers
+- Ask the AI agent: "What papers discuss technique X and what were their results?"
+- Cross-reference findings across studies to identify consensus and contradictions
+- Summarize lengthy research papers at different detail levels
+- Generate literature review sections from multiple indexed papers
+- Extract and compare methodologies across studies
+
+</details>
+
+<details>
+<summary><b>Healthcare & Life Sciences</b></summary>
+
+- Process clinical trial reports, regulatory submissions, and medical literature
+- Extract drug names, dosages, adverse events, and outcomes from clinical documents
+- Redact patient identifying information (PHI) for HIPAA compliance
+- Compare treatment protocols across studies
+- Track regulatory citations and compliance requirements across submissions
+- Translate medical documents while preserving terminology accuracy with custom glossaries
+
+</details>
+
+<details>
+<summary><b>Government & Public Sector</b></summary>
+
+- Batch-process FOIA requests with automatic PII redaction
+- Index policy documents, regulations, and legislative texts
+- Cross-reference regulations across agencies and jurisdictions
+- Classify incoming correspondence by topic, urgency, and department
+- Translate public documents for multilingual constituents
+- Audit documents against accessibility and compliance standards
+- Track entities (programs, agencies, regulations) across government documentation
+
+</details>
+
+---
+
+## The 13 Smart Tools
+
+Every tool is accessible via `POST /api/tools/{tool_name}` and through the web UI.
+
+| Tool | What it does | Key options |
+|------|-------------|-------------|
+| **Summary** | Hierarchical document summarization | Length (brief/standard/detailed), style, audience, section filter |
+| **Classify** | Auto-categorize documents | Classify by type, topics, sentiment, or urgency |
+| **Extract** | Pull structured data from unstructured text | Tables, key-value pairs, entities, financial data, custom schemas |
+| **Compare** | Side-by-side document comparison | Structural, semantic, or regulatory alignment |
+| **Q&A** | Generate question-answer pairs | Count, difficulty level, format (quiz/FAQ/training) |
+| **Split** | Break documents into chunks | By heading, by size, or by semantic boundary |
+| **Redaction** | Detect and redact PII | Auto or selective mode, configurable entity types, audit trail |
+| **Anonymize** | Replace entities with consistent pseudonyms | Entity types, consistency key for reproducibility |
+| **Fill** | Auto-populate templates from source docs | Field mapping, confidence threshold |
+| **Rewrite** | Transform tone, clarity, or reading level | Mode (improve/simplify/formalize/enrich), tone, reading level |
+| **Translate** | Structure-preserving translation | Target language, glossary support, formatting preservation |
+| **Merge** | Combine multiple documents | Concatenate, deduplicate, or synthesize |
+| **Audit** | Check compliance and completeness | Compliance, style, or completeness checks against standards |
 
 ---
 
@@ -146,15 +308,6 @@ IDP Kit automatically builds a knowledge graph when documents are indexed.
 | `POST` | `/api/graph/documents/{doc_id}/build` | Build graph retroactively |
 | `GET` | `/api/graph/documents/{doc_id}/visualization` | Nodes + edges JSON for visualization |
 
-### Retroactive building
-
-For documents indexed before the graph feature existed:
-
-```bash
-curl -X POST http://localhost:8000/api/graph/documents/{doc_id}/build \
-  -H "Authorization: Bearer TOKEN"
-```
-
 ---
 
 ## API Overview
@@ -204,11 +357,69 @@ curl -X POST http://localhost:8000/api/agent/chat \
   -d '{"message": "Compare the conclusions across all documents", "document_ids": ["DOC1", "DOC2"]}'
 ```
 
+### Example: Run a smart tool
+
+```bash
+# Summarize a document
+curl -X POST http://localhost:8000/api/tools/summary \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "length": "brief", "audience": "executive"}'
+
+# Extract structured data
+curl -X POST http://localhost:8000/api/tools/extract \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "type": "key_value"}'
+
+# Redact PII
+curl -X POST http://localhost:8000/api/tools/redaction \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "mode": "auto"}'
+
+# Translate
+curl -X POST http://localhost:8000/api/tools/translate \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "target_language": "Spanish"}'
+```
+
+### Example: Knowledge graph queries
+
+```bash
+# Search entities
+curl http://localhost:8000/api/graph/entities?name=algorithm&type=CONCEPT \
+  -H "Authorization: Bearer TOKEN"
+
+# Find cross-document links
+curl http://localhost:8000/api/graph/documents/DOC_ID/links \
+  -H "Authorization: Bearer TOKEN"
+
+# Build graph for an existing document
+curl -X POST http://localhost:8000/api/graph/documents/DOC_ID/build \
+  -H "Authorization: Bearer TOKEN"
+```
+
 ---
 
-## CLI: PageIndex Tree Generation
+## Supported Formats
 
-You can also use the PageIndex engine directly from the command line to generate tree indices:
+| Format | Extensions | Parser | Indexer |
+|--------|-----------|--------|--------|
+| PDF | `.pdf` | PDF Parser | PDF Indexer (full tree with LLM reasoning) |
+| Word | `.docx`, `.doc` | DOCX Parser | DOCX Indexer (heading-based hierarchy) |
+| HTML | `.html`, `.htm` | HTML Parser | HTML Indexer (semantic heading structure) |
+| Markdown | `.md`, `.markdown` | — | Markdown Indexer (full tree with LLM reasoning) |
+| Spreadsheet | `.xlsx`, `.xls`, `.csv` | Spreadsheet Parser | Generic Indexer (sheet-per-node) |
+| Presentation | `.pptx`, `.ppt` | PPTX Parser | Generic Indexer (slide-per-node) |
+| Image | `.png`, `.jpg`, `.tiff`, `.bmp`, `.webp`, `.gif` | Image/OCR Parser | Generic Indexer |
+
+---
+
+## CLI: Tree Index Generation
+
+Generate tree indices directly from the command line:
 
 ```bash
 # PDF
@@ -238,7 +449,7 @@ python run_pageindex.py --md_path /path/to/document.md
 
 ```
 idpkit/
-  engine/          PageIndex core — PDF/Markdown tree indexing
+  engine/          Tree indexing core — PDF/Markdown tree index generation
   core/            LLMClient (LiteLLM), schemas, storage, exceptions
   db/              SQLAlchemy 2.0 async models + session management
   graph/           Knowledge Graph — entities, edges, builder, linker, queries
@@ -252,7 +463,6 @@ idpkit/
   plugins/         Plugin system (entry-point + directory discovery)
   api/             FastAPI routes (11 routers, 54 endpoints)
   web/             Jinja2 + HTMX + Alpine.js frontend
-pageindex/         Backward-compatible shim for PageIndex imports
 ```
 
 ### Database schema
@@ -273,7 +483,7 @@ pageindex/         Backward-compatible shim for PageIndex imports
 
 ## Acknowledgements
 
-IDP Kit's document indexing and retrieval engine is built on [PageIndex](https://github.com/VectifyAI/PageIndex) by [Vectify AI](https://vectify.ai) — a vectorless, reasoning-based RAG system that uses hierarchical tree indexing and LLM-guided tree search instead of vector similarity. PageIndex achieved 98.7% accuracy on [FinanceBench](https://arxiv.org/abs/2311.11944), demonstrating the power of reasoning-based retrieval over traditional vector approaches.
+IDP Kit's document indexing and retrieval engine is built on [PageIndex](https://github.com/VectifyAI/PageIndex) by [Vectify AI](https://vectify.ai) — a vectorless, reasoning-based RAG system that uses hierarchical tree indexing and LLM-guided tree search instead of vector similarity.
 
 ---
 
