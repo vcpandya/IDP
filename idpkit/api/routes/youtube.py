@@ -231,6 +231,11 @@ async def _run_youtube_ingest(
             total = len(videos)
             created_doc_ids = []
             errors = []
+            source_counts = {
+                "youtube-transcript-api": 0,
+                "supadata": 0,
+                "none": 0,
+            }
 
             for i, video_info in enumerate(videos):
                 video_id = video_info.get("video_id", "")
@@ -249,18 +254,36 @@ async def _run_youtube_ingest(
                         }
 
                     transcript_result = fetch_transcript(video_id)
+                    transcript_source = transcript_result.metadata.get("transcript_source", "none")
+                    has_transcript = bool(transcript_result.text)
 
-                    if not transcript_result.text:
-                        error_msg = transcript_result.metadata.get("error", "No transcript")
-                        errors.append({"video_id": video_id, "error": error_msg})
-                        logger.warning("No transcript for %s: %s", video_id, error_msg)
-                        continue
+                    if transcript_source in source_counts:
+                        source_counts[transcript_source] += 1
+                    else:
+                        source_counts[transcript_source] = 1
 
                     markdown = transcript_to_markdown(transcript_result, metadata)
                     content_bytes = markdown.encode("utf-8")
 
                     title = metadata.get("title", f"YouTube {video_id}")
                     filename = f"{_sanitize_filename(title)}.md"
+
+                    doc_metadata = {
+                        **metadata,
+                        "transcript_available": has_transcript,
+                        "transcript_source": transcript_source,
+                        "transcript_metadata": transcript_result.metadata,
+                    }
+                    if has_transcript:
+                        doc_metadata["temporal_segments"] = [
+                            {
+                                "page": p["page"],
+                                "start_time": p["start_time"],
+                                "end_time": p["end_time"],
+                                "timestamp_label": p["timestamp_label"],
+                            }
+                            for p in transcript_result.pages
+                        ]
 
                     doc = Document(
                         filename=filename,
@@ -270,19 +293,7 @@ async def _run_youtube_ingest(
                         status="uploaded",
                         source_url=metadata.get("url", f"https://www.youtube.com/watch?v={video_id}"),
                         source_type="youtube",
-                        metadata_json={
-                            **metadata,
-                            "transcript_metadata": transcript_result.metadata,
-                            "temporal_segments": [
-                                {
-                                    "page": p["page"],
-                                    "start_time": p["start_time"],
-                                    "end_time": p["end_time"],
-                                    "timestamp_label": p["timestamp_label"],
-                                }
-                                for p in transcript_result.pages
-                            ],
-                        },
+                        metadata_json=doc_metadata,
                         owner_id=user_id,
                     )
                     db.add(doc)
@@ -307,10 +318,10 @@ async def _run_youtube_ingest(
                             db.add(tag)
                             await db.commit()
 
-                    if auto_index and doc.file_path:
+                    if auto_index and doc.file_path and has_transcript:
                         await _trigger_indexing(doc.id, user_id, doc.file_path, db)
 
-                    if auto_tag:
+                    if auto_tag and has_transcript:
                         try:
                             from idpkit.engine.auto_tagger import suggest_tags, apply_tags
                             llm = get_llm()
@@ -319,6 +330,9 @@ async def _run_youtube_ingest(
                                 await apply_tags(doc.id, suggestions, user_id, db)
                         except Exception as tag_exc:
                             logger.warning("Auto-tag failed for doc %s: %s", doc.id, tag_exc)
+
+                    if not has_transcript:
+                        logger.info("Created metadata-only document for video %s (no transcript)", video_id)
 
                 except Exception as exc:
                     logger.error("Failed to process video %s: %s", video_id, exc)
@@ -336,6 +350,7 @@ async def _run_youtube_ingest(
                 "document_ids": created_doc_ids,
                 "errors": errors,
                 "total_videos": total,
+                "transcript_source_counts": source_counts,
             }
             job.completed_at = datetime.now(timezone.utc)
             db.add(job)
