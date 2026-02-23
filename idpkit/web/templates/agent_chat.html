@@ -58,22 +58,39 @@
                         <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
                     <div class="msg-content">
-                        <div class="msg-header">
-                            <span x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></span>
-                            <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
-                                  x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
-                        </div>
-                        <!-- Source type banner -->
-                        <template x-if="msg.role === 'assistant' && msg.source_type">
-                            <div class="source-type-banner" :class="'banner-' + msg.source_type">
-                                <i :class="msg.source_type === 'documents' ? 'fas fa-file-alt' : msg.source_type === 'mixed' ? 'fas fa-layer-group' : 'fas fa-globe'"></i>
-                                <span x-text="msg.source_type === 'documents' ? 'Based on your documents' : msg.source_type === 'mixed' ? 'Based on documents + general knowledge' : 'Based on general knowledge'"></span>
+                        <!-- Tool messages: collapsed accordion -->
+                        <template x-if="msg.role === 'tool'">
+                            <div class="tool-accordion" x-data="{ open: false }">
+                                <button class="tool-accordion-header" @click="open = !open">
+                                    <i class="fas fa-wrench"></i>
+                                    <span x-text="'Tool: ' + (msg.tool_name || 'unknown').replace(/_/g, ' ')"></span>
+                                    <i class="fas fa-chevron-down tool-accordion-arrow" :class="open && 'open'"></i>
+                                </button>
+                                <div class="tool-accordion-body" x-show="open" x-cloak x-transition.duration.150ms>
+                                    <pre x-text="msg.content"></pre>
+                                </div>
                             </div>
                         </template>
-                        <div class="msg-body"
-                             x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.role === 'tool' ? '<pre>' + msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>' : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
-                             x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
-                        </div>
+                        <!-- User & assistant messages -->
+                        <template x-if="msg.role !== 'tool'">
+                            <div>
+                                <div class="msg-header">
+                                    <span x-text="msg.role === 'user' ? 'You' : 'IDA'"></span>
+                                    <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
+                                          x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
+                                </div>
+                                <template x-if="msg.role === 'assistant' && msg.source_type">
+                                    <div class="source-type-banner" :class="'banner-' + msg.source_type">
+                                        <i :class="msg.source_type === 'documents' ? 'fas fa-file-alt' : msg.source_type === 'mixed' ? 'fas fa-layer-group' : 'fas fa-globe'"></i>
+                                        <span x-text="msg.source_type === 'documents' ? 'Based on your documents' : msg.source_type === 'mixed' ? 'Based on documents + general knowledge' : 'Based on general knowledge'"></span>
+                                    </div>
+                                </template>
+                                <div class="msg-body"
+                                     x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
+                                     x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
             </template>
