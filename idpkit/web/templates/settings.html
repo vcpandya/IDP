@@ -34,17 +34,54 @@
         </div>
         <div class="settings-card">
             <h3><i class="fas fa-brain"></i> LLM Settings</h3>
+
+            <!-- Provider selection -->
+            <div class="form-group">
+                <label>Provider</label>
+                <div style="position:relative;">
+                    <select x-model="selectedProvider" @change="onProviderChange()">
+                        <option value="">-- Select Provider --</option>
+                        <template x-for="p in providers" :key="p.id">
+                            <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (not configured)')"></option>
+                        </template>
+                    </select>
+                    <div x-show="loadingProviders" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">
+                        <i class="fas fa-spinner fa-spin" style="color:var(--text-muted);"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model selection with search -->
             <div class="form-group">
                 <label>Default Model</label>
-                <select x-model="defaultModel">
-                    <option value="gpt-4o">GPT-4o (OpenAI)</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
-                    <option value="claude-sonnet-4-20250514">Claude Sonnet (Anthropic)</option>
-                    <option value="claude-haiku-4-5-20251001">Claude Haiku (Anthropic)</option>
-                    <option value="gemini/gemini-2.0-flash">Gemini Flash (Google)</option>
-                    <option value="ollama/llama3">Llama 3 (Ollama Local)</option>
-                </select>
+                <div class="model-search-container" @click.outside="modelDropdownOpen = false">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text"
+                        x-model="modelSearch"
+                        @focus="modelDropdownOpen = true"
+                        @input="modelDropdownOpen = true"
+                        :placeholder="loadingModels ? 'Fetching models...' : (selectedProvider ? 'Search models...' : 'Select a provider first')"
+                        :disabled="!selectedProvider"
+                        autocomplete="off">
+                    <div class="model-dropdown" x-show="modelDropdownOpen && !loadingModels" x-cloak>
+                        <template x-for="m in filteredModels" :key="m.id">
+                            <div class="model-option"
+                                :class="{'selected': defaultModel === m.id}"
+                                @click="selectModel(m)">
+                                <span x-text="m.name"></span>
+                                <span class="provider-tag" x-text="m.provider"></span>
+                            </div>
+                        </template>
+                        <div class="no-results" x-show="filteredModels.length === 0">
+                            No models found
+                        </div>
+                    </div>
+                </div>
+                <div x-show="defaultModel" style="margin-top:6px;font-size:0.8rem;color:var(--text-secondary);">
+                    Selected: <strong x-text="defaultModel"></strong>
+                </div>
             </div>
+
             <p class="hint">Model can also be set per-request via API.</p>
         </div>
         <div class="settings-card">
@@ -58,11 +95,81 @@
 <script>
 function settingsPage() {
     return {
-        user: {}, apiKey: '', defaultModel: 'gpt-4o', version: '2.0.0',
+        user: {}, apiKey: '', version: '2.0.0',
+        // Provider / Model state
+        providers: [],
+        loadingProviders: false,
+        selectedProvider: '',
+        models: [],
+        loadingModels: false,
+        modelSearch: '',
+        modelDropdownOpen: false,
+        defaultModel: '',
+
+        get filteredModels() {
+            if (!this.modelSearch) return this.models;
+            const q = this.modelSearch.toLowerCase();
+            return this.models.filter(m =>
+                m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
+            );
+        },
+
         async loadSettings() {
             const res = await fetch('/api/auth/me');
             if (res.ok) this.user = await res.json();
+            await this.loadProviders();
+            // Restore saved provider/model from localStorage
+            const savedProvider = localStorage.getItem('idpkit_provider');
+            const savedModel = localStorage.getItem('idpkit_model');
+            if (savedProvider) {
+                this.selectedProvider = savedProvider;
+                await this.fetchModels();
+                if (savedModel) {
+                    this.defaultModel = savedModel;
+                    const m = this.models.find(x => x.id === savedModel);
+                    if (m) this.modelSearch = m.name;
+                }
+            }
         },
+
+        async loadProviders() {
+            this.loadingProviders = true;
+            try {
+                const res = await fetch('/api/settings/providers');
+                if (res.ok) this.providers = await res.json();
+            } finally {
+                this.loadingProviders = false;
+            }
+        },
+
+        async onProviderChange() {
+            this.models = [];
+            this.defaultModel = '';
+            this.modelSearch = '';
+            if (this.selectedProvider) {
+                localStorage.setItem('idpkit_provider', this.selectedProvider);
+                await this.fetchModels();
+            }
+        },
+
+        async fetchModels() {
+            if (!this.selectedProvider) return;
+            this.loadingModels = true;
+            try {
+                const res = await fetch(`/api/settings/models?provider=${this.selectedProvider}`);
+                if (res.ok) this.models = await res.json();
+            } finally {
+                this.loadingModels = false;
+            }
+        },
+
+        selectModel(m) {
+            this.defaultModel = m.id;
+            this.modelSearch = m.name;
+            this.modelDropdownOpen = false;
+            localStorage.setItem('idpkit_model', m.id);
+        },
+
         async generateKey() {
             const res = await fetch('/api/auth/apikey', { method: 'POST' });
             if (res.ok) { const data = await res.json(); this.apiKey = data.api_key; }
