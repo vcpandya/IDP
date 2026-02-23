@@ -20,6 +20,33 @@
                 <label>Role</label>
                 <span class="badge" x-text="user.role"></span>
             </div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:16px 0;">
+            <h4 style="margin:0 0 12px;font-size:.95rem;color:var(--text-secondary);">
+                <i class="fas fa-lock"></i> Change Password
+            </h4>
+            <div class="form-group">
+                <label>Current Password</label>
+                <input type="password" x-model="currentPassword" placeholder="Enter current password">
+            </div>
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="password" x-model="newPassword" placeholder="Min 6 characters">
+            </div>
+            <div class="form-group">
+                <label>Confirm New Password</label>
+                <input type="password" x-model="confirmPassword" placeholder="Re-enter new password">
+            </div>
+            <div x-show="passwordError" style="color:var(--danger);font-size:.82rem;margin-bottom:8px;">
+                <i class="fas fa-exclamation-circle"></i> <span x-text="passwordError"></span>
+            </div>
+            <div x-show="passwordSuccess" style="color:var(--success);font-size:.82rem;margin-bottom:8px;">
+                <i class="fas fa-check-circle"></i> <span x-text="passwordSuccess"></span>
+            </div>
+            <button @click="changePassword()" class="btn btn-primary" :disabled="changingPassword"
+                style="width:100%;">
+                <i :class="changingPassword ? 'fas fa-spinner fa-spin' : 'fas fa-key'"></i>
+                <span x-text="changingPassword ? 'Changing...' : 'Change Password'"></span>
+            </button>
         </div>
         <div class="settings-card">
             <h3><i class="fas fa-key"></i> API Key</h3>
@@ -117,6 +144,12 @@
 function settingsPage() {
     return {
         user: {}, apiKey: '', version: '2.0.0',
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+        passwordError: '',
+        passwordSuccess: '',
+        changingPassword: false,
         // Provider / Model state
         providers: [],
         loadingProviders: false,
@@ -197,6 +230,35 @@ function settingsPage() {
         selectModel(m) {
             this.defaultModel = m.id;
             localStorage.setItem('idpkit_model', m.id);
+        },
+
+        async changePassword() {
+            this.passwordError = '';
+            this.passwordSuccess = '';
+            if (!this.currentPassword) { this.passwordError = 'Please enter your current password'; return; }
+            if (!this.newPassword || this.newPassword.length < 6) { this.passwordError = 'New password must be at least 6 characters'; return; }
+            if (this.newPassword !== this.confirmPassword) { this.passwordError = 'New passwords do not match'; return; }
+            this.changingPassword = true;
+            try {
+                const res = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ current_password: this.currentPassword, new_password: this.newPassword }),
+                });
+                if (res.ok) {
+                    this.passwordSuccess = 'Password changed successfully';
+                    this.currentPassword = '';
+                    this.newPassword = '';
+                    this.confirmPassword = '';
+                } else {
+                    const err = await res.json();
+                    this.passwordError = err.detail || 'Failed to change password';
+                }
+            } catch(e) {
+                this.passwordError = 'Network error';
+            } finally {
+                this.changingPassword = false;
+            }
         },
 
         async generateKey() {

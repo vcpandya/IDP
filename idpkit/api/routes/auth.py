@@ -207,6 +207,33 @@ async def create_api_key(
     return ApiKeyResponse(api_key=new_key)
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
+@router.post(
+    "/change-password",
+    response_model=MessageResponse,
+    summary="Change the current user's password",
+)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    user.hashed_password = hash_password(body.new_password)
+    db.add(user)
+    await db.flush()
+    logger.info("Password changed for user %s", user.username)
+    return MessageResponse(detail="Password changed successfully")
+
+
 @router.get(
     "/me",
     response_model=UserResponse,
