@@ -67,6 +67,49 @@
             </button>
         </div>
     </div>
+    <!-- YouTube Video Selection Modal -->
+    <div class="modal-overlay" x-show="showYtSelectModal" x-cloak @click.self="showYtSelectModal = false">
+        <div class="modal" style="max-width:650px;max-height:80vh;display:flex;flex-direction:column">
+            <div class="modal-header">
+                <h3><i class="fab fa-youtube" style="color:#ff0000;margin-right:6px"></i> Select Videos to Import</h3>
+                <button class="btn-close" @click="showYtSelectModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+                <span class="badge" x-text="ytPreviewType === 'playlist' ? 'Playlist' : 'Channel'" style="text-transform:capitalize"></span>
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytPreviewVideos.length + ' videos found'"></span>
+                <div style="margin-left:auto;display:flex;gap:8px">
+                    <button class="btn btn-sm" @click="ytSelectAll(true)">Select All</button>
+                    <button class="btn btn-sm" @click="ytSelectAll(false)">Deselect All</button>
+                </div>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1;padding:0">
+                <div style="max-height:400px;overflow-y:auto">
+                    <template x-for="(vid, idx) in ytPreviewVideos" :key="vid.video_id">
+                        <label style="display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--border);cursor:pointer"
+                               :style="vid.selected ? 'background:var(--bg-hover,#f0f4ff)' : ''">
+                            <input type="checkbox" x-model="vid.selected" style="width:16px;height:16px;flex-shrink:0">
+                            <img :src="'https://img.youtube.com/vi/' + vid.video_id + '/default.jpg'"
+                                 style="width:60px;height:45px;object-fit:cover;border-radius:4px;flex-shrink:0"
+                                 onerror="this.style.display='none'">
+                            <div style="flex:1;min-width:0">
+                                <div style="font-size:0.85rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="vid.title || vid.video_id"></div>
+                                <div style="font-size:0.75rem;color:var(--text-muted)" x-text="vid.video_id"></div>
+                            </div>
+                        </label>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;gap:12px">
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytSelectedCount + ' selected'"></span>
+                <div style="margin-left:auto;display:flex;gap:8px">
+                    <button class="btn" @click="showYtSelectModal = false">Cancel</button>
+                    <button class="btn btn-primary" @click="importSelectedVideos()" :disabled="ytSelectedCount === 0">
+                        <i class="fas fa-download"></i> Import <span x-text="ytSelectedCount"></span> Video(s)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -74,6 +117,7 @@ function uploadForm() {
     return {
         files: [], isDragging: false, uploading: false, autoIndex: true,
         youtubeUrl: '', ytIngesting: false, ytStatus: '', ytStatusClass: '',
+        showYtSelectModal: false, ytPreviewVideos: [], ytPreviewType: '',
         handleDrop(e) {
             this.isDragging = false;
             this.addFiles(e.dataTransfer.files);
@@ -89,17 +133,65 @@ function uploadForm() {
             if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / 1048576).toFixed(1) + ' MB';
         },
+        get ytSelectedCount() {
+            return this.ytPreviewVideos.filter(v => v.selected).length;
+        },
+        ytSelectAll(val) {
+            this.ytPreviewVideos.forEach(v => v.selected = val);
+        },
         async ingestYouTube() {
             const url = this.youtubeUrl.trim();
             if (!url) return;
             this.ytIngesting = true;
-            this.ytStatus = 'Submitting...';
+            this.ytStatus = 'Resolving YouTube URL...';
             this.ytStatusClass = 'text-info';
             try {
+                const previewRes = await fetch('/api/youtube/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url })
+                });
+                if (!previewRes.ok) {
+                    const err = await previewRes.json().catch(() => ({}));
+                    this.ytStatus = err.detail || 'Failed to resolve URL';
+                    this.ytStatusClass = 'text-danger';
+                    this.ytIngesting = false;
+                    return;
+                }
+                const preview = await previewRes.json();
+                if (preview.url_type === 'video') {
+                    this.ytStatus = '';
+                    await this._runYouTubeIngest(url, null);
+                } else {
+                    this.ytPreviewVideos = preview.videos.map(v => ({ ...v, selected: true }));
+                    this.ytPreviewType = preview.url_type;
+                    this.showYtSelectModal = true;
+                    this.ytStatus = '';
+                    this.ytIngesting = false;
+                }
+            } catch (e) {
+                this.ytStatus = 'Error: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+                this.ytIngesting = false;
+            }
+        },
+        async importSelectedVideos() {
+            const selected = this.ytPreviewVideos.filter(v => v.selected).map(v => v.video_id);
+            if (!selected.length) return;
+            this.showYtSelectModal = false;
+            await this._runYouTubeIngest(this.youtubeUrl.trim(), selected);
+        },
+        async _runYouTubeIngest(url, videoIds) {
+            this.ytIngesting = true;
+            this.ytStatus = `Importing ${videoIds ? videoIds.length : 1} video(s)...`;
+            this.ytStatusClass = 'text-info';
+            try {
+                const payload = { url, auto_index: this.autoIndex, auto_tag: false };
+                if (videoIds) payload.video_ids = videoIds;
                 const res = await fetch('/api/youtube/ingest', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ url, auto_index: this.autoIndex, auto_tag: false })
+                    body: JSON.stringify(payload)
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));

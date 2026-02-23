@@ -219,6 +219,51 @@
         </div>
     </div>
 
+    <!-- YouTube Video Selection Modal -->
+    <div class="modal-overlay" x-show="showYtSelectModal" x-cloak @click.self="showYtSelectModal = false">
+        <div class="modal" style="max-width:650px;max-height:80vh;display:flex;flex-direction:column">
+            <div class="modal-header">
+                <h3><i class="fab fa-youtube" style="color:#ff0000;margin-right:6px"></i> Select Videos to Import</h3>
+                <button class="btn-close" @click="showYtSelectModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+                <span class="badge" x-text="ytPreviewType === 'playlist' ? 'Playlist' : 'Channel'" style="text-transform:capitalize"></span>
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytPreviewVideos.length + ' videos found'"></span>
+                <div style="margin-left:auto;display:flex;gap:8px">
+                    <button class="btn btn-sm" @click="ytSelectAll(true)">Select All</button>
+                    <button class="btn btn-sm" @click="ytSelectAll(false)">Deselect All</button>
+                </div>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1;padding:0">
+                <div style="max-height:400px;overflow-y:auto">
+                    <template x-for="(vid, idx) in ytPreviewVideos" :key="vid.video_id">
+                        <label style="display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--border);cursor:pointer"
+                               :style="vid.selected ? 'background:var(--bg-hover,#f0f4ff)' : ''">
+                            <input type="checkbox" x-model="vid.selected" style="width:16px;height:16px;flex-shrink:0">
+                            <img :src="'https://img.youtube.com/vi/' + vid.video_id + '/default.jpg'"
+                                 style="width:60px;height:45px;object-fit:cover;border-radius:4px;flex-shrink:0"
+                                 onerror="this.style.display='none'">
+                            <div style="flex:1;min-width:0">
+                                <div style="font-size:0.85rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="vid.title || vid.video_id"></div>
+                                <div style="font-size:0.75rem;color:var(--text-muted)" x-text="vid.video_id"></div>
+                            </div>
+                        </label>
+                    </template>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;gap:12px">
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytSelectedCount + ' selected'"></span>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                    <label class="checkbox-label" style="font-size:0.8rem"><input type="checkbox" x-model="ytAutoTag"> Auto-tag</label>
+                    <button class="btn" @click="showYtSelectModal = false">Cancel</button>
+                    <button class="btn btn-primary" @click="importSelectedVideos()" :disabled="ytSelectedCount === 0">
+                        <i class="fas fa-download"></i> Import <span x-text="ytSelectedCount"></span> Video(s)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Tag Modal -->
     <div class="modal-overlay" x-show="showEditModal" x-cloak @click.self="showEditModal = false">
         <div class="modal" style="max-width:450px">
@@ -274,6 +319,10 @@ function knowledgeBase() {
         ytStatus: '',
         ytStatusClass: '',
         ytAutoTag: false,
+        showYtSelectModal: false,
+        ytPreviewVideos: [],
+        ytPreviewType: '',
+        ytPendingTagId: null,
 
         async init() { await this.loadData(); },
 
@@ -354,6 +403,14 @@ function knowledgeBase() {
             event.target.value = '';
         },
 
+        get ytSelectedCount() {
+            return this.ytPreviewVideos.filter(v => v.selected).length;
+        },
+
+        ytSelectAll(val) {
+            this.ytPreviewVideos.forEach(v => v.selected = val);
+        },
+
         async ingestYouTube(tagId) {
             const url = this.youtubeUrl.trim();
             if (!url) return;
@@ -361,10 +418,57 @@ function knowledgeBase() {
             this.ytStatus = 'Resolving YouTube URL...';
             this.ytStatusClass = 'text-info';
             try {
+                const previewRes = await fetch('/api/youtube/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url })
+                });
+                if (!previewRes.ok) {
+                    const err = await previewRes.json().catch(() => ({}));
+                    this.ytStatus = err.detail || 'Failed to resolve URL';
+                    this.ytStatusClass = 'text-danger';
+                    this.ytIngesting = false;
+                    return;
+                }
+                const preview = await previewRes.json();
+
+                if (preview.url_type === 'video') {
+                    this.ytStatus = '';
+                    await this._runYouTubeIngest(url, null, tagId);
+                } else {
+                    this.ytPreviewVideos = preview.videos.map(v => ({ ...v, selected: true }));
+                    this.ytPreviewType = preview.url_type;
+                    this.ytPendingTagId = tagId || null;
+                    this.showYtSelectModal = true;
+                    this.ytStatus = '';
+                    this.ytIngesting = false;
+                }
+            } catch (e) {
+                this.ytStatus = 'Error: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+                this.ytIngesting = false;
+            }
+        },
+
+        async importSelectedVideos() {
+            const selected = this.ytPreviewVideos.filter(v => v.selected).map(v => v.video_id);
+            if (!selected.length) return;
+            this.showYtSelectModal = false;
+            await this._runYouTubeIngest(this.youtubeUrl.trim(), selected, this.ytPendingTagId);
+        },
+
+        async _runYouTubeIngest(url, videoIds, tagId) {
+            this.ytIngesting = true;
+            this.ytStatus = `Importing ${videoIds ? videoIds.length : 1} video(s)...`;
+            this.ytStatusClass = 'text-info';
+            try {
+                const payload = { url, auto_index: true, auto_tag: this.ytAutoTag, tag_id: tagId || null };
+                if (videoIds) payload.video_ids = videoIds;
+
                 const res = await fetch('/api/youtube/ingest', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ url, auto_index: true, auto_tag: this.ytAutoTag, tag_id: tagId || null })
+                    body: JSON.stringify(payload)
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
@@ -375,7 +479,6 @@ function knowledgeBase() {
                 }
                 const data = await res.json();
                 this.ytStatus = `Processing ${data.video_count} video(s)...`;
-                this.ytStatusClass = 'text-info';
 
                 let attempts = 0;
                 while (attempts < 120) {
