@@ -246,7 +246,7 @@ async def upload_document(
 )
 async def list_documents(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
-    limit: int = Query(20, ge=1, le=100, description="Max records to return"),
+    limit: int = Query(20, ge=1, le=500, description="Max records to return"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

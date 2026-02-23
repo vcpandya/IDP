@@ -1797,6 +1797,105 @@ tbody tr:hover { background: var(--border-light); }
     overflow: hidden;
 }
 
+/* ========== Source Detail Modal ========== */
+.source-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    padding: 20px;
+}
+
+.source-modal {
+    background: var(--bg-white);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 700px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--shadow-lg);
+}
+
+.source-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 20px 24px 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.source-modal-header h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    color: var(--text);
+}
+
+.source-modal-meta {
+    display: flex;
+    gap: 16px;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.source-modal-meta i {
+    margin-right: 4px;
+    color: var(--primary);
+}
+
+.source-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px;
+}
+
+.source-modal-summary {
+    margin-bottom: 16px;
+}
+
+.source-modal-summary h4,
+.source-modal-text h4 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+}
+
+.source-modal-summary p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+.source-modal-text pre {
+    margin: 0;
+    padding: 14px 16px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    font-size: 0.82rem;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+    color: var(--text);
+}
+
+.source-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-top: 1px solid var(--border-light);
+}
+
 /* ========== Chat Tag Selector ========== */
 .tag-selector {
     display: flex;

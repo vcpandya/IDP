@@ -154,6 +154,13 @@ function documentView(docId) {
         doc: {}, viewMode: 'outline', query: '', answer: '', querying: false,
         indexing: false, indexProgress: 0, indexStatusText: '', indexError: '',
         jobs: [],
+        init() {
+            this.$watch('viewMode', (val) => {
+                if (val === 'tree' && this.doc.tree_index) {
+                    this.$nextTick(() => this.renderD3Tree());
+                }
+            });
+        },
         async load() {
             const res = await fetch(`/api/documents/${docId}`);
             if (res.ok) this.doc = await res.json();
@@ -162,7 +169,6 @@ function documentView(docId) {
                 this.indexStatusText = 'Resuming indexing...';
                 this.pollStatus();
             }
-            if (this.doc.tree_index && this.viewMode === 'tree') this.$nextTick(() => this.renderD3Tree());
             await this.loadJobs();
         },
         async loadJobs() {
