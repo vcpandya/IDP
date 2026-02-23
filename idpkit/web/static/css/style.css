@@ -307,6 +307,9 @@ a:hover { text-decoration: underline; }
 .btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 .btn-danger:hover { background: #b91c1c; }
 
+.btn-outline { background: transparent; color: var(--primary); border-color: var(--primary); }
+.btn-outline:hover { background: var(--primary-light); }
+
 .btn-sm { padding: 4px 10px; font-size: 0.8rem; }
 .btn-full { width: 100%; justify-content: center; padding: 12px; }
 .btn-close { background: none; border: none; cursor: pointer; padding: 4px 8px; color: var(--text-secondary); font-size: 1rem; }
