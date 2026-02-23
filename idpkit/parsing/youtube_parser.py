@@ -67,9 +67,28 @@ def _format_timestamp(seconds: float) -> str:
     return f"{m:02d}:{s:02d}"
 
 
-def _fetch_via_yt_api(video_id: str, languages: list[str]) -> Optional[tuple[list[dict], dict]]:
-    api = YouTubeTranscriptApi()
+def _fetch_via_yt_api_proxied(video_id: str, languages: list[str]) -> Optional[tuple[list[dict], dict]]:
+    proxy_user = os.environ.get("WEBSHARE_PROXY_USERNAME")
+    proxy_pass = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+    if not proxy_user or not proxy_pass:
+        logger.debug("Webshare proxy credentials not set, skipping proxied fetch")
+        return None
 
+    try:
+        from youtube_transcript_api.proxies import WebshareProxyConfig
+        api = YouTubeTranscriptApi(
+            proxy_config=WebshareProxyConfig(
+                proxy_username=proxy_user,
+                proxy_password=proxy_pass,
+            )
+        )
+        return _do_yt_api_fetch(api, video_id, languages, "webshare-proxy")
+    except Exception as exc:
+        logger.warning("Webshare proxied fetch failed for %s: %s", video_id, exc)
+        return None
+
+
+def _do_yt_api_fetch(api: YouTubeTranscriptApi, video_id: str, languages: list[str], label: str) -> Optional[tuple[list[dict], dict]]:
     try:
         transcript_list = api.list(video_id)
 
@@ -85,7 +104,7 @@ def _fetch_via_yt_api(video_id: str, languages: list[str]) -> Optional[tuple[lis
                     break
 
         if transcript_obj is None:
-            logger.info("youtube-transcript-api found no transcript for %s", video_id)
+            logger.info("%s found no transcript for %s", label, video_id)
             return None
 
         fetched = transcript_obj.fetch()
@@ -104,15 +123,20 @@ def _fetch_via_yt_api(video_id: str, languages: list[str]) -> Optional[tuple[lis
             "is_generated": getattr(fetched, "is_generated", None),
         }
 
-        logger.info("youtube-transcript-api returned %d entries for %s", len(entries), video_id)
+        logger.info("%s returned %d entries for %s", label, len(entries), video_id)
         return (entries, language_info)
 
     except TranscriptsDisabled:
-        logger.warning("youtube-transcript-api: transcripts disabled for %s", video_id)
+        logger.warning("%s: transcripts disabled for %s", label, video_id)
         return None
     except Exception as exc:
-        logger.warning("youtube-transcript-api failed for %s: %s", video_id, exc)
+        logger.warning("%s failed for %s: %s", label, video_id, exc)
         return None
+
+
+def _fetch_via_yt_api(video_id: str, languages: list[str]) -> Optional[tuple[list[dict], dict]]:
+    api = YouTubeTranscriptApi()
+    return _do_yt_api_fetch(api, video_id, languages, "youtube-transcript-api")
 
 
 def fetch_transcript(
@@ -126,12 +150,12 @@ def fetch_transcript(
     language_info = {}
     transcript_source = "none"
 
-    logger.info("Fetching transcript for %s: trying youtube-transcript-api", video_id)
-    yt_result = _fetch_via_yt_api(video_id, languages)
-    if yt_result is not None:
-        entries, language_info = yt_result
-        transcript_source = "youtube-transcript-api"
-        logger.info("Transcript for %s obtained via youtube-transcript-api", video_id)
+    logger.info("Fetching transcript for %s: trying Webshare proxy", video_id)
+    proxy_result = _fetch_via_yt_api_proxied(video_id, languages)
+    if proxy_result is not None:
+        entries, language_info = proxy_result
+        transcript_source = "webshare-proxy"
+        logger.info("Transcript for %s obtained via Webshare proxy", video_id)
 
     if entries is None:
         logger.info("Falling back to Supadata API for %s", video_id)
@@ -140,6 +164,14 @@ def fetch_transcript(
             entries = supadata_entries
             transcript_source = "supadata"
             logger.info("Transcript for %s obtained via Supadata API", video_id)
+
+    if entries is None:
+        logger.info("Falling back to direct youtube-transcript-api for %s", video_id)
+        yt_result = _fetch_via_yt_api(video_id, languages)
+        if yt_result is not None:
+            entries, language_info = yt_result
+            transcript_source = "youtube-transcript-api"
+            logger.info("Transcript for %s obtained via direct youtube-transcript-api", video_id)
 
     if entries is None:
         logger.warning("All transcript sources failed for %s, returning empty result", video_id)
