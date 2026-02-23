@@ -451,32 +451,41 @@ function graphExplorer() {
         async bulkBuildGraphs() {
             if (this.selectedDocIds.length === 0) return;
             this.bulkBuilding = true;
-            this.bulkBuildStatus = `Building 0/${this.selectedDocIds.length}...`;
-            try {
-                const res = await fetch('/api/graph/build-bulk', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ document_ids: this.selectedDocIds })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    const parts = [];
-                    if (data.indexed > 0) parts.push(`${data.indexed} indexed`);
-                    if (data.built > 0) parts.push(`${data.built} graphs built`);
-                    if (data.skipped > 0) parts.push(`${data.skipped} skipped`);
-                    if (data.failed > 0) parts.push(`${data.failed} failed`);
-                    this.bulkBuildStatus = `Done: ${parts.join(', ')}`;
-                    await this.loadDocGraph();
-                    await this.searchEntities();
-                    setTimeout(() => { this.bulkBuildStatus = ''; }, 5000);
-                } else {
-                    this.bulkBuildStatus = 'Build failed';
-                    setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
+            const ids = [...this.selectedDocIds];
+            const total = ids.length;
+            let indexed = 0, built = 0, skipped = 0, failed = 0;
+            for (let i = 0; i < total; i++) {
+                const docId = ids[i];
+                const name = this.docName(docId);
+                this.bulkBuildStatus = `Processing ${i + 1}/${total}: ${name}...`;
+                try {
+                    const res = await fetch('/api/graph/build-bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_ids: [docId] })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        indexed += data.indexed || 0;
+                        built += data.built || 0;
+                        skipped += data.skipped || 0;
+                        failed += data.failed || 0;
+                    } else {
+                        failed++;
+                    }
+                } catch(e) {
+                    failed++;
                 }
-            } catch(e) {
-                this.bulkBuildStatus = 'Build failed';
-                setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
             }
+            const parts = [];
+            if (indexed > 0) parts.push(`${indexed} indexed`);
+            if (built > 0) parts.push(`${built} graphs built`);
+            if (skipped > 0) parts.push(`${skipped} skipped`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            this.bulkBuildStatus = `Done: ${parts.join(', ')}`;
+            await this.loadDocGraph();
+            await this.searchEntities();
+            setTimeout(() => { this.bulkBuildStatus = ''; }, 5000);
             this.bulkBuilding = false;
         },
 
