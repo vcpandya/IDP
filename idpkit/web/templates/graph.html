@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Graph - IDP Kit{% endblock %}
+{% block head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+.graph-layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; height: calc(100vh - 120px); }
+.graph-sidebar { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.graph-main { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); position: relative; overflow: hidden; display: flex; flex-direction: column; }
+.graph-canvas { flex: 1; position: relative; }
+.graph-canvas svg { width: 100%; height: 100%; }
+.sidebar-section { display: flex; flex-direction: column; gap: 8px; }
+.sidebar-section h4 { margin: 0; font-size: 0.85rem; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.5px; }
+.search-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.search-input:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+.type-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.type-btn { padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border, #e5e7eb); background: transparent; font-size: 0.75rem; cursor: pointer; transition: all 0.15s; }
+.type-btn.active { background: #7c3aed; color: #fff; border-color: #7c3aed; }
+.type-btn:hover:not(.active) { border-color: #7c3aed; color: #7c3aed; }
+.doc-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.entity-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+.entity-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s; border: 1px solid transparent; }
+.entity-item:hover { background: var(--bg, #f3f4f6); }
+.entity-item.selected { background: #f3e8ff; border-color: #7c3aed; }
+.entity-type-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+.entity-name { font-size: 0.85rem; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entity-count { font-size: 0.75rem; color: var(--text-muted, #6b7280); }
+.graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border, #e5e7eb); }
+.graph-toolbar .btn { padding: 4px 12px; font-size: 0.8rem; }
+.graph-info { margin-left: auto; font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+.empty-graph { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-muted, #6b7280); gap: 12px; }
+.empty-graph i { font-size: 3rem; opacity: 0.3; }
+.empty-graph p { font-size: 0.95rem; max-width: 400px; text-align: center; }
+.detail-panel { position: absolute; top: 12px; right: 12px; width: 300px; background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 16px; z-index: 10; max-height: 60vh; overflow-y: auto; }
+.detail-panel h3 { margin: 0 0 4px; font-size: 1rem; }
+.detail-panel .detail-type { font-size: 0.75rem; margin-bottom: 12px; }
+.detail-section { margin-bottom: 12px; }
+.detail-section h5 { margin: 0 0 4px; font-size: 0.8rem; color: var(--text-muted, #6b7280); text-transform: uppercase; }
+.mention-item { font-size: 0.8rem; padding: 4px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.mention-item:last-child { border-bottom: none; }
+.neighbor-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; padding: 4px 0; cursor: pointer; }
+.neighbor-item:hover { color: #7c3aed; }
+.relation-label { font-size: 0.65rem; color: var(--text-muted, #6b7280); background: var(--bg, #f3f4f6); padding: 1px 5px; border-radius: 3px; }
+.close-panel { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted, #6b7280); }
+.close-panel:hover { color: var(--text, #111); }
+.node-label { font-size: 11px; pointer-events: none; }
+.link-label { font-size: 9px; fill: #999; pointer-events: none; }
+.stats-row { display: flex; gap: 12px; }
+.stat-mini { text-align: center; flex: 1; padding: 8px; background: var(--bg, #f9fafb); border-radius: 8px; }
+.stat-mini .val { font-size: 1.2rem; font-weight: 700; color: #7c3aed; }
+.stat-mini .lbl { font-size: 0.7rem; color: var(--text-muted, #6b7280); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-project-diagram"></i> Knowledge Graph</h2>
+</div>
+
+<div class="graph-layout" x-data="graphExplorer()" x-init="init()">
+    <div class="graph-sidebar">
+        <div class="stats-row">
+            <div class="stat-mini">
+                <div class="val" x-text="totalEntities"></div>
+                <div class="lbl">Entities</div>
+            </div>
+            <div class="stat-mini">
+                <div class="val" x-text="graphNodes.length"></div>
+                <div class="lbl">Visible</div>
+            </div>
+            <div class="stat-mini">
+                <div class="val" x-text="graphEdges.length"></div>
+                <div class="lbl">Edges</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Document</h4>
+            <select class="doc-select" x-model="selectedDocId" @change="loadDocGraph()">
+                <option value="">All entities (search below)</option>
+                <template x-for="doc in documents" :key="doc.id">
+                    <option :value="doc.id" x-text="doc.filename"></option>
+                </template>
+            </select>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Search Entities</h4>
+            <input type="text" class="search-input" placeholder="Search by name..." x-model="searchQuery" @input.debounce.300ms="searchEntities()">
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Entity Types</h4>
+            <div class="type-filters">
+                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities()">All</button>
+                <template x-for="t in entityTypes" :key="t">
+                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities()" x-text="t"></button>
+                </template>
+            </div>
+        </div>
+
+        <div class="sidebar-section" style="flex:1;min-height:0">
+            <h4>Entities <span x-show="entities.length > 0" x-text="'(' + entities.length + ')'" style="font-weight:normal"></span></h4>
+            <div class="entity-list">
+                <template x-for="ent in entities" :key="ent.id">
+                    <div class="entity-item" :class="{ selected: selectedEntity?.id === ent.id }" @click="selectEntity(ent)">
+                        <span class="entity-type-badge" :style="'background:' + typeColor(ent.entity_type) + '22; color:' + typeColor(ent.entity_type)" x-text="ent.entity_type"></span>
+                        <span class="entity-name" x-text="ent.name"></span>
+                        <span class="entity-count" x-text="(ent.mention_count || 0) + ' mentions'"></span>
+                    </div>
+                </template>
+                <div x-show="entities.length === 0 && !loadingEntities" style="font-size:0.85rem;color:var(--text-muted);padding:8px">
+                    <span x-show="searchQuery || selectedType">No matching entities found.</span>
+                    <span x-show="!searchQuery && !selectedType && !selectedDocId">Select a document or search to explore entities.</span>
+                    <span x-show="!searchQuery && !selectedType && selectedDocId">No entities found for this document. Try building the graph first.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="graph-main">
+        <div class="graph-toolbar">
+            <button class="btn btn-sm" @click="zoomIn()" title="Zoom in"><i class="fas fa-search-plus"></i></button>
+            <button class="btn btn-sm" @click="zoomOut()" title="Zoom out"><i class="fas fa-search-minus"></i></button>
+            <button class="btn btn-sm" @click="resetZoom()" title="Reset view"><i class="fas fa-expand"></i></button>
+            <button class="btn btn-sm btn-primary" x-show="selectedDocId && graphNodes.length === 0" @click="buildGraph()" :disabled="building">
+                <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
+            </button>
+            <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
+        </div>
+        <div class="graph-canvas" id="graphCanvas">
+            <div class="empty-graph" x-show="graphNodes.length === 0 && !loadingGraph">
+                <i class="fas fa-project-diagram"></i>
+                <p x-show="!selectedDocId">Select a document to visualize its entity graph, or search for entities across all documents.</p>
+                <p x-show="selectedDocId">No graph data for this document yet. Click <strong>Build Graph</strong> to extract entities and relationships.</p>
+            </div>
+        </div>
+
+        <div class="detail-panel" x-show="detailEntity" x-cloak>
+            <button class="close-panel" @click="detailEntity = null">&times;</button>
+            <h3 x-text="detailEntity?.entity?.name"></h3>
+            <div class="detail-type">
+                <span class="entity-type-badge" :style="detailEntity ? 'background:' + typeColor(detailEntity.entity.entity_type) + '22; color:' + typeColor(detailEntity.entity.entity_type) : ''" x-text="detailEntity?.entity?.entity_type"></span>
+            </div>
+
+            <div class="detail-section" x-show="detailEntity?.mentions?.length > 0">
+                <h5>Mentions (<span x-text="detailEntity?.mentions?.length"></span>)</h5>
+                <template x-for="m in (detailEntity?.mentions || []).slice(0, 10)" :key="m.node_id">
+                    <div class="mention-item">
+                        <div x-text="m.node_title || m.node_id" style="font-weight:500"></div>
+                        <div x-show="m.document_filename" style="font-size:0.75rem;color:var(--text-muted)" x-text="m.document_filename"></div>
+                    </div>
+                </template>
+                <div x-show="(detailEntity?.mentions || []).length > 10" style="font-size:0.75rem;color:var(--text-muted);padding-top:4px" x-text="'+ ' + (detailEntity.mentions.length - 10) + ' more'"></div>
+            </div>
+
+            <div class="detail-section" x-show="detailEntity?.edges?.length > 0">
+                <h5>Relationships (<span x-text="detailEntity?.edges?.length"></span>)</h5>
+                <template x-for="e in (detailEntity?.edges || []).slice(0, 15)" :key="e.id || (e.source_entity_id + e.target_entity_id)">
+                    <div class="neighbor-item">
+                        <span class="relation-label" x-text="e.relation_type"></span>
+                        <span x-text="e.target_entity_name || e.source_entity_name || '...'"></span>
+                    </div>
+                </template>
+            </div>
+
+            <a :href="'/chat?prompt=Tell me about the entity ' + encodeURIComponent(detailEntity?.entity?.name || '') + ' and its connections across my documents'" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
+                <i class="fas fa-brain"></i> Ask IDA about this
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+const TYPE_COLORS = {
+    PERSON: '#e11d48', ORGANIZATION: '#2563eb', LOCATION: '#059669',
+    CONCEPT: '#7c3aed', TERM: '#d97706', REGULATION: '#dc2626',
+    PRODUCT: '#0891b2', EVENT: '#ea580c', DATE: '#65a30d', METRIC: '#db2777'
+};
+
+function graphExplorer() {
+    return {
+        documents: [],
+        entities: [],
+        selectedDocId: '',
+        searchQuery: '',
+        selectedType: '',
+        entityTypes: ['PERSON','ORGANIZATION','LOCATION','CONCEPT','TERM','REGULATION','PRODUCT','EVENT','DATE','METRIC'],
+        selectedEntity: null,
+        detailEntity: null,
+        graphNodes: [],
+        graphEdges: [],
+        totalEntities: 0,
+        loadingEntities: false,
+        loadingGraph: false,
+        building: false,
+        simulation: null,
+        svg: null,
+        zoom: null,
+
+        async init() {
+            const res = await fetch('/api/documents/?limit=100');
+            if (res.ok) {
+                const data = await res.json();
+                this.documents = (data.items || data.documents || []).filter(d => d.status === 'indexed');
+            }
+            await this.searchEntities();
+        },
+
+        typeColor(t) { return TYPE_COLORS[t] || '#6b7280'; },
+
+        async searchEntities() {
+            this.loadingEntities = true;
+            let url = '/api/graph/entities?limit=100';
+            if (this.searchQuery) url += '&name=' + encodeURIComponent(this.searchQuery);
+            if (this.selectedType) url += '&entity_type=' + encodeURIComponent(this.selectedType);
+            try {
+                const res = await fetch(url);
+                if (res.ok) {
+                    this.entities = await res.json();
+                    if (!this.searchQuery && !this.selectedType) this.totalEntities = this.entities.length;
+                }
+            } catch(e) {}
+            this.loadingEntities = false;
+        },
+
+        async loadDocGraph() {
+            if (!this.selectedDocId) {
+                this.graphNodes = [];
+                this.graphEdges = [];
+                this.clearGraph();
+                return;
+            }
+            this.loadingGraph = true;
+            try {
+                const [vizRes, entRes] = await Promise.all([
+                    fetch(`/api/graph/documents/${this.selectedDocId}/visualization`),
+                    fetch(`/api/graph/documents/${this.selectedDocId}/entities`)
+                ]);
+                if (vizRes.ok) {
+                    const data = await vizRes.json();
+                    this.graphNodes = data.nodes || [];
+                    this.graphEdges = data.edges || [];
+                    this.$nextTick(() => this.renderGraph());
+                }
+                if (entRes.ok) {
+                    this.entities = await entRes.json();
+                    this.totalEntities = this.entities.length;
+                }
+            } catch(e) {}
+            this.loadingGraph = false;
+        },
+
+        async selectEntity(ent) {
+            this.selectedEntity = ent;
+            try {
+                const res = await fetch(`/api/graph/entities/${ent.id}`);
+                if (res.ok) {
+                    this.detailEntity = await res.json();
+                }
+            } catch(e) {}
+            this.highlightNode(ent.id);
+        },
+
+        async buildGraph() {
+            if (!this.selectedDocId) return;
+            this.building = true;
+            try {
+                const res = await fetch(`/api/graph/documents/${this.selectedDocId}/build`, { method: 'POST' });
+                if (res.ok) {
+                    await this.loadDocGraph();
+                }
+            } catch(e) {}
+            this.building = false;
+        },
+
+        clearGraph() {
+            const canvas = document.getElementById('graphCanvas');
+            const existing = canvas.querySelector('svg');
+            if (existing) existing.remove();
+            if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+        },
+
+        renderGraph() {
+            this.clearGraph();
+            if (this.graphNodes.length === 0) return;
+
+            const canvas = document.getElementById('graphCanvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            const svg = d3.select(canvas).append('svg')
+                .attr('width', width).attr('height', height);
+
+            this.zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
+            svg.call(this.zoom);
+            this.svg = svg;
+
+            const g = svg.append('g');
+
+            const nodes = this.graphNodes.map(n => ({...n}));
+            const edges = this.graphEdges.map(e => ({
+                source: e.source, target: e.target,
+                relation_type: e.relation_type, weight: e.weight || 1
+            }));
+
+            const nodeIds = new Set(nodes.map(n => n.id));
+            const validEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(validEdges).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-200))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(30));
+            this.simulation = simulation;
+
+            const link = g.append('g').selectAll('line')
+                .data(validEdges).join('line')
+                .attr('stroke', '#ddd').attr('stroke-width', d => Math.min(d.weight, 3))
+                .attr('stroke-opacity', 0.6);
+
+            const linkLabel = g.append('g').selectAll('text')
+                .data(validEdges).join('text')
+                .attr('class', 'link-label').attr('text-anchor', 'middle')
+                .text(d => d.relation_type);
+
+            const node = g.append('g').selectAll('g')
+                .data(nodes).join('g')
+                .attr('class', 'graph-node')
+                .style('cursor', 'pointer')
+                .call(d3.drag()
+                    .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+                    .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+                    .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+                );
+
+            const self = this;
+            node.on('click', (e, d) => {
+                const ent = self.entities.find(en => en.id === d.id);
+                if (ent) self.selectEntity(ent);
+            });
+
+            node.append('circle')
+                .attr('r', 12)
+                .attr('fill', d => TYPE_COLORS[d.type] || '#6b7280')
+                .attr('stroke', '#fff').attr('stroke-width', 2);
+
+            node.append('text')
+                .attr('class', 'node-label')
+                .attr('dy', -18).attr('text-anchor', 'middle')
+                .text(d => d.label.length > 20 ? d.label.slice(0, 18) + '...' : d.label);
+
+            simulation.on('tick', () => {
+                link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                linkLabel.attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        },
+
+        highlightNode(entityId) {
+            if (!this.svg) return;
+            this.svg.selectAll('.graph-node circle')
+                .attr('stroke', d => d.id === entityId ? '#7c3aed' : '#fff')
+                .attr('stroke-width', d => d.id === entityId ? 4 : 2)
+                .attr('r', d => d.id === entityId ? 16 : 12);
+        },
+
+        zoomIn() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 1.3); },
+        zoomOut() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 0.7); },
+        resetZoom() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.transform, d3.zoomIdentity); }
+    };
+}
+</script>
+{% endblock %}
