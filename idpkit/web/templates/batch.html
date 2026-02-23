@@ -280,9 +280,20 @@
                 </div>
                 <div class="bp-setting">
                     <label><i class="fas fa-sliders-h"></i> Options</label>
-                    <textarea x-model="optionsText" rows="2" placeholder="e.g. Keep it brief, focus on financial data, output in bullet points"
+                    <textarea x-model="optionsText" @input="convertedOptions = null" rows="2" placeholder="e.g. Keep it brief, focus on financial data, output in bullet points"
                         style="font-size:.82rem;"></textarea>
-                    <span class="bp-setting-hint">Describe processing preferences in plain text — AI will interpret them</span>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                        <span class="bp-setting-hint" style="flex:1;">Describe preferences in plain text — AI converts to structured options</span>
+                        <button class="btn btn-sm" @click="convertOptions()" :disabled="!optionsText.trim() || convertingOptions" x-show="optionsText.trim()"
+                            style="font-size:.72rem;padding:2px 8px;white-space:nowrap;">
+                            <i :class="convertingOptions ? 'fas fa-spinner fa-spin' : 'fas fa-magic'"></i>
+                            <span x-text="convertingOptions ? 'Converting...' : 'Preview JSON'"></span>
+                        </button>
+                    </div>
+                    <div x-show="convertedOptions" style="margin-top:6px;">
+                        <pre style="background:var(--bg-light);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-size:.75rem;max-height:120px;overflow:auto;margin:0;" x-text="JSON.stringify(convertedOptions, null, 2)"></pre>
+                        <span style="font-size:.7rem;color:var(--success);"><i class="fas fa-check-circle"></i> Structured options will be used</span>
+                    </div>
                 </div>
                 <div class="bp-setting">
                     <label><i class="fas fa-tachometer-alt"></i> Concurrency: <strong x-text="concurrency" style="color:var(--primary);"></strong></label>
@@ -498,6 +509,8 @@ function batchPage() {
         refUploadFiles: [],
         refDragOver: false,
         refUploading: false,
+        convertingOptions: false,
+        convertedOptions: null,
 
         formatSize(bytes) {
             if (!bytes) return '';
@@ -685,17 +698,43 @@ function batchPage() {
             this.refUploading = false;
         },
 
+        async convertOptions() {
+            if (!this.optionsText.trim()) return;
+            this.convertingOptions = true;
+            this.convertedOptions = null;
+            try {
+                const res = await fetch('/api/batch/convert-options', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ text: this.optionsText, tool_name: this.toolName }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.convertedOptions = data.options;
+                } else {
+                    console.error('Options conversion failed');
+                }
+            } catch(e) {
+                console.error('Options conversion error:', e);
+            } finally {
+                this.convertingOptions = false;
+            }
+        },
+
         async runBatch() {
-            let fullPrompt = this.prompt || '';
+            let options = null;
             if (this.optionsText.trim()) {
-                fullPrompt += '\n\nAdditional processing preferences:\n' + this.optionsText.trim();
+                if (!this.convertedOptions) {
+                    await this.convertOptions();
+                }
+                options = this.convertedOptions;
             }
             const body = {
                 template_id: this.templateId || null,
                 tool_name: this.toolName,
                 document_ids: this.selectedDocs,
-                prompt: fullPrompt || null,
-                options: null,
+                prompt: this.prompt || null,
+                options: options,
                 model: this.modelOverride || null,
                 concurrency: parseInt(this.concurrency),
                 reference_doc_ids: this.refDocs.length > 0 ? this.refDocs : null,
@@ -719,11 +758,11 @@ function batchPage() {
             for (const f of this.uploadFiles) fd.append('files', f);
             fd.append('tool_name', this.toolName);
             if (this.templateId) fd.append('template_id', this.templateId);
-            let uploadPrompt = this.prompt || '';
+            if (this.prompt) fd.append('prompt', this.prompt);
             if (this.optionsText.trim()) {
-                uploadPrompt += '\n\nAdditional processing preferences:\n' + this.optionsText.trim();
+                if (!this.convertedOptions) await this.convertOptions();
+                if (this.convertedOptions) fd.append('options', JSON.stringify(this.convertedOptions));
             }
-            if (uploadPrompt) fd.append('prompt', uploadPrompt);
             if (this.modelOverride) fd.append('model', this.modelOverride);
             fd.append('auto_index', this.autoIndex);
             fd.append('concurrency', this.concurrency);
