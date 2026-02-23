@@ -836,6 +836,30 @@ tbody tr:hover { background: var(--border-light); }
     word-wrap: break-word;
 }
 
+.msg-body h1 { font-size: 1.4rem; font-weight: 700; margin: 16px 0 8px; }
+.msg-body h2 { font-size: 1.2rem; font-weight: 700; margin: 14px 0 6px; }
+.msg-body h3 { font-size: 1.05rem; font-weight: 600; margin: 12px 0 6px; }
+.msg-body h4 { font-size: 0.95rem; font-weight: 600; margin: 10px 0 4px; }
+
+.msg-body p { margin: 6px 0; }
+
+.msg-body ul, .msg-body ol {
+    margin: 6px 0;
+    padding-left: 24px;
+}
+
+.msg-body li { margin-bottom: 4px; }
+.msg-body li > ul, .msg-body li > ol { margin-top: 4px; }
+
+.msg-body code {
+    background: var(--border-light);
+    color: var(--danger);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+
 .msg-body pre {
     background: #1e293b;
     color: #e2e8f0;
@@ -845,6 +869,54 @@ tbody tr:hover { background: var(--border-light); }
     overflow-x: auto;
     margin: 8px 0;
 }
+
+.msg-body pre code {
+    background: none;
+    color: inherit;
+    padding: 0;
+    border-radius: 0;
+    font-size: inherit;
+}
+
+.msg-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 0.85rem;
+}
+
+.msg-body table th, .msg-body table td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+}
+
+.msg-body table th {
+    background: var(--border-light);
+    font-weight: 600;
+}
+
+.msg-body table tr:hover { background: var(--border-light); }
+
+.msg-body blockquote {
+    border-left: 3px solid var(--primary);
+    margin: 8px 0;
+    padding: 6px 14px;
+    color: var(--text-secondary);
+    background: var(--primary-light);
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.msg-body hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 12px 0;
+}
+
+.msg-body a { color: var(--primary); text-decoration: underline; }
+.msg-body a:hover { color: var(--primary-hover); }
+
+.msg-body img { max-width: 100%; border-radius: var(--radius); margin: 8px 0; }
 
 .typing-indicator {
     display: flex;
@@ -868,12 +940,47 @@ tbody tr:hover { background: var(--border-light); }
     30% { transform: translateY(-6px); opacity: 1; }
 }
 
+.chat-input-area {
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    padding: 12px 20px 16px;
+}
+
+.chat-upload-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.chat-upload-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    max-width: 220px;
+}
+
+.chat-upload-tag.uploading { background: var(--warning-light); color: var(--warning); }
+.chat-upload-tag.indexing { background: var(--info-light); color: var(--info); }
+.chat-upload-tag.ready { background: var(--success-light); color: var(--success); }
+.chat-upload-tag.failed { background: var(--danger-light); color: var(--danger); }
+
+.chat-upload-tag .tag-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chat-upload-tag .fa-spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .chat-input {
     display: flex;
     gap: 8px;
-    padding: 16px 20px;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
 }
 
 .chat-input input {
@@ -889,6 +996,23 @@ tbody tr:hover { background: var(--border-light); }
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
+}
+
+.btn-upload {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 8px 12px;
+    font-size: 1rem;
+    transition: all var(--transition);
+}
+
+.btn-upload:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
 }
 
 /* ========== Tools ========== */
