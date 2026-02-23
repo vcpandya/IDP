@@ -1648,6 +1648,15 @@ tbody tr:hover { background: var(--border-light); }
     background: var(--bg-white);
 }
 
+.doc-search.model-search-right .search-icon {
+    left: auto;
+    right: 12px;
+}
+
+.doc-search.model-search-right input {
+    padding: 8px 34px 8px 14px;
+}
+
 .doc-search input:focus {
     outline: none;
     border-color: var(--primary);

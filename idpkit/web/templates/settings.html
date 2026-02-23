@@ -58,9 +58,9 @@
                 </label>
 
                 <!-- Search filter (shown when many models) -->
-                <div x-show="models.length > 10" class="doc-search" style="margin-bottom:6px;">
-                    <i class="fas fa-search search-icon"></i>
+                <div x-show="models.length > 10" class="doc-search model-search-right" style="margin-bottom:6px;">
                     <input type="text" x-model="modelSearch" placeholder="Filter models...">
+                    <i class="fas fa-search search-icon"></i>
                 </div>
 
                 <div x-show="loadingModels" style="padding:10px;font-size:.85rem;color:var(--text-muted);">
