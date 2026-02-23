@@ -292,7 +292,12 @@
                     </div>
                     <div x-show="convertedOptions" style="margin-top:6px;">
                         <pre style="background:var(--bg-light);border:1px solid var(--border);border-radius:var(--radius);padding:8px;font-size:.75rem;max-height:120px;overflow:auto;margin:0;" x-text="JSON.stringify(convertedOptions, null, 2)"></pre>
-                        <span style="font-size:.7rem;color:var(--success);"><i class="fas fa-check-circle"></i> Structured options will be used</span>
+                        <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                            <span style="font-size:.7rem;color:var(--success);"><i class="fas fa-check-circle"></i> Structured options ready</span>
+                            <span x-show="convertedSchema && convertedSchema.properties" style="font-size:.68rem;color:var(--text-muted);">
+                                (<span x-text="Object.keys(convertedSchema?.properties || {}).length"></span> fields detected)
+                            </span>
+                        </div>
                     </div>
                 </div>
                 <div class="bp-setting">
