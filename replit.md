@@ -16,6 +16,7 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Knowledge Graph**: entities, entity_mentions, graph_edges (standard relational tables, no graph DB needed)
 - **Batch Processing**: processing_templates, batch_jobs, batch_items
 - **Tags**: tags, document_tags (many-to-many junction table for document grouping)
+- **Document extra columns**: `source_url` (YouTube/external URL), `source_type` (upload/youtube)
 - **Connection**: `idpkit/db/session.py` reads `DATABASE_URL`, converts to `postgresql+asyncpg://`, strips sslmode params
 - **Schema**: Auto-created via `Base.metadata.create_all()` at startup; includes migration helper to drop/recreate legacy `conversation_messages` table if missing `owner_id` column
 - **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
@@ -46,12 +47,13 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Selection**: `get_storage()` in `idpkit/api/deps.py` auto-selects based on env vars
 
 ## Project Structure
-- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings, tags)
+- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings, tags, youtube)
 - `idpkit/api/deps.py` — Shared dependencies: auth, storage, rate limiter
 - `idpkit/web/` — Web UI routes and Jinja2 templates
 - `idpkit/db/` — Database models, session management, and admin seeding
-- `idpkit/engine/` — PageIndex document indexing engine
-- `idpkit/parsing/` — Document parsers (PDF, DOCX, HTML, PPTX, etc.)
+- `idpkit/engine/` — PageIndex document indexing engine, AI auto-tagger
+- `idpkit/parsing/` — Document parsers (PDF, DOCX, HTML, PPTX, YouTube transcripts, etc.)
+- `idpkit/youtube/` — YouTube URL resolver, metadata fetcher (Data API v3), playlist/channel enumeration
 - `idpkit/processing/` — Document processing pipelines
 - `idpkit/retrieval/` — RAG retrieval and search (tree-based, no vector DB)
 - `idpkit/agent/` — AI agent with tools
@@ -80,6 +82,7 @@ The IDA agent (`idpkit/agent/agent.py` + `idpkit/agent/tools.py`) has 12 tools:
 - `SESSION_SECRET` — JWT signing key (required for production; ephemeral random fallback in dev)
 - `ALLOWED_ORIGINS` — Comma-separated CORS allowed origins (optional)
 - `JINA_API_KEY` — Jina AI API key for web search (`s.jina.ai`) and URL reader (`r.jina.ai`) tools in IDA agent (optional)
+- `YOUTUBE_API_KEY` — YouTube Data API v3 key for video metadata, playlist/channel resolution (required for YouTube ingestion)
 
 ## Running
 - Dev: `python run_server.py` (port 5000, host 0.0.0.0)
@@ -93,6 +96,8 @@ The IDA agent (`idpkit/agent/agent.py` + `idpkit/agent/tools.py`) has 12 tools:
 - passlib + bcrypt (auth), python-jose (JWT)
 - slowapi (rate limiting)
 - NetworkX (optional, for graph analytics)
+- youtube-transcript-api (YouTube transcript extraction)
+- google-api-python-client (YouTube Data API v3)
 
 ## Retrieval / Search Pipeline
 - **Tree index format**: `{"doc_name": ..., "doc_description": ..., "structure": [...]}` — the `structure` key holds the actual hierarchical node list
@@ -106,6 +111,8 @@ The IDA agent (`idpkit/agent/agent.py` + `idpkit/agent/tools.py`) has 12 tools:
 - **Agent Chat**: Tool call messages render as collapsible accordions; source citations open in popup modal with text preview. Supports `?prompt=` URL param to pre-populate the input field (used by dashboard tiles).
 - **Dashboard tiles**: "Knowledge Graph" links to `/graph`; "Cross-Document Search", "Entity Discovery", and "Report Generation" tiles link to `/chat?prompt=...` with contextual example prompts pre-filled in the chat input.
 - **Knowledge Graph page** (`/graph`): Dedicated explorer with entity search, type filtering, D3 force-directed graph visualization, entity detail panel with mentions and relationships, and "Ask IDA" link. Supports multi-document selection (add/remove individual docs) and tag-based filtering (select a tag group to load all its indexed documents). Multi-doc graph uses `GET /api/graph/visualization?doc_ids=...&tag_id=...` endpoint backed by `get_multi_doc_visualization_data()`. Entity types loaded dynamically from `/api/graph/entity-types`; icons auto-resolve for unknown types via keyword matching. Added to sidebar nav.
+- **YouTube Ingestion**: Knowledge Base and Upload pages have a YouTube URL input panel. Accepts video, playlist, or channel URLs. Transcripts are extracted with temporal segmentation (2-min windows with timestamps as structural elements like page numbers). Videos become Document records with `format="youtube"`. Playlists/channels resolve to multiple documents (capped at 100 videos). Supports auto-tag and auto-index options. Progress polling shows real-time status.
+- **AI Auto-Tagging**: Auto-tag button on document rows in Knowledge Base. Uses LLM to analyze document content (filename, metadata, description, tree structure) and suggest 1-3 tags. Prefers existing user tags when they match. Can auto-apply suggestions. Also available during YouTube ingestion via checkbox. API: `POST /api/documents/{id}/auto-tag`.
 - **Cumulative entity type bank**: Entity extraction no longer enforces a hardcoded type whitelist. The LLM prompt includes all existing entity types from the DB (merged with defaults) and allows creating new UPPER_SNAKE_CASE types when none fit. Types validated by regex format only. This builds a growing corpus across documents.
 - **Batch Processing**: Redesigned with 3-step flow (Instructions → Select Documents to Process → Settings). Reference documents attach to the prompt (Step 1) as AI context. Two-pass schema generation: when no template is selected, Pass 1 generates a JSON schema from the prompt + reference docs, Pass 2 uses that schema as structured output constraint for all target documents.
 - **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering

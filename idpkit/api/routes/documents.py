@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from idpkit.db.session import get_db
 from idpkit.db.models import Document, User
-from idpkit.api.deps import get_current_user, get_storage
+from idpkit.api.deps import get_current_user, get_storage, get_llm
 from idpkit.core.storage import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -95,6 +95,8 @@ class DocumentResponse(BaseModel):
     description: Optional[str] = None
     metadata_json: Optional[dict] = None
     tree_index: Optional[dict] = None
+    source_url: Optional[str] = None
+    source_type: Optional[str] = None
     owner_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -550,4 +552,58 @@ async def download_document(
             "Content-Disposition": f'attachment; filename="{doc.filename}"',
             "Content-Length": str(len(data)),
         },
+    )
+
+
+class AutoTagRequest(BaseModel):
+    apply: bool = Field(False, description="If true, automatically apply suggested tags")
+
+
+class AutoTagSuggestion(BaseModel):
+    name: str
+    existing_id: Optional[str] = None
+    confidence: float
+
+
+class AutoTagResponse(BaseModel):
+    document_id: str
+    suggestions: list[AutoTagSuggestion]
+    applied: list[dict] = []
+
+
+@router.post(
+    "/{doc_id}/auto-tag",
+    response_model=AutoTagResponse,
+    summary="AI-powered auto-tagging for a document",
+)
+async def auto_tag_document(
+    doc_id: str,
+    body: Optional[AutoTagRequest] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if body is None:
+        body = AutoTagRequest()
+
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    from idpkit.engine.auto_tagger import suggest_tags, apply_tags
+    from idpkit.core.llm import LLMClient
+
+    llm = get_llm()
+    suggestions = await suggest_tags(doc_id, user.id, db, llm)
+
+    applied = []
+    if body.apply and suggestions:
+        applied = await apply_tags(doc_id, suggestions, user.id, db)
+
+    return AutoTagResponse(
+        document_id=doc_id,
+        suggestions=[AutoTagSuggestion(**s) for s in suggestions],
+        applied=applied,
     )

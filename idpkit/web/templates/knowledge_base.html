@@ -13,15 +13,36 @@
         </div>
 
         <!-- Upload Zone (untagged) -->
-        <div class="upload-zone kb-upload-zone"
-             @click="$refs.kbFileInput.click()"
-             @dragover.prevent="$el.classList.add('dragover')"
-             @dragleave.prevent="$el.classList.remove('dragover')"
-             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event)">
-            <input type="file" x-ref="kbFileInput" multiple style="display:none" @change="handleUpload($event)">
-            <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-            <h3>Drop files here or click to upload</h3>
-            <p class="upload-hint">PDF, DOCX, MD, HTML, XLSX, CSV, PPTX, Images</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="upload-zone kb-upload-zone"
+                 @click="$refs.kbFileInput.click()"
+                 @dragover.prevent="$el.classList.add('dragover')"
+                 @dragleave.prevent="$el.classList.remove('dragover')"
+                 @drop.prevent="$el.classList.remove('dragover'); handleDrop($event)">
+                <input type="file" x-ref="kbFileInput" multiple style="display:none" @change="handleUpload($event)">
+                <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                <h3>Drop files here or click to upload</h3>
+                <p class="upload-hint">PDF, DOCX, MD, HTML, XLSX, CSV, PPTX, Images</p>
+            </div>
+
+            <div class="upload-zone kb-upload-zone" style="cursor:default" @click.stop>
+                <div class="upload-icon"><i class="fab fa-youtube" style="color:#ff0000"></i></div>
+                <h3>Add YouTube Content</h3>
+                <p class="upload-hint">Video, Playlist, or Channel URL</p>
+                <div style="display:flex;gap:8px;margin-top:12px;width:100%;max-width:400px" @click.stop>
+                    <input type="text" x-model="youtubeUrl" placeholder="https://youtube.com/watch?v=..."
+                           style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem"
+                           @keydown.enter="ingestYouTube()">
+                    <button @click="ingestYouTube()" class="btn btn-primary" :disabled="ytIngesting || !youtubeUrl.trim()">
+                        <span x-show="!ytIngesting"><i class="fas fa-plus"></i> Add</span>
+                        <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
+                    </button>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+                    <label class="checkbox-label" style="font-size:0.75rem"><input type="checkbox" x-model="ytAutoTag"> Auto-tag</label>
+                </div>
+                <div x-show="ytStatus" class="upload-hint" :class="ytStatusClass" style="margin-top:6px" x-text="ytStatus"></div>
+            </div>
         </div>
 
         <!-- Upload progress -->
@@ -59,12 +80,15 @@
                 <h3>All Documents</h3>
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th>Actions</th></tr>
+                        <tr><th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th style="min-width:120px">Actions</th></tr>
                     </thead>
                     <tbody>
                         <template x-for="doc in documents" :key="doc.id">
                             <tr>
-                                <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
+                                <td>
+                                    <i x-show="doc.format === 'youtube'" class="fab fa-youtube" style="color:#ff0000;margin-right:4px"></i>
+                                    <a :href="doc.source_url || ('/documents/' + doc.id)" :target="doc.source_url ? '_blank' : '_self'" x-text="doc.filename" class="doc-link"></a>
+                                </td>
                                 <td><span class="badge" x-text="doc.format"></span></td>
                                 <td><span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span></td>
                                 <td>
@@ -74,6 +98,7 @@
                                 </td>
                                 <td class="actions">
                                     <a :href="'/documents/' + doc.id" class="btn btn-sm"><i class="fas fa-eye"></i></a>
+                                    <button @click="autoTagDoc(doc.id)" class="btn btn-sm" title="Auto-tag"><i class="fas fa-magic"></i></button>
                                     <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
                                 </td>
                             </tr>
@@ -101,15 +126,32 @@
         <p class="text-muted" x-show="currentTag.description" x-text="currentTag.description" style="margin-bottom:16px"></p>
 
         <!-- Upload into tag -->
-        <div class="upload-zone kb-upload-zone"
-             style="padding:30px 20px"
-             @click="$refs.tagFileInput.click()"
-             @dragover.prevent="$el.classList.add('dragover')"
-             @dragleave.prevent="$el.classList.remove('dragover')"
-             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event, currentTag.id)">
-            <input type="file" x-ref="tagFileInput" multiple style="display:none" @change="handleUpload($event, currentTag.id)">
-            <div class="upload-icon" style="font-size:1.5rem"><i class="fas fa-cloud-upload-alt"></i></div>
-            <p>Drop files here to add to this tag</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="upload-zone kb-upload-zone"
+                 style="padding:24px 16px"
+                 @click="$refs.tagFileInput.click()"
+                 @dragover.prevent="$el.classList.add('dragover')"
+                 @dragleave.prevent="$el.classList.remove('dragover')"
+                 @drop.prevent="$el.classList.remove('dragover'); handleDrop($event, currentTag.id)">
+                <input type="file" x-ref="tagFileInput" multiple style="display:none" @change="handleUpload($event, currentTag.id)">
+                <div class="upload-icon" style="font-size:1.5rem"><i class="fas fa-cloud-upload-alt"></i></div>
+                <p>Drop files here to add to this tag</p>
+            </div>
+
+            <div class="upload-zone kb-upload-zone" style="padding:24px 16px;cursor:default" @click.stop>
+                <div class="upload-icon" style="font-size:1.5rem"><i class="fab fa-youtube" style="color:#ff0000"></i></div>
+                <p>Add YouTube to this tag</p>
+                <div style="display:flex;gap:8px;margin-top:8px;width:100%;max-width:350px" @click.stop>
+                    <input type="text" x-model="youtubeUrl" placeholder="YouTube URL..."
+                           style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.8rem"
+                           @keydown.enter="ingestYouTube(currentTag.id)">
+                    <button @click="ingestYouTube(currentTag.id)" class="btn btn-primary btn-sm" :disabled="ytIngesting || !youtubeUrl.trim()">
+                        <span x-show="!ytIngesting"><i class="fas fa-plus"></i></span>
+                        <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
+                    </button>
+                </div>
+                <div x-show="ytStatus" class="upload-hint" :class="ytStatusClass" style="margin-top:4px;font-size:0.75rem" x-text="ytStatus"></div>
+            </div>
         </div>
 
         <!-- Upload progress (tag context) -->
@@ -227,6 +269,11 @@ function knowledgeBase() {
         newTag: { name: '', color: '#4f46e5', description: '' },
         editTag: { name: '', color: '#4f46e5', description: '' },
         presetColors: ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'],
+        youtubeUrl: '',
+        ytIngesting: false,
+        ytStatus: '',
+        ytStatusClass: '',
+        ytAutoTag: false,
 
         async init() { await this.loadData(); },
 
@@ -305,6 +352,90 @@ function knowledgeBase() {
             const files = event.target.files;
             if (files && files.length) this._uploadFiles(files, tagId);
             event.target.value = '';
+        },
+
+        async ingestYouTube(tagId) {
+            const url = this.youtubeUrl.trim();
+            if (!url) return;
+            this.ytIngesting = true;
+            this.ytStatus = 'Resolving YouTube URL...';
+            this.ytStatusClass = 'text-info';
+            try {
+                const res = await fetch('/api/youtube/ingest', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url, auto_index: true, auto_tag: this.ytAutoTag, tag_id: tagId || null })
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    this.ytStatus = err.detail || 'Failed to start ingestion';
+                    this.ytStatusClass = 'text-danger';
+                    this.ytIngesting = false;
+                    return;
+                }
+                const data = await res.json();
+                this.ytStatus = `Processing ${data.video_count} video(s)...`;
+                this.ytStatusClass = 'text-info';
+
+                let attempts = 0;
+                while (attempts < 120) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const statusRes = await fetch('/api/youtube/jobs/' + data.job_id);
+                    if (statusRes.ok) {
+                        const job = await statusRes.json();
+                        if (job.status === 'completed') {
+                            const result = job.result || {};
+                            this.ytStatus = `Done! ${result.documents_created || 0} video(s) added.`;
+                            this.ytStatusClass = 'text-success';
+                            this.youtubeUrl = '';
+                            await this.loadData();
+                            if (tagId && this.view === 'detail') {
+                                await this.openTag(this.currentTag);
+                            }
+                            break;
+                        } else if (job.status === 'failed') {
+                            this.ytStatus = job.error || 'Ingestion failed';
+                            this.ytStatusClass = 'text-danger';
+                            break;
+                        } else {
+                            this.ytStatus = `Processing... ${job.progress || 0}%`;
+                        }
+                    }
+                    attempts++;
+                }
+                if (attempts >= 120) {
+                    this.ytStatus = 'Timed out waiting for completion';
+                    this.ytStatusClass = 'text-danger';
+                }
+            } catch (e) {
+                this.ytStatus = 'Error: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+            }
+            this.ytIngesting = false;
+        },
+
+        async autoTagDoc(docId) {
+            try {
+                const res = await fetch('/api/documents/' + docId + '/auto-tag', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ apply: true })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const count = (data.applied || []).length;
+                    if (count > 0) {
+                        alert(`Applied ${count} tag(s): ${data.applied.map(a => a.name).join(', ')}`);
+                        await this.loadData();
+                    } else if (data.suggestions && data.suggestions.length > 0) {
+                        alert(`Suggested tags: ${data.suggestions.map(s => s.name).join(', ')} (none applied)`);
+                    } else {
+                        alert('No tag suggestions for this document.');
+                    }
+                }
+            } catch (e) {
+                alert('Auto-tag failed: ' + e.message);
+            }
         },
 
         async _uploadFiles(files, tagId) {
