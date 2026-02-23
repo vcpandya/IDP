@@ -83,3 +83,12 @@ async def settings_page(request: Request, user=Depends(get_current_user_optional
     if not user:
         return RedirectResponse(url="/login", status_code=302)
     return templates.TemplateResponse("settings.html", {"request": request, "user": user})
+
+
+@router.get("/admin/users", response_class=HTMLResponse)
+async def admin_users_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    if user.role != "admin":
+        return RedirectResponse(url="/dashboard", status_code=302)
+    return templates.TemplateResponse("admin_users.html", {"request": request, "user": user})
