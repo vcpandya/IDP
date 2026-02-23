@@ -898,6 +898,67 @@ tbody tr:hover { background: var(--border-light); }
 .msg-assistant .msg-avatar { background: var(--success-light); color: var(--success); }
 .msg-tool .msg-avatar { background: var(--warning-light); color: var(--warning); }
 
+.tool-accordion {
+    width: 100%;
+}
+
+.tool-accordion-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    transition: all var(--transition);
+}
+
+.tool-accordion-header:hover {
+    background: var(--border-light);
+    color: var(--text);
+}
+
+.tool-accordion-header i:first-child {
+    font-size: 0.7rem;
+    color: var(--warning);
+}
+
+.tool-accordion-arrow {
+    margin-left: auto;
+    font-size: 0.6rem;
+    transition: transform 0.15s ease;
+}
+
+.tool-accordion-arrow.open {
+    transform: rotate(180deg);
+}
+
+.tool-accordion-body {
+    margin-top: 6px;
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.tool-accordion-body pre {
+    margin: 0;
+    padding: 10px 12px;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    background: var(--bg);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 .msg-content { flex: 1; min-width: 0; }
 
 .msg-header {
