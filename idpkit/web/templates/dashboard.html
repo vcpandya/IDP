@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
     <h2><i class="fas fa-th-large"></i> Dashboard</h2>
-    <a href="/upload" class="btn btn-primary"><i class="fas fa-plus"></i> Upload Document</a>
+    <a href="/knowledge-base" class="btn btn-primary"><i class="fas fa-plus"></i> Upload Document</a>
 </div>
 
 <div x-data="dashboard()" x-init="loadDocuments()">
@@ -46,12 +46,12 @@
     <div class="dashboard-section">
         <div class="dashboard-section-header"><i class="fas fa-bolt"></i> Quick Actions</div>
         <div class="quick-actions-grid">
-            <a href="/upload" class="feature-tile quick-action">
+            <a href="/knowledge-base" class="feature-tile quick-action">
                 <div class="tile-icon" style="background: #eef2ff; color: #4f46e5">
-                    <i class="fas fa-cloud-upload-alt"></i>
+                    <i class="fas fa-layer-group"></i>
                 </div>
-                <h4>Upload Documents</h4>
-                <p>Upload PDFs, DOCX, HTML, spreadsheets, and more</p>
+                <h4>Knowledge Base</h4>
+                <p>Organize documents with tags, upload and manage files</p>
             </a>
             <a href="/chat" class="feature-tile quick-action">
                 <div class="tile-icon" style="background: #f3e8ff; color: #7c3aed">
@@ -230,7 +230,7 @@
                     </template>
                     <tr x-show="documents.length === 0">
                         <td colspan="5" class="empty-state">
-                            No documents yet. <a href="/upload">Upload your first document</a>
+                            No documents yet. <a href="/knowledge-base">Upload your first document</a>
                         </td>
                     </tr>
                 </tbody>

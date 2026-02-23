@@ -11,10 +11,11 @@ IDP Kit is a Python-based intelligent document processing toolkit with an AI age
 - **Entry point**: `run_server.py` — starts uvicorn on port 5000
 
 ## Database
-All data lives in a single PostgreSQL database (12 tables):
+All data lives in a single PostgreSQL database (14 tables):
 - **Core**: users, documents, jobs, prompts, templates, conversation_messages
 - **Knowledge Graph**: entities, entity_mentions, graph_edges (standard relational tables, no graph DB needed)
 - **Batch Processing**: processing_templates, batch_jobs, batch_items
+- **Tags**: tags, document_tags (many-to-many junction table for document grouping)
 - **Connection**: `idpkit/db/session.py` reads `DATABASE_URL`, converts to `postgresql+asyncpg://`, strips sslmode params
 - **Schema**: Auto-created via `Base.metadata.create_all()` at startup
 - **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
@@ -32,7 +33,7 @@ All data lives in a single PostgreSQL database (12 tables):
 - **Selection**: `get_storage()` in `idpkit/api/deps.py` auto-selects based on env vars
 
 ## Project Structure
-- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin)
+- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings, tags)
 - `idpkit/web/` — Web UI routes and Jinja2 templates
 - `idpkit/db/` — Database models, session management, and admin seeding
 - `idpkit/engine/` — PageIndex document indexing engine

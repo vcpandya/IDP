@@ -1,0 +1,367 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Base - IDP Kit{% endblock %}
+{% block content %}
+<div x-data="knowledgeBase()">
+
+    <!-- Tags Grid View -->
+    <div x-show="view === 'grid'">
+        <div class="page-header">
+            <h2><i class="fas fa-layer-group"></i> Knowledge Base</h2>
+            <div class="header-actions">
+                <button @click="showCreateModal = true" class="btn btn-primary"><i class="fas fa-plus"></i> Create Tag</button>
+            </div>
+        </div>
+
+        <!-- Upload Zone (untagged) -->
+        <div class="upload-zone kb-upload-zone"
+             @click="$refs.kbFileInput.click()"
+             @dragover.prevent="$el.classList.add('dragover')"
+             @dragleave.prevent="$el.classList.remove('dragover')"
+             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event)">
+            <input type="file" x-ref="kbFileInput" multiple style="display:none" @change="handleUpload($event)">
+            <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+            <h3>Drop files here or click to upload</h3>
+            <p class="upload-hint">PDF, DOCX, MD, HTML, XLSX, CSV, PPTX, Images</p>
+        </div>
+
+        <!-- Upload progress -->
+        <div class="file-list" x-show="uploadFiles.length > 0">
+            <h3>Uploading</h3>
+            <template x-for="(uf, idx) in uploadFiles" :key="idx">
+                <div class="file-item">
+                    <div class="file-info">
+                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
+                        <span x-text="uf.filename"></span>
+                    </div>
+                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                </div>
+            </template>
+        </div>
+
+        <!-- Tags Grid -->
+        <div class="kb-tags-grid" style="margin-top:24px">
+            <template x-for="tag in tags" :key="tag.id">
+                <div class="kb-tag-card" @click="openTag(tag)">
+                    <div class="tag-color-bar" :style="'background:' + tag.color"></div>
+                    <h4 x-text="tag.name"></h4>
+                    <p class="text-muted" x-text="tag.description || 'No description'" style="font-size:0.8rem;margin:4px 0 8px"></p>
+                    <span class="badge"><span x-text="tag.document_count || 0"></span> docs</span>
+                </div>
+            </template>
+            <div x-show="tags.length === 0" class="empty-state" style="grid-column:1/-1;padding:40px">
+                No tags yet. Create a tag to organize your documents.
+            </div>
+        </div>
+
+        <!-- Recent untagged documents -->
+        <div class="dashboard-section" style="margin-top:24px" x-show="documents.length > 0">
+            <div class="documents-table">
+                <h3>All Documents</h3>
+                <table>
+                    <thead>
+                        <tr><th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th>Actions</th></tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="doc in documents" :key="doc.id">
+                            <tr>
+                                <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
+                                <td><span class="badge" x-text="doc.format"></span></td>
+                                <td><span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span></td>
+                                <td>
+                                    <template x-for="t in (doc.tags || [])" :key="t.id">
+                                        <span class="tag-dot" :style="'background:' + t.color" :title="t.name" style="display:inline-block;margin-right:4px"></span>
+                                    </template>
+                                </td>
+                                <td class="actions">
+                                    <a :href="'/documents/' + doc.id" class="btn btn-sm"><i class="fas fa-eye"></i></a>
+                                    <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Detail View -->
+    <div x-show="view === 'detail'" x-cloak>
+        <div class="page-header">
+            <h2>
+                <button @click="view = 'grid'; loadData()" class="btn btn-sm" style="margin-right:8px"><i class="fas fa-arrow-left"></i></button>
+                <span class="tag-dot" :style="'background:' + (currentTag.color || '#4f46e5')" style="width:14px;height:14px;display:inline-block;border-radius:50%;vertical-align:middle;margin-right:6px"></span>
+                <span x-text="currentTag.name"></span>
+            </h2>
+            <div class="header-actions">
+                <button @click="editTag = {name: currentTag.name, color: currentTag.color, description: currentTag.description || ''}; showEditModal = true" class="btn"><i class="fas fa-edit"></i> Edit</button>
+                <button @click="deleteCurrentTag()" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Tag</button>
+            </div>
+        </div>
+
+        <p class="text-muted" x-show="currentTag.description" x-text="currentTag.description" style="margin-bottom:16px"></p>
+
+        <!-- Upload into tag -->
+        <div class="upload-zone kb-upload-zone"
+             style="padding:30px 20px"
+             @click="$refs.tagFileInput.click()"
+             @dragover.prevent="$el.classList.add('dragover')"
+             @dragleave.prevent="$el.classList.remove('dragover')"
+             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event, currentTag.id)">
+            <input type="file" x-ref="tagFileInput" multiple style="display:none" @change="handleUpload($event, currentTag.id)">
+            <div class="upload-icon" style="font-size:1.5rem"><i class="fas fa-cloud-upload-alt"></i></div>
+            <p>Drop files here to add to this tag</p>
+        </div>
+
+        <!-- Upload progress (tag context) -->
+        <div class="file-list" x-show="uploadFiles.length > 0" style="margin-top:12px">
+            <template x-for="(uf, idx) in uploadFiles" :key="idx">
+                <div class="file-item">
+                    <div class="file-info">
+                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
+                        <span x-text="uf.filename"></span>
+                    </div>
+                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                </div>
+            </template>
+        </div>
+
+        <!-- Documents in tag -->
+        <div class="kb-doc-list" style="margin-top:20px">
+            <template x-for="doc in tagDocuments" :key="doc.id">
+                <div class="kb-doc-item">
+                    <a :href="'/documents/' + doc.id" class="doc-link" x-text="doc.filename"></a>
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span class="badge" x-text="doc.format || ''"></span>
+                        <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
+                        <button @click="removeDocFromTag(doc.id)" class="btn btn-sm" title="Remove from tag"><i class="fas fa-times"></i></button>
+                    </div>
+                </div>
+            </template>
+            <div x-show="tagDocuments.length === 0" class="empty-state" style="padding:30px">
+                No documents in this tag yet. Upload or drag files above.
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Tag Modal -->
+    <div class="modal-overlay" x-show="showCreateModal" x-cloak @click.self="showCreateModal = false">
+        <div class="modal" style="max-width:450px">
+            <div class="modal-header">
+                <h3>Create Tag</h3>
+                <button class="btn-close" @click="showCreateModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" x-model="newTag.name" placeholder="e.g. Legal Documents" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <div style="display:flex;gap:8px;margin-top:4px">
+                        <template x-for="c in presetColors" :key="c">
+                            <button @click="newTag.color = c"
+                                    :style="'background:' + c + ';width:32px;height:32px;border-radius:50%;border:3px solid ' + (newTag.color === c ? '#1e293b' : 'transparent') + ';cursor:pointer'">
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description (optional)</label>
+                    <input type="text" x-model="newTag.description" placeholder="What kind of documents?" maxlength="500">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showCreateModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="createTag()" :disabled="!newTag.name.trim()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Tag Modal -->
+    <div class="modal-overlay" x-show="showEditModal" x-cloak @click.self="showEditModal = false">
+        <div class="modal" style="max-width:450px">
+            <div class="modal-header">
+                <h3>Edit Tag</h3>
+                <button class="btn-close" @click="showEditModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Name</label>
+                    <input type="text" x-model="editTag.name" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <div style="display:flex;gap:8px;margin-top:4px">
+                        <template x-for="c in presetColors" :key="c">
+                            <button @click="editTag.color = c"
+                                    :style="'background:' + c + ';width:32px;height:32px;border-radius:50%;border:3px solid ' + (editTag.color === c ? '#1e293b' : 'transparent') + ';cursor:pointer'">
+                            </button>
+                        </template>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" x-model="editTag.description" maxlength="500">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showEditModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="saveEditTag()">Save</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+function knowledgeBase() {
+    return {
+        view: 'grid',
+        tags: [],
+        documents: [],
+        currentTag: {},
+        tagDocuments: [],
+        uploadFiles: [],
+        showCreateModal: false,
+        showEditModal: false,
+        newTag: { name: '', color: '#4f46e5', description: '' },
+        editTag: { name: '', color: '#4f46e5', description: '' },
+        presetColors: ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'],
+
+        async init() { await this.loadData(); },
+
+        async loadData() {
+            const [tagRes, docRes] = await Promise.all([
+                fetch('/api/tags/'),
+                fetch('/api/documents/?limit=100')
+            ]);
+            if (tagRes.ok) this.tags = await tagRes.json();
+            if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
+        },
+
+        async openTag(tag) {
+            const res = await fetch('/api/tags/' + tag.id);
+            if (!res.ok) return;
+            this.currentTag = await res.json();
+            this.tagDocuments = this.currentTag.documents || [];
+            this.view = 'detail';
+            this.uploadFiles = [];
+        },
+
+        async createTag() {
+            const res = await fetch('/api/tags/', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.newTag)
+            });
+            if (res.ok) {
+                this.showCreateModal = false;
+                this.newTag = { name: '', color: '#4f46e5', description: '' };
+                await this.loadData();
+            }
+        },
+
+        async saveEditTag() {
+            const res = await fetch('/api/tags/' + this.currentTag.id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(this.editTag)
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                this.currentTag.name = updated.name;
+                this.currentTag.color = updated.color;
+                this.currentTag.description = updated.description;
+                this.showEditModal = false;
+            }
+        },
+
+        async deleteCurrentTag() {
+            if (!confirm('Delete this tag? Documents will not be deleted.')) return;
+            const res = await fetch('/api/tags/' + this.currentTag.id, { method: 'DELETE' });
+            if (res.ok) {
+                this.view = 'grid';
+                await this.loadData();
+            }
+        },
+
+        async deleteDoc(docId) {
+            if (!confirm('Delete this document?')) return;
+            await fetch('/api/documents/' + docId, { method: 'DELETE' });
+            await this.loadData();
+        },
+
+        async removeDocFromTag(docId) {
+            await fetch('/api/tags/' + this.currentTag.id + '/documents/' + docId, { method: 'DELETE' });
+            this.tagDocuments = this.tagDocuments.filter(d => d.id !== docId);
+        },
+
+        handleDrop(event, tagId) {
+            const files = event.dataTransfer.files;
+            if (files && files.length) this._uploadFiles(files, tagId);
+        },
+
+        handleUpload(event, tagId) {
+            const files = event.target.files;
+            if (files && files.length) this._uploadFiles(files, tagId);
+            event.target.value = '';
+        },
+
+        async _uploadFiles(files, tagId) {
+            for (const file of files) {
+                const entry = { filename: file.name, status: 'uploading' };
+                this.uploadFiles.push(entry);
+                try {
+                    const form = new FormData();
+                    form.append('file', file);
+                    const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
+                    if (!upRes.ok) { entry.status = 'failed'; continue; }
+                    const doc = await upRes.json();
+                    entry.status = 'indexing';
+
+                    // Associate with tag if uploading into a tag
+                    if (tagId) {
+                        await fetch('/api/tags/' + tagId + '/documents', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ document_ids: [doc.id] })
+                        });
+                        this.tagDocuments.push({ id: doc.id, filename: doc.filename, format: doc.format, status: 'indexing' });
+                    }
+
+                    // Trigger indexing
+                    await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+
+                    // Poll for index completion
+                    let attempts = 0;
+                    while (attempts < 60) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        const statusRes = await fetch('/api/indexing/documents/' + doc.id + '/index/status');
+                        if (statusRes.ok) {
+                            const statusData = await statusRes.json();
+                            const st = statusData.status || statusData.index_status || '';
+                            if (st === 'indexed' || st === 'completed') {
+                                entry.status = 'ready';
+                                // Update tag doc list status
+                                const td = this.tagDocuments.find(d => d.id === doc.id);
+                                if (td) td.status = 'indexed';
+                                break;
+                            } else if (st === 'failed') {
+                                entry.status = 'failed';
+                                break;
+                            }
+                        }
+                        attempts++;
+                    }
+                    if (attempts >= 60 && entry.status === 'indexing') entry.status = 'failed';
+                } catch (e) {
+                    entry.status = 'failed';
+                }
+            }
+            // Refresh document list
+            await this.loadData();
+        }
+    }
+}
+</script>
+{% endblock %}

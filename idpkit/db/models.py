@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Table,
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -46,6 +47,14 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+document_tags = Table(
+    "document_tags",
+    Base.metadata,
+    Column("document_id", String, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", String, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
     USER = "user"
@@ -64,6 +73,7 @@ class User(Base):
     created_at = Column(TZDateTime, default=utcnow)
 
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
+    tags = relationship("Tag", back_populates="owner", cascade="all, delete-orphan")
     prompts = relationship("Prompt", back_populates="owner", cascade="all, delete-orphan")
     templates = relationship("Template", back_populates="owner", cascade="all, delete-orphan")
     processing_templates = relationship("ProcessingTemplate", back_populates="owner", cascade="all, delete-orphan")
@@ -89,6 +99,7 @@ class Document(Base):
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner = relationship("User", back_populates="documents")
+    tags = relationship("Tag", secondary=document_tags, back_populates="documents")
     jobs = relationship("Job", back_populates="document", cascade="all, delete-orphan")
 
 
@@ -225,6 +236,23 @@ class BatchItem(Base):
 
     batch_job = relationship("BatchJob", back_populates="items")
     document = relationship("Document")
+
+
+class Tag(Base):
+    """A tag for grouping documents into logical collections."""
+
+    __tablename__ = "tags"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String(100), nullable=False)
+    color = Column(String(7), default="#4f46e5")
+    description = Column(String(500), nullable=True)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", back_populates="tags")
+    documents = relationship("Document", secondary=document_tags, back_populates="tags")
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.

@@ -14,6 +14,7 @@ from .graph import router as graph_router
 from .batch import router as batch_router
 from .admin import router as admin_router
 from .settings import router as settings_router
+from .tags import router as tags_router
 
 __all__ = [
     "auth_router",
@@ -30,4 +31,5 @@ __all__ = [
     "batch_router",
     "admin_router",
     "settings_router",
+    "tags_router",
 ]
