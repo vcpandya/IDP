@@ -429,12 +429,16 @@ async def get_multi_doc_visualization_data(
 
     capped_ids = document_ids[:20]
 
-    stmt_entities = (
-        select(Entity)
-        .join(EntityMention, Entity.id == EntityMention.entity_id)
+    distinct_entity_ids_subq = (
+        select(EntityMention.entity_id)
         .where(EntityMention.document_id.in_(capped_ids))
         .distinct()
         .limit(min(limit, 500))
+        .subquery()
+    )
+    stmt_entities = (
+        select(Entity)
+        .where(Entity.id.in_(select(distinct_entity_ids_subq)))
     )
     entities = list((await db.execute(stmt_entities)).scalars().all())
 
