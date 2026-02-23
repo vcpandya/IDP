@@ -54,8 +54,8 @@ def _format_sections_for_extraction(nodes: list[dict]) -> str:
         title = _sanitize_for_prompt(node.get("title", "(untitled)"), max_length=500)
         text = node.get("text") or node.get("summary") or node.get("prefix_summary") or ""
         text = _sanitize_for_prompt(text, max_length=3000)
-        start = node.get("start_index", "?")
-        end = node.get("end_index", "?")
+        start = node.get("start_index") or node.get("page_start", "?")
+        end = node.get("end_index") or node.get("page_end", "?")
         parts.append(f"[Section {node_id}: {title}, pages {start}-{end}]\n{text}")
     return "\n\n---\n\n".join(parts)
 
@@ -286,8 +286,8 @@ async def build_document_graph(
                 node_id=node_id,
                 node_title=(node.get("title") or "")[:500],
                 mention_text=canonical[:500],
-                start_page=node.get("start_index"),
-                end_page=node.get("end_index"),
+                start_page=node.get("start_index") or node.get("page_start"),
+                end_page=node.get("end_index") or node.get("page_end"),
             )
             db.add(mention)
             mention_count += 1
