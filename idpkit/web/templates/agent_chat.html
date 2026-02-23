@@ -6,6 +6,26 @@
 </div>
 <div class="chat-container" x-data="agentChat()">
     <div class="chat-sidebar">
+        <!-- Conversations -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <h4 style="margin:0">Conversations</h4>
+            <button class="btn btn-sm btn-primary" @click="newConversation()" title="New chat" style="padding:2px 8px;font-size:0.75rem">
+                <i class="fas fa-plus"></i>
+            </button>
+        </div>
+        <div class="conv-list" style="max-height:200px;overflow-y:auto;margin-bottom:16px">
+            <div x-show="conversations.length === 0" style="font-size:0.8rem;color:var(--text-muted)">No conversations yet</div>
+            <template x-for="conv in conversations" :key="conv.id">
+                <div class="conv-item" :class="{ active: currentConversationId === conv.id }"
+                     @click="loadConversation(conv.id)">
+                    <span class="conv-title" x-text="conv.title"></span>
+                    <button class="conv-delete" @click.stop="deleteConversation(conv.id)" title="Delete">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </template>
+        </div>
+
         <h4>Tags</h4>
         <div class="tag-selector" x-show="tags.length > 0">
             <template x-for="tag in tags" :key="tag.id">
@@ -45,12 +65,18 @@
                 </div>
             </div>
             <template x-for="(msg, i) in messages" :key="i">
-                <div class="chat-msg" :class="'msg-' + msg.role">
+                <div class="chat-msg" :class="'msg-' + msg.role"
+                     @click="msg.role === 'assistant' && msg.sources && msg.sources.length > 0 ? showSources(msg.sources) : null"
+                     :style="msg.role === 'assistant' && msg.sources && msg.sources.length > 0 ? 'cursor:pointer' : ''">
                     <div class="msg-avatar" :style="msg.role === 'assistant' ? 'background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff' : ''">
                         <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
                     <div class="msg-content">
-                        <div class="msg-header" x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></div>
+                        <div class="msg-header">
+                            <span x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></span>
+                            <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
+                                  x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
+                        </div>
                         <div class="msg-body"
                              x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.role === 'tool' ? '<pre>' + msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>' : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
                              x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
@@ -108,16 +134,19 @@ function agentChat() {
         uploadFiles: [],
         tags: [], selectedTags: [],
         currentSources: [],
+        conversations: [],
+        currentConversationId: null,
         async init() {
-            const [docRes, tagRes] = await Promise.all([
+            const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
-                fetch('/api/tags/')
+                fetch('/api/tags/'),
+                fetch('/api/agent/conversations')
             ]);
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
             if (tagRes.ok) { this.tags = await tagRes.json(); }
+            if (convRes.ok) { this.conversations = await convRes.json(); }
         },
         async onTagToggle(tagId, checked) {
-            // When a tag is checked/unchecked, auto-select/deselect its documents
             try {
                 const res = await fetch('/api/tags/' + tagId);
                 if (!res.ok) return;
@@ -128,7 +157,6 @@ function agentChat() {
                         if (!this.selectedDocs.includes(did)) this.selectedDocs.push(did);
                     }
                 } else {
-                    // Only remove docs that aren't in any other selected tag
                     const otherTagDocs = new Set();
                     for (const tid of this.selectedTags) {
                         if (tid === tagId) continue;
@@ -148,7 +176,6 @@ function agentChat() {
                 const entry = { file, docId: null, status: 'uploading', filename: file.name };
                 this.uploadFiles.push(entry);
                 try {
-                    // Upload
                     const form = new FormData();
                     form.append('file', file);
                     const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
@@ -156,11 +183,8 @@ function agentChat() {
                     const doc = await upRes.json();
                     entry.docId = doc.id;
                     entry.status = 'indexing';
-                    // Add to sidebar documents list
                     this.documents.push(doc);
-                    // Trigger indexing
                     await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
-                    // Poll for index completion
                     let attempts = 0;
                     const maxAttempts = 60;
                     while (attempts < maxAttempts) {
@@ -189,38 +213,104 @@ function agentChat() {
                     entry.status = 'failed';
                 }
             }
-            // Reset file input so the same file can be re-selected
             event.target.value = '';
+        },
+        showSources(sources) {
+            this.currentSources = sources || [];
         },
         async sendMessage(text) {
             const msg = text || this.input.trim();
             if (!msg) return;
             this.input = '';
-            this.messages.push({ role: 'user', content: msg });
+            this.messages.push({ role: 'user', content: msg, sources: null });
             this.loading = true;
-            this.currentSources = [];
             this.scrollToBottom();
+
+            // Auto-create conversation if none active
+            if (!this.currentConversationId) {
+                try {
+                    const convRes = await fetch('/api/agent/conversations', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ title: 'New conversation' })
+                    });
+                    if (convRes.ok) {
+                        const conv = await convRes.json();
+                        this.currentConversationId = conv.id;
+                        this.conversations.unshift(conv);
+                    }
+                } catch(e) {}
+            }
+
             try {
                 const res = await fetch('/api/agent/chat', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ message: msg, document_ids: this.selectedDocs, tag_ids: this.selectedTags })
+                    body: JSON.stringify({
+                        message: msg,
+                        conversation_id: this.currentConversationId,
+                        document_ids: this.selectedDocs,
+                        tag_ids: this.selectedTags
+                    })
                 });
                 if (res.ok) {
                     const data = await res.json();
                     if (data.tool_calls) {
                         for (const tc of data.tool_calls) {
-                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name });
+                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name, sources: null });
                         }
                     }
-                    this.messages.push({ role: 'assistant', content: data.response || data.detail || 'No response' });
-                    if (data.sources && data.sources.length > 0) {
-                        this.currentSources = data.sources;
+                    const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
+                    this.messages.push({ role: 'assistant', content: data.response || data.detail || 'No response', sources: msgSources });
+                    // Update sources panel to show latest
+                    if (msgSources) {
+                        this.currentSources = msgSources;
+                    }
+                    // Update conversation title in sidebar
+                    if (this.currentConversationId) {
+                        const ci = this.conversations.find(c => c.id === this.currentConversationId);
+                        if (ci && ci.title === 'New conversation') {
+                            ci.title = msg.length > 100 ? msg.substring(0, 100) : msg;
+                        }
                     }
                 } else {
-                    this.messages.push({ role: 'assistant', content: 'Error: request failed' });
+                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null });
                 }
-            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message }); }
+            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null }); }
             finally { this.loading = false; this.scrollToBottom(); }
+        },
+        newConversation() {
+            this.currentConversationId = null;
+            this.messages = [];
+            this.currentSources = [];
+        },
+        async loadConversation(convId) {
+            if (convId === this.currentConversationId) return;
+            this.currentConversationId = convId;
+            this.messages = [];
+            this.currentSources = [];
+            try {
+                const res = await fetch('/api/agent/conversations/' + convId);
+                if (res.ok) {
+                    const data = await res.json();
+                    for (const m of data.messages) {
+                        this.messages.push({
+                            role: m.role,
+                            content: m.content || '',
+                            tool_name: m.tool_name || null,
+                            sources: m.sources || null
+                        });
+                    }
+                    this.scrollToBottom();
+                }
+            } catch(e) {}
+        },
+        async deleteConversation(convId) {
+            try {
+                await fetch('/api/agent/conversations/' + convId, { method: 'DELETE' });
+                this.conversations = this.conversations.filter(c => c.id !== convId);
+                if (this.currentConversationId === convId) {
+                    this.newConversation();
+                }
+            } catch(e) {}
         },
         scrollToBottom() {
             this.$nextTick(() => {

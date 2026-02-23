@@ -78,6 +78,7 @@ class User(Base):
     templates = relationship("Template", back_populates="owner", cascade="all, delete-orphan")
     processing_templates = relationship("ProcessingTemplate", back_populates="owner", cascade="all, delete-orphan")
     batch_jobs = relationship("BatchJob", back_populates="owner", cascade="all, delete-orphan")
+    conversations = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -151,17 +152,41 @@ class Template(Base):
     owner = relationship("User", back_populates="templates")
 
 
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    title = Column(String(200), nullable=False, default="New conversation")
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", back_populates="conversations")
+    messages = relationship(
+        "ConversationMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ConversationMessage.created_at",
+    )
+
+
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
     id = Column(String, primary_key=True, default=generate_uuid)
-    conversation_id = Column(String, nullable=False, index=True)
+    conversation_id = Column(
+        String, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     role = Column(String(20), nullable=False)  # user, assistant, tool, system
     content = Column(Text, nullable=True)
     tool_calls = Column(JSON, nullable=True)
     tool_name = Column(String(100), nullable=True)
+    sources_json = Column(JSON, nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
+
+    conversation = relationship("Conversation", back_populates="messages")
 
 
 class ProcessingTemplate(Base):
