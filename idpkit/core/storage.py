@@ -34,6 +34,10 @@ class StorageBackend(ABC):
         """Save data and return the storage path/key."""
         ...
 
+    async def put(self, key: str, data: bytes | BinaryIO) -> str:
+        """Async alias for save()."""
+        return self.save(key, data)
+
     @abstractmethod
     def load(self, key: str) -> bytes:
         """Load data by key."""
