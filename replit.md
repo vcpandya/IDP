@@ -11,13 +11,13 @@ IDP Kit is a Python-based intelligent document processing toolkit with an AI age
 - **Entry point**: `run_server.py` — starts uvicorn on port 5000
 
 ## Database
-All data lives in a single PostgreSQL database (14 tables):
-- **Core**: users, documents, jobs, prompts, templates, conversation_messages
+All data lives in a single PostgreSQL database (15 tables):
+- **Core**: users, documents, jobs, prompts, templates, conversations, conversation_messages
 - **Knowledge Graph**: entities, entity_mentions, graph_edges (standard relational tables, no graph DB needed)
 - **Batch Processing**: processing_templates, batch_jobs, batch_items
 - **Tags**: tags, document_tags (many-to-many junction table for document grouping)
 - **Connection**: `idpkit/db/session.py` reads `DATABASE_URL`, converts to `postgresql+asyncpg://`, strips sslmode params
-- **Schema**: Auto-created via `Base.metadata.create_all()` at startup
+- **Schema**: Auto-created via `Base.metadata.create_all()` at startup; includes migration helper to drop/recreate legacy `conversation_messages` table if missing `owner_id` column
 - **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
 
 ## Authentication & User Management
