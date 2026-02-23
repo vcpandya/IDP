@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from idpkit.db.session import get_db
 from idpkit.db.models import Document, User
 from idpkit.api.deps import get_current_user, get_storage
-from idpkit.core.storage import StorageBackend
+from idpkit.core.storage import LocalStorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ async def upload_document(
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    storage: StorageBackend = Depends(get_storage),
+    storage: LocalStorageBackend = Depends(get_storage),
 ):
     """Upload a document file.
 
@@ -258,7 +258,7 @@ async def delete_document(
     doc_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    storage: StorageBackend = Depends(get_storage),
+    storage: LocalStorageBackend = Depends(get_storage),
 ):
     """Delete a document record and its associated storage files.
 
@@ -303,7 +303,7 @@ async def download_document(
     doc_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    storage: StorageBackend = Depends(get_storage),
+    storage: LocalStorageBackend = Depends(get_storage),
 ):
     """Stream the original uploaded file back to the client."""
     result = await db.execute(

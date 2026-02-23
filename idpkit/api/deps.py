@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.session import get_db
 from idpkit.db.models import User
-from idpkit.core.storage import LocalStorageBackend, GCSStorageBackend, StorageBackend
+from idpkit.core.storage import LocalStorageBackend
 from idpkit.core.llm import LLMClient, get_default_client
 
 SECRET_KEY = os.getenv("IDP_SECRET_KEY", "dev-secret-change-in-production")
@@ -108,22 +108,9 @@ async def get_current_user_optional(
         return None
 
 
-_storage_instance: Optional[StorageBackend] = None
-
-
-def get_storage() -> StorageBackend:
-    global _storage_instance
-    if _storage_instance is not None:
-        return _storage_instance
-
-    bucket_id = os.getenv("DEFAULT_OBJECT_STORAGE_BUCKET_ID")
-    private_dir = os.getenv("PRIVATE_OBJECT_DIR")
-    if bucket_id and private_dir:
-        _storage_instance = GCSStorageBackend(bucket_id=bucket_id, private_dir=private_dir)
-    else:
-        path = os.getenv("IDP_STORAGE_PATH", "./storage")
-        _storage_instance = LocalStorageBackend(path)
-    return _storage_instance
+def get_storage() -> LocalStorageBackend:
+    path = os.getenv("IDP_STORAGE_PATH", "./storage")
+    return LocalStorageBackend(path)
 
 
 async def require_admin(

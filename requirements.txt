@@ -28,5 +28,3 @@ pyyaml
 sqlalchemy[asyncio]
 tiktoken
 uvicorn[standard]
-asyncpg
-google-cloud-storage
