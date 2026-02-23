@@ -2166,3 +2166,49 @@ tbody tr:hover { background: var(--border-light); }
     gap: 8px;
     font-size: 0.9rem;
 }
+
+/* Job History Table */
+.jobs-section {
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    margin-bottom: 20px;
+}
+
+.jobs-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 0.85rem;
+}
+
+.jobs-table th {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.jobs-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.jobs-table tr:last-child td {
+    border-bottom: none;
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: #fff;
+    border: none;
+}
+
+.btn-warning:hover {
+    background: #b45309;
+}
