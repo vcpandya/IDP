@@ -22,7 +22,7 @@ def main():
         sys.exit(1)
 
     host = os.getenv("IDP_HOST", "0.0.0.0")
-    port = int(os.getenv("IDP_PORT", "8000"))
+    port = int(os.getenv("IDP_PORT", "5000"))
     reload = "--reload" in sys.argv
 
     print(f"Starting IDP Kit server at http://{host}:{port}")
