@@ -220,7 +220,11 @@ async def build_doc_graph(
     from idpkit.graph.builder import build_document_graph
     from idpkit.graph.linker import link_entities_across_documents
 
-    tree_index = {"structure": doc.tree_index}
+    ti = doc.tree_index
+    if isinstance(ti, dict) and "structure" in ti:
+        tree_index = ti
+    else:
+        tree_index = {"structure": ti}
     build_result = await build_document_graph(doc_id, tree_index, llm, db)
     link_result = await link_entities_across_documents(doc_id, db, llm)
 
@@ -393,7 +397,11 @@ async def build_bulk_graphs(
             continue
 
         try:
-            tree_index = {"structure": doc.tree_index}
+            ti = doc.tree_index
+            if isinstance(ti, dict) and "structure" in ti:
+                tree_index = ti
+            else:
+                tree_index = {"structure": ti}
             build_result = await build_document_graph(doc_id, tree_index, llm, db)
             await link_entities_across_documents(doc_id, db, llm)
             results.append({
