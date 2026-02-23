@@ -14,6 +14,8 @@ from typing import Any, Optional
 import litellm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select as sa_select
+
 from idpkit.core.llm import LLMClient
 from idpkit.agent.memory import ConversationMemory
 from idpkit.agent.tools import TOOL_DEFINITIONS, execute_tool
@@ -88,6 +90,15 @@ step by step. DO NOT assume document roles — ASK.
 
 This applies to ANY domain — legal, academic, business, finance, technical, etc.
 
+## Document Search Requirement
+When the user has document IDs in scope, you MUST:
+1. ALWAYS call search_document on every in-scope document before answering.
+2. If search returns empty results, tell the user:
+   "I searched [filename] but couldn't find relevant information for your question.
+    Here is a response based on my general knowledge:"
+3. If some documents had results and others didn't, state which contributed and which didn't.
+Never silently skip searching an in-scope document.
+
 ## Guidelines
 1. Always be helpful, accurate, and concise. You are IDA — professional and capable.
 2. When the user asks about a specific document, use search_document to find relevant
@@ -153,11 +164,24 @@ class IDPAgent:
         if conversation is None:
             conversation = ConversationMemory()
 
+        # Resolve document filenames from DB
+        document_names: dict[str, str] = {}
+        if document_ids and db:
+            try:
+                from idpkit.db.models import Document
+                stmt = sa_select(Document.id, Document.filename).where(
+                    Document.id.in_(document_ids)
+                )
+                rows = await db.execute(stmt)
+                document_names = {r[0]: r[1] for r in rows}
+            except Exception:
+                pass  # Proceed without names
+
         # Record the user message
         conversation.add_message("user", message)
 
         # Build the messages list for the LLM
-        messages = self._build_messages(conversation, document_ids)
+        messages = self._build_messages(conversation, document_ids, document_names)
 
         tool_call_log: list[dict] = []
 
@@ -257,13 +281,19 @@ class IDPAgent:
         self,
         conversation: ConversationMemory,
         document_ids: list[str],
+        document_names: dict[str, str] | None = None,
     ) -> list[dict]:
         """Build the full messages list including system prompt and history."""
         doc_context = ""
         if document_ids:
+            names = document_names or {}
+            doc_list = ", ".join(
+                f"{did} ({names[did]})" if did in names else did
+                for did in document_ids
+            )
             doc_context = (
-                f"\n\nThe user has the following document IDs in scope: "
-                f"{', '.join(document_ids)}. You can use these IDs when calling tools."
+                f"\n\nThe user has selected these documents: {doc_list}. "
+                f"You MUST search ALL of these documents before answering."
             )
 
         system_msg = {
