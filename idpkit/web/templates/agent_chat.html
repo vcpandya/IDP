@@ -334,6 +334,16 @@ function agentChat() {
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
             if (tagRes.ok) { this.tags = await tagRes.json(); }
             if (convRes.ok) { this.conversations = await convRes.json(); }
+            const urlParams = new URLSearchParams(window.location.search);
+            const promptParam = urlParams.get('prompt');
+            if (promptParam) {
+                this.input = promptParam;
+                this.$nextTick(() => {
+                    const inputEl = this.$el.querySelector('.chat-input input[type="text"]');
+                    if (inputEl) inputEl.focus();
+                });
+                window.history.replaceState({}, '', '/chat');
+            }
         },
         filteredConversations() {
             if (!this.convSearch.trim()) return this.conversations;

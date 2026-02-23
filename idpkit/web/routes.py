@@ -62,6 +62,13 @@ async def agent_chat_page(request: Request, user=Depends(get_current_user_option
     return templates.TemplateResponse("agent_chat.html", {"request": request, "user": user})
 
 
+@router.get("/graph", response_class=HTMLResponse)
+async def graph_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("graph.html", {"request": request, "user": user})
+
+
 @router.get("/tools", response_class=HTMLResponse)
 async def tools_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:
