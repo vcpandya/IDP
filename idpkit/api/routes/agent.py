@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from idpkit.db.session import get_db
 from idpkit.db.models import (
-    User, document_tags, Conversation, ConversationMessage,
+    User, Document, document_tags, Conversation, ConversationMessage,
 )
 from idpkit.api.deps import get_current_user, get_llm
 from idpkit.core.llm import LLMClient
@@ -59,11 +59,21 @@ class ChatSourceInfo(BaseModel):
     summary: Optional[str] = None
 
 
+class SearchAttemptInfo(BaseModel):
+    document_id: str
+    filename: str
+    query: str = ""
+    results_found: int = 0
+    status: str = "not_searched"  # found, no_results, error, not_searched
+
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: Optional[str] = None
     tool_calls: list[ToolCallInfo] = Field(default_factory=list)
     sources: list[ChatSourceInfo] = Field(default_factory=list)
+    source_type: str = "general_knowledge"  # documents, general_knowledge, mixed
+    search_attempts: list[SearchAttemptInfo] = Field(default_factory=list)
 
 
 # -- Conversation CRUD schemas -----------------------------------------------
@@ -82,6 +92,7 @@ class ConversationMessageInfo(BaseModel):
     content: Optional[str] = None
     tool_name: Optional[str] = None
     sources: Optional[list[ChatSourceInfo]] = None
+    source_type: Optional[str] = None
     created_at: str
 
 
@@ -180,6 +191,80 @@ def _sources_from_json(data) -> list[ChatSourceInfo]:
     return [ChatSourceInfo(**s) for s in data]
 
 
+def _classify_source_type(
+    tool_call_log: list[dict], requested_doc_ids: list[str],
+) -> str:
+    """Classify whether the response is based on documents, general knowledge, or mixed."""
+    if not requested_doc_ids:
+        return "general_knowledge"
+
+    search_doc_ids: set[str] = set()
+    found_doc_ids: set[str] = set()
+
+    for tc in tool_call_log:
+        if tc.get("name") == "search_document":
+            doc_id = tc.get("args", {}).get("document_id", "")
+            if doc_id:
+                search_doc_ids.add(doc_id)
+            result = tc.get("result") or {}
+            results = result.get("results", [])
+            if results and doc_id:
+                found_doc_ids.add(doc_id)
+
+    if not search_doc_ids:
+        return "general_knowledge"
+    if found_doc_ids:
+        if found_doc_ids == search_doc_ids:
+            return "documents"
+        return "mixed"
+    return "general_knowledge"
+
+
+def _extract_search_attempts(
+    tool_call_log: list[dict],
+    requested_doc_ids: list[str],
+    filename_map: dict[str, str],
+) -> list[SearchAttemptInfo]:
+    """Build a list of search attempts including docs that were never searched."""
+    attempts: dict[str, SearchAttemptInfo] = {}
+
+    for tc in tool_call_log:
+        if tc.get("name") != "search_document":
+            continue
+        args = tc.get("args", {})
+        doc_id = args.get("document_id", "")
+        query = args.get("query", "")
+        result = tc.get("result") or {}
+        results = result.get("results", [])
+        has_error = "error" in result
+
+        if has_error:
+            s = "error"
+        elif results:
+            s = "found"
+        else:
+            s = "no_results"
+
+        attempts[doc_id] = SearchAttemptInfo(
+            document_id=doc_id,
+            filename=filename_map.get(doc_id, result.get("filename", doc_id)),
+            query=query,
+            results_found=len(results),
+            status=s,
+        )
+
+    # Add entries for requested docs that were never searched
+    for did in requested_doc_ids:
+        if did not in attempts:
+            attempts[did] = SearchAttemptInfo(
+                document_id=did,
+                filename=filename_map.get(did, did),
+                status="not_searched",
+            )
+
+    return list(attempts.values())
+
+
 # ---------------------------------------------------------------------------
 # Conversation CRUD Routes
 # ---------------------------------------------------------------------------
@@ -267,6 +352,7 @@ async def get_conversation(
             content=m.content,
             tool_name=m.tool_name,
             sources=_sources_from_json(m.sources_json) or None,
+            source_type=m.source_type,
             created_at=m.created_at.isoformat(),
         ))
     return ConversationDetail(
@@ -359,6 +445,15 @@ async def agent_chat(
             if did not in combined_doc_ids:
                 combined_doc_ids.append(did)
 
+    # Resolve filenames for all combined doc IDs
+    filename_map: dict[str, str] = {}
+    if combined_doc_ids:
+        fn_stmt = select(Document.id, Document.filename).where(
+            Document.id.in_(combined_doc_ids)
+        )
+        fn_rows = await db.execute(fn_stmt)
+        filename_map = {r[0]: r[1] for r in fn_rows}
+
     # -- Load conversation history if provided --------------------------------
     conversation_id = body.conversation_id
     memory = ConversationMemory()
@@ -413,6 +508,8 @@ async def agent_chat(
     ]
 
     sources = _extract_sources(tool_calls_log)
+    source_type = _classify_source_type(tool_calls_log, combined_doc_ids)
+    search_attempts = _extract_search_attempts(tool_calls_log, combined_doc_ids, filename_map)
 
     # -- Persist messages to DB -----------------------------------------------
     if conversation_id:
@@ -434,13 +531,14 @@ async def agent_chat(
                 tool_name=tc.get("name"),
             ))
 
-        # Save assistant message with sources
+        # Save assistant message with sources and source_type
         db.add(ConversationMessage(
             conversation_id=conversation_id,
             owner_id=user.id,
             role="assistant",
             content=result["response"],
             sources_json=_sources_to_json(sources),
+            source_type=source_type,
         ))
 
         # Auto-title from first user message
@@ -456,4 +554,6 @@ async def agent_chat(
         conversation_id=conversation_id,
         tool_calls=tool_calls,
         sources=sources,
+        source_type=source_type,
+        search_attempts=search_attempts,
     )

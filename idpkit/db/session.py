@@ -22,7 +22,7 @@ async def init_db():
             insp = sa_inspect(sync_conn)
             if "conversation_messages" in insp.get_table_names():
                 cols = {c["name"] for c in insp.get_columns("conversation_messages")}
-                if "owner_id" not in cols:
+                if "owner_id" not in cols or "source_type" not in cols:
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversation_messages"))
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversations"))
 

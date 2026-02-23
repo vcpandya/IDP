@@ -183,6 +183,7 @@ class ConversationMessage(Base):
     tool_calls = Column(JSON, nullable=True)
     tool_name = Column(String(100), nullable=True)
     sources_json = Column(JSON, nullable=True)
+    source_type = Column(String(20), nullable=True)  # documents, general_knowledge, mixed
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
 
