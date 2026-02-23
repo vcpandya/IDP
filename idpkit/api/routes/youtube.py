@@ -363,7 +363,7 @@ async def _run_youtube_ingest(
                         tree_structure = _build_youtube_tree_index(
                             transcript_result, metadata
                         )
-                        doc.tree_index = tree_structure.get("structure", [])
+                        doc.tree_index = tree_structure
                         doc.description = tree_structure.get("doc_description")
                         doc.status = "indexed"
                         db.add(doc)
