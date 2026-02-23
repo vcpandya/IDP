@@ -61,6 +61,15 @@ All data lives in a single PostgreSQL database (15 tables):
 - `idpkit/plugins/` — Plugin system
 - `idpkit/core/storage.py` — File storage abstraction (GCS + local)
 - `idpkit/core/llm.py` — LLM client (LiteLLM-based, passes API keys via kwargs not env mutation)
+
+## IDA Agent Tools
+The IDA agent (`idpkit/agent/agent.py` + `idpkit/agent/tools.py`) has 12 tools:
+- **Core**: `search_document`, `list_documents`, `summarize_section`, `extract_data`
+- **Knowledge Graph**: `query_graph` (5 operations: find_entity, entity_mentions, related_sections, cross_document_links, document_entities), `find_cross_references`
+- **Smart Tools**: `run_smart_tool` (gateway to 13 smart tools)
+- **Composition**: `compose_with_context`, `generate_report`, `run_batch`
+- **Web (Jina AI)**: `web_search` (via `s.jina.ai`), `fetch_url` (via `r.jina.ai`) — requires `JINA_API_KEY` env var
+
 - `pageindex/` — Standalone PageIndex library
 
 ## Environment Variables
@@ -70,6 +79,7 @@ All data lives in a single PostgreSQL database (15 tables):
 - `IDP_ADMIN_PASSWORD` — Default admin password (default: `admin123`)
 - `SESSION_SECRET` — JWT signing key (required for production; ephemeral random fallback in dev)
 - `ALLOWED_ORIGINS` — Comma-separated CORS allowed origins (optional)
+- `JINA_API_KEY` — Jina AI API key for web search (`s.jina.ai`) and URL reader (`r.jina.ai`) tools in IDA agent (optional)
 
 ## Running
 - Dev: `python run_server.py` (port 5000, host 0.0.0.0)
@@ -95,7 +105,7 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Favicon**: SVG favicon at `idpkit/web/static/favicon.svg` — document with search icon in indigo gradient
 - **Agent Chat**: Tool call messages render as collapsible accordions; source citations open in popup modal with text preview. Supports `?prompt=` URL param to pre-populate the input field (used by dashboard tiles).
 - **Dashboard tiles**: "Knowledge Graph" links to `/graph`; "Cross-Document Search", "Entity Discovery", and "Report Generation" tiles link to `/chat?prompt=...` with contextual example prompts pre-filled in the chat input.
-- **Knowledge Graph page** (`/graph`): Dedicated explorer with entity search, type filtering, document-level D3 force-directed graph visualization, entity detail panel with mentions and relationships, and "Ask IDA" link. Uses existing `/api/graph/*` endpoints. Entity types loaded dynamically from `/api/graph/entity-types`; icons auto-resolve for unknown types via keyword matching. Added to sidebar nav.
+- **Knowledge Graph page** (`/graph`): Dedicated explorer with entity search, type filtering, D3 force-directed graph visualization, entity detail panel with mentions and relationships, and "Ask IDA" link. Supports multi-document selection (add/remove individual docs) and tag-based filtering (select a tag group to load all its indexed documents). Multi-doc graph uses `GET /api/graph/visualization?doc_ids=...&tag_id=...` endpoint backed by `get_multi_doc_visualization_data()`. Entity types loaded dynamically from `/api/graph/entity-types`; icons auto-resolve for unknown types via keyword matching. Added to sidebar nav.
 - **Cumulative entity type bank**: Entity extraction no longer enforces a hardcoded type whitelist. The LLM prompt includes all existing entity types from the DB (merged with defaults) and allows creating new UPPER_SNAKE_CASE types when none fit. Types validated by regex format only. This builds a growing corpus across documents.
 - **Batch Processing**: Redesigned with 3-step flow (Instructions → Select Documents to Process → Settings). Reference documents attach to the prompt (Step 1) as AI context. Two-pass schema generation: when no template is selected, Pass 1 generates a JSON schema from the prompt + reference docs, Pass 2 uses that schema as structured output constraint for all target documents.
 - **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering

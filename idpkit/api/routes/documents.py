@@ -68,7 +68,6 @@ IMAGE_CONTENT_TYPES: dict[str, str] = {
     ".tiff": "image/tiff",
     ".tif": "image/tiff",
     ".webp": "image/webp",
-    ".svg": "image/svg+xml",
 }
 
 

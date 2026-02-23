@@ -17,6 +17,13 @@
 .type-btn.active { background: #7c3aed; color: #fff; border-color: #7c3aed; }
 .type-btn:hover:not(.active) { border-color: #7c3aed; color: #7c3aed; }
 .doc-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.tag-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); margin-top: 6px; }
+.doc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.doc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; max-width: 180px; }
+.doc-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-chip button { background: none; border: none; cursor: pointer; font-size: 0.8rem; color: #7c3aed; padding: 0; line-height: 1; }
+.doc-chip button:hover { color: #e11d48; }
+.multi-doc-note { font-size: 0.72rem; color: var(--text-muted, #6b7280); margin-top: 4px; }
 .entity-list { display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
 .entity-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s; border: 1px solid transparent; }
 .entity-item:hover { background: var(--bg, #f3f4f6); }
@@ -73,13 +80,28 @@
         </div>
 
         <div class="sidebar-section">
-            <h4>Document</h4>
-            <select class="doc-select" x-model="selectedDocId" @change="loadDocGraph()">
-                <option value="">All entities (search below)</option>
-                <template x-for="doc in documents" :key="doc.id">
+            <h4>Documents</h4>
+            <select class="doc-select" @change="addDocument($event.target.value); $event.target.value = ''">
+                <option value="">Add a document...</option>
+                <template x-for="doc in availableDocs" :key="doc.id">
                     <option :value="doc.id" x-text="doc.filename"></option>
                 </template>
             </select>
+            <select class="tag-select" x-model="selectedTagId" @change="loadTagDocuments()">
+                <option value="">Or select a tag group...</option>
+                <template x-for="tag in tags" :key="tag.id">
+                    <option :value="tag.id" x-text="tag.name + ' (' + (tag.document_count || 0) + ')'"></option>
+                </template>
+            </select>
+            <div class="doc-chips" x-show="selectedDocIds.length > 0">
+                <template x-for="did in selectedDocIds" :key="did">
+                    <div class="doc-chip">
+                        <span x-text="docName(did)"></span>
+                        <button @click="removeDocument(did)">&times;</button>
+                    </div>
+                </template>
+            </div>
+            <div class="multi-doc-note" x-show="selectedDocIds.length > 1" x-text="selectedDocIds.length + ' documents selected — showing combined graph'"></div>
         </div>
 
         <div class="sidebar-section">
@@ -121,7 +143,7 @@
             <button class="btn btn-sm" @click="zoomIn()" title="Zoom in"><i class="fas fa-search-plus"></i></button>
             <button class="btn btn-sm" @click="zoomOut()" title="Zoom out"><i class="fas fa-search-minus"></i></button>
             <button class="btn btn-sm" @click="resetZoom()" title="Reset view"><i class="fas fa-expand"></i></button>
-            <button class="btn btn-sm btn-primary" x-show="selectedDocId && graphNodes.length === 0" @click="buildGraph()" :disabled="building">
+            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building">
                 <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
             </button>
             <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
@@ -129,8 +151,9 @@
         <div class="graph-canvas" id="graphCanvas">
             <div class="empty-graph" x-show="graphNodes.length === 0 && !loadingGraph">
                 <i class="fas fa-project-diagram"></i>
-                <p x-show="!selectedDocId">Select a document to visualize its entity graph, or search for entities across all documents.</p>
-                <p x-show="selectedDocId">No graph data for this document yet. Click <strong>Build Graph</strong> to extract entities and relationships.</p>
+                <p x-show="selectedDocIds.length === 0">Select documents or a tag group to visualize the entity graph, or search for entities across all documents.</p>
+                <p x-show="selectedDocIds.length === 1">No graph data for this document yet. Click <strong>Build Graph</strong> to extract entities and relationships.</p>
+                <p x-show="selectedDocIds.length > 1">No graph data found for the selected documents. Build individual document graphs first.</p>
             </div>
         </div>
 
@@ -244,8 +267,10 @@ function autoTypeIconUnicode(t) {
 function graphExplorer() {
     return {
         documents: [],
+        tags: [],
         entities: [],
-        selectedDocId: '',
+        selectedDocIds: [],
+        selectedTagId: '',
         searchQuery: '',
         selectedType: '',
         entityTypes: [],
@@ -261,10 +286,20 @@ function graphExplorer() {
         svg: null,
         zoom: null,
 
+        get availableDocs() {
+            return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
+        },
+
+        docName(id) {
+            const doc = this.documents.find(d => d.id === id);
+            return doc ? doc.filename : id.slice(0, 8) + '...';
+        },
+
         async init() {
-            const [docRes, typesRes] = await Promise.all([
+            const [docRes, typesRes, tagsRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
-                fetch('/api/graph/entity-types')
+                fetch('/api/graph/entity-types'),
+                fetch('/api/tags/')
             ]);
             if (docRes.ok) {
                 const data = await docRes.json();
@@ -272,6 +307,9 @@ function graphExplorer() {
             }
             if (typesRes.ok) {
                 this.entityTypes = await typesRes.json();
+            }
+            if (tagsRes.ok) {
+                this.tags = await tagsRes.json();
             }
             if (this.entityTypes.length === 0) {
                 this.entityTypes = ['PERSON','ORGANIZATION','LOCATION','CONCEPT','TERM','REGULATION','PRODUCT','EVENT','DATE_REF','METRIC'];
@@ -281,6 +319,32 @@ function graphExplorer() {
 
         typeColor(t) { return autoTypeColor(t); },
         typeIcon(t) { return autoTypeIcon(t); },
+
+        addDocument(docId) {
+            if (!docId || this.selectedDocIds.includes(docId)) return;
+            this.selectedDocIds.push(docId);
+            this.loadDocGraph();
+        },
+
+        removeDocument(docId) {
+            this.selectedDocIds = this.selectedDocIds.filter(id => id !== docId);
+            this.loadDocGraph();
+        },
+
+        async loadTagDocuments() {
+            if (!this.selectedTagId) return;
+            try {
+                const res = await fetch(`/api/tags/${this.selectedTagId}`);
+                if (res.ok) {
+                    const tag = await res.json();
+                    const tagDocIds = (tag.documents || [])
+                        .filter(d => d.status === 'indexed')
+                        .map(d => d.id);
+                    this.selectedDocIds = tagDocIds;
+                    this.loadDocGraph();
+                }
+            } catch(e) {}
+        },
 
         async searchEntities() {
             this.loadingEntities = true;
@@ -298,7 +362,7 @@ function graphExplorer() {
         },
 
         async loadDocGraph() {
-            if (!this.selectedDocId) {
+            if (this.selectedDocIds.length === 0) {
                 this.graphNodes = [];
                 this.graphEdges = [];
                 this.clearGraph();
@@ -306,9 +370,19 @@ function graphExplorer() {
             }
             this.loadingGraph = true;
             try {
+                let vizUrl, entUrl;
+                if (this.selectedDocIds.length === 1) {
+                    const docId = this.selectedDocIds[0];
+                    vizUrl = `/api/graph/documents/${docId}/visualization`;
+                    entUrl = `/api/graph/documents/${docId}/entities`;
+                } else {
+                    const ids = this.selectedDocIds.join(',');
+                    vizUrl = `/api/graph/visualization?doc_ids=${encodeURIComponent(ids)}`;
+                    entUrl = `/api/graph/entities?limit=200`;
+                }
                 const [vizRes, entRes] = await Promise.all([
-                    fetch(`/api/graph/documents/${this.selectedDocId}/visualization`),
-                    fetch(`/api/graph/documents/${this.selectedDocId}/entities`)
+                    fetch(vizUrl),
+                    fetch(entUrl)
                 ]);
                 if (vizRes.ok) {
                     const data = await vizRes.json();
@@ -336,10 +410,10 @@ function graphExplorer() {
         },
 
         async buildGraph() {
-            if (!this.selectedDocId) return;
+            if (this.selectedDocIds.length !== 1) return;
             this.building = true;
             try {
-                const res = await fetch(`/api/graph/documents/${this.selectedDocId}/build`, { method: 'POST' });
+                const res = await fetch(`/api/graph/documents/${this.selectedDocIds[0]}/build`, { method: 'POST' });
                 if (res.ok) {
                     await this.loadDocGraph();
                 }
