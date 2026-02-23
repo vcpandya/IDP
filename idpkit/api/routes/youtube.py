@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/youtube", tags=["youtube"])
 
 class YouTubeIngestRequest(BaseModel):
     url: str = Field(..., description="YouTube video, playlist, or channel URL")
+    video_ids: Optional[list[str]] = Field(None, description="Specific video IDs to import (for selective playlist/channel import)")
     auto_index: bool = Field(True, description="Auto-trigger indexing after transcript extraction")
     auto_tag: bool = Field(False, description="Run AI auto-tagging after processing")
     tag_id: Optional[str] = Field(None, description="Assign to existing tag")
@@ -61,7 +62,7 @@ async def preview_url(
         raise HTTPException(status_code=500, detail="Failed to resolve YouTube URL")
 
     preview_videos = []
-    for v in resolved["videos"][:20]:
+    for v in resolved["videos"]:
         preview_videos.append({
             "video_id": v.get("video_id", ""),
             "title": v.get("title", ""),
@@ -95,6 +96,13 @@ async def ingest_youtube(
     except Exception as exc:
         logger.error("YouTube URL resolution failed: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to resolve YouTube URL")
+
+    if body.video_ids:
+        selected = set(body.video_ids)
+        resolved["videos"] = [v for v in resolved["videos"] if v.get("video_id") in selected]
+        resolved["total"] = len(resolved["videos"])
+        if not resolved["videos"]:
+            raise HTTPException(status_code=400, detail="None of the selected video IDs were found in the resolved URL")
 
     if body.tag_id:
         tag_result = await db.execute(
