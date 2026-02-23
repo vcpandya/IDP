@@ -94,6 +94,6 @@ async def settings_page(request: Request, user=Depends(get_current_user_optional
 async def admin_users_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    if user.role != "admin":
+    if user.role not in ("admin", "superadmin"):
         return RedirectResponse(url="/dashboard", status_code=302)
     return templates.TemplateResponse("admin_users.html", {"request": request, "user": user})

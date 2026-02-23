@@ -26,14 +26,16 @@ All data lives in a single PostgreSQL database (15 tables):
 - **CORS**: Reads `ALLOWED_ORIGINS` env var (comma-separated); defaults to wildcard if not set
 - **Session cookies**: Login sets `secure=True`, `httponly=True` flags
 - **Error responses**: All API exception messages are sanitized — no internal details leaked to clients; full tracebacks logged server-side via `logger.exception()`
-- **Rate limiting**: slowapi with `get_remote_address` key function — 30/min for agent chat, 10/min for batch creation; returns 429 on excess
+- **Rate limiting**: slowapi with admin-exempt key function — defaults 30/min for agent chat, 10/min for batch creation; admins/superadmins are exempt; limits configurable via Admin panel (stored in `system_settings` table); returns 429 on excess
 - **File uploads**: SVG uploads blocked (XSS risk); max upload size enforced (50 MB)
 - **API keys**: All LLM provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`) read from env only — no `os.environ` mutation at runtime
 
 ## Authentication & User Management
-- **Admin seeding**: On startup, if no users exist, a default admin is created (username: `admin`, password from `IDP_ADMIN_PASSWORD` env var, default: `admin123`)
+- **Roles**: Three-tier hierarchy — `superadmin` > `admin` > `user`
+- **Admin seeding**: On startup, if no users exist, a default superadmin is created (username: `admin`, password from `IDP_ADMIN_PASSWORD` env var, default: `admin123`). Existing `admin`-role users named "admin" are auto-migrated to `superadmin`.
 - **User approval flow**: New user registrations create accounts with `is_active=0` (pending). Users cannot log in until an admin approves them via the Admin panel.
-- **Admin panel**: Available at `/admin/users` (sidebar link visible only to admin users). Admins can approve, deactivate, and delete users.
+- **Admin panel**: Available at `/admin/users` (sidebar link visible to admin and superadmin). Features: approve/deactivate users, promote users to admin, demote admins (superadmin only), delete users, configure rate limits.
+- **Role hierarchy rules**: Superadmin cannot be deleted/deactivated/demoted by anyone. Only superadmin can delete/deactivate/demote other admins. Any admin can promote regular users to admin.
 - **Auth methods**: JWT Bearer token, API key header (`X-API-Key`), or session cookie
 
 ## File Storage

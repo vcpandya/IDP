@@ -520,7 +520,7 @@ async def convert_options(
 # Batch job endpoints
 # ---------------------------------------------------------------------------
 
-from idpkit.api.deps import limiter
+from idpkit.api.deps import limiter, get_rate_limit
 
 @router.post(
     "/",
@@ -528,7 +528,7 @@ from idpkit.api.deps import limiter
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create and start a batch job",
 )
-@limiter.limit("10/minute")
+@limiter.limit(lambda: get_rate_limit("batch_create"))
 async def create_batch(
     request: Request,
     body: BatchCreateRequest,

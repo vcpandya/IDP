@@ -422,14 +422,14 @@ async def delete_conversation(
 # Chat Route (updated with conversation persistence)
 # ---------------------------------------------------------------------------
 
-from idpkit.api.deps import limiter
+from idpkit.api.deps import limiter, get_rate_limit
 
 @router.post(
     "/chat",
     response_model=ChatResponse,
     summary="Chat with the IDP Agent",
 )
-@limiter.limit("30/minute")
+@limiter.limit(lambda: get_rate_limit("agent_chat"))
 async def agent_chat(
     request: Request,
     body: ChatRequest,

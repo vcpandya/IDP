@@ -54,6 +54,48 @@ async def _recover_stale_jobs(session_factory) -> None:
         )
 
 
+async def _migrate_admin_to_superadmin(session_factory) -> None:
+    """Promote the original seeded admin to superadmin if still 'admin' role."""
+    from sqlalchemy import select, update
+    from idpkit.db.models import User, UserRole
+    import logging
+
+    async with session_factory() as db:
+        result = await db.execute(
+            select(User).where(User.username == "admin", User.role == UserRole.ADMIN.value)
+        )
+        original = result.scalar_one_or_none()
+        if original:
+            original.role = UserRole.SUPERADMIN.value
+            db.add(original)
+            await db.commit()
+            logging.getLogger(__name__).info(
+                "Migrated original admin user to superadmin role."
+            )
+
+
+async def _load_rate_limits(session_factory) -> None:
+    """Load rate limit settings from DB into cache."""
+    from sqlalchemy import select
+    from idpkit.db.models import SystemSetting
+    from idpkit.api.deps import update_rate_limit_cache
+    import json
+    import logging
+
+    try:
+        async with session_factory() as db:
+            result = await db.execute(
+                select(SystemSetting).where(SystemSetting.key == "rate_limits")
+            )
+            setting = result.scalar_one_or_none()
+            if setting:
+                limits = json.loads(setting.value)
+                update_rate_limit_cache(limits)
+                logging.getLogger(__name__).info("Loaded rate limits from DB: %s", limits)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Failed to load rate limits: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and load plugins on startup."""
@@ -63,6 +105,8 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     await seed_default_admin(async_session)
+    await _migrate_admin_to_superadmin(async_session)
+    await _load_rate_limits(async_session)
     await _recover_stale_jobs(async_session)
     plugin_manager.load_entry_points()
     yield
@@ -92,8 +136,31 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from idpkit.api.deps import limiter
+    from idpkit.api.deps import limiter, decode_token
     app.state.limiter = limiter
+
+    @app.middleware("http")
+    async def inject_user_role(request: Request, call_next):
+        role = None
+        auth = request.headers.get("authorization", "")
+        token = None
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+        if not token:
+            token = request.cookies.get("session_token")
+        if token:
+            user_id = decode_token(token)
+            if user_id:
+                from idpkit.db.session import async_session as _sf
+                from idpkit.db.models import User as _U
+                from sqlalchemy import select as _sel
+                async with _sf() as _s:
+                    _r = await _s.execute(_sel(_U.role).where(_U.id == user_id))
+                    row = _r.scalar_one_or_none()
+                    if row:
+                        role = row
+        request.state._user_role = role
+        return await call_next(request)
 
     @app.exception_handler(RateLimitExceeded)
     async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
