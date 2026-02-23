@@ -458,7 +458,7 @@ function knowledgeBase() {
         async loadData() {
             const [tagRes, docRes] = await Promise.all([
                 fetch('/api/tags/'),
-                fetch('/api/documents/?limit=100')
+                fetch('/api/documents/?limit=500')
             ]);
             if (tagRes.ok) this.tags = await tagRes.json();
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
@@ -473,8 +473,8 @@ function knowledgeBase() {
             if (this.filterTag === '__untagged__') {
                 docs = docs.filter(d => !d.tags || d.tags.length === 0);
             } else if (this.filterTag) {
-                const tagId = parseInt(this.filterTag);
-                docs = docs.filter(d => d.tags && d.tags.some(t => t.id === tagId));
+                const tagId = this.filterTag;
+                docs = docs.filter(d => d.tags && d.tags.some(t => String(t.id) === String(tagId)));
             }
             return docs;
         },
@@ -807,13 +807,15 @@ function knowledgeBase() {
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ document_ids: this.selectedDocIds })
                 });
-                if (res.ok) {
-                    this.selectedDocIds = [];
-                    await this.loadData();
+                if (!res.ok) {
+                    const err = await res.text();
+                    alert('Failed to tag documents: ' + err);
                 }
             } catch (e) {
                 alert('Failed to tag documents: ' + e.message);
             }
+            this.selectedDocIds = [];
+            await this.loadData();
         },
 
         async bulkDeleteSelected() {
@@ -823,12 +825,11 @@ function knowledgeBase() {
                 await Promise.all(this.selectedDocIds.map(id =>
                     fetch('/api/documents/' + id, { method: 'DELETE' })
                 ));
-                this.selectedDocIds = [];
-                await this.loadData();
             } catch (e) {
                 alert('Failed to delete some documents: ' + e.message);
-                await this.loadData();
             }
+            this.selectedDocIds = [];
+            await this.loadData();
         },
 
         async _uploadFiles(files, tagId) {
