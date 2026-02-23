@@ -437,55 +437,95 @@ async def _execute_search_document(
 
     try:
         response = await llm.acomplete(ranking_prompt)
-        # Parse the LLM response to get relevant node IDs
         content = response.content.strip()
-        # Strip markdown code fences if present
+        logger.info("Search ranking LLM response: %s", content[:500])
         if content.startswith("```"):
             content = content.split("\n", 1)[-1]
             content = content.rsplit("```", 1)[0]
-        relevant_ids = json.loads(content)
-    except Exception:
-        # Fallback: return all nodes
+        relevant_ids = json.loads(content.strip())
+        relevant_ids = [str(rid) for rid in relevant_ids]
+    except Exception as exc:
+        logger.warning("Failed to parse ranking response: %s", exc)
         relevant_ids = [n.get("node_id") for n in all_nodes[:5]]
 
-    # Gather full data for matched nodes
+    logger.info("Relevant IDs from ranking: %s", relevant_ids)
+
+    node_id_map = {}
+    for node in all_nodes:
+        nid = node.get("node_id")
+        if nid:
+            node_id_map[str(nid)] = node
+
     results = []
     for nid in relevant_ids:
-        for node in all_nodes:
-            if node.get("node_id") == nid:
-                results.append({
-                    "node_id": nid,
-                    "title": node.get("title"),
-                    "summary": node.get("summary") or node.get("prefix_summary") or "",
-                    "text": node.get("text") or "",
-                    "start_page": node.get("start_index"),
-                    "end_page": node.get("end_index"),
-                })
-                break
+        node = node_id_map.get(str(nid))
+        if node:
+            results.append({
+                "node_id": nid,
+                "title": node.get("title"),
+                "summary": node.get("summary") or node.get("prefix_summary") or "",
+                "text": node.get("text") or "",
+                "start_page": node.get("start_index"),
+                "end_page": node.get("end_index"),
+            })
 
-    # If nodes lack inline text, load it from the PDF on-demand
-    needs_text = any(not r.get("text") for r in results)
-    if needs_text and doc.file_path and results:
+    # Load PDF page text — needed for text fallback search and previews
+    page_list = None
+    if doc.file_path:
         try:
             from idpkit.api.deps import get_storage
             from idpkit.engine.page_index import get_page_tokens
+            from io import BytesIO
 
             storage = get_storage()
             pdf_bytes = storage.load(doc.file_path)
-            from io import BytesIO
             page_list = get_page_tokens(BytesIO(pdf_bytes), pdf_parser="PyMuPDF")
-
-            for r in results:
-                if r.get("text"):
-                    continue
-                s = (r.get("start_page") or 1) - 1
-                e = r.get("end_page") or s + 1
-                pages_text = "\n".join(
-                    page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
-                )
-                r["text"] = pages_text[:2000]
         except Exception as exc:
-            logger.warning("Could not load PDF text for search results: %s", exc)
+            logger.warning("Could not load PDF for search: %s", exc)
+
+    # Fallback: if LLM ranking found nothing, do keyword search in page text
+    if not results and page_list and query:
+        logger.info("LLM ranking returned no results; falling back to keyword search for '%s'", query)
+        query_lower = query.lower()
+        query_terms = query_lower.split()
+        scored_nodes = []
+        for node in all_nodes:
+            s = (node.get("start_index") or 1) - 1
+            e = node.get("end_index") or s + 1
+            section_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            ).lower()
+            score = sum(1 for term in query_terms if term in section_text)
+            if score > 0:
+                scored_nodes.append((score, node))
+        scored_nodes.sort(key=lambda x: -x[0])
+        for score, node in scored_nodes[:5]:
+            s = (node.get("start_index") or 1) - 1
+            e = node.get("end_index") or s + 1
+            section_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            )
+            results.append({
+                "node_id": node.get("node_id"),
+                "title": node.get("title"),
+                "summary": node.get("summary") or node.get("prefix_summary") or "",
+                "text": section_text[:2000],
+                "start_page": node.get("start_index"),
+                "end_page": node.get("end_index"),
+            })
+        logger.info("Keyword fallback found %d results", len(results))
+
+    # Fill in text for results that lack it (page_list already loaded above)
+    if page_list:
+        for r in results:
+            if r.get("text"):
+                continue
+            s = (r.get("start_page") or 1) - 1
+            e = r.get("end_page") or s + 1
+            pages_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            )
+            r["text"] = pages_text[:2000]
 
     for r in results:
         r["text_preview"] = (r.pop("text", "") or "")[:1500]
