@@ -264,7 +264,7 @@ async def trigger_indexing(
             detail=f"An indexing job is already in progress (job_id={running_job.id})",
         )
 
-    # Create job record
+    # Create job record and commit immediately so the background task can find it
     params = body.model_dump(exclude_none=True)
     job = Job(
         job_type="index",
@@ -273,7 +273,7 @@ async def trigger_indexing(
         params=params,
     )
     db.add(job)
-    await db.flush()
+    await db.commit()
     await db.refresh(job)
 
     # Enqueue background task
@@ -357,3 +357,117 @@ async def get_tree_index(
         status=doc.status,
         tree_index=doc.tree_index,
     )
+
+
+@router.get(
+    "/documents/{doc_id}/jobs",
+    response_model=list[JobStatusResponse],
+    summary="List all indexing jobs for a document",
+)
+async def list_indexing_jobs(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    doc_result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    result = await db.execute(
+        select(Job)
+        .where(Job.document_id == doc_id, Job.job_type == "index")
+        .order_by(Job.created_at.desc())
+    )
+    return result.scalars().all()
+
+
+@router.post(
+    "/jobs/{job_id}/cancel",
+    response_model=JobStatusResponse,
+    summary="Cancel a pending or running indexing job",
+)
+async def cancel_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job.document_id:
+        doc_result = await db.execute(
+            select(Document).where(Document.id == job.document_id, Document.owner_id == user.id)
+        )
+        if not doc_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job.status not in ("pending", "running"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job is already {job.status}",
+        )
+
+    job.status = "failed"
+    job.error = "Cancelled by user"
+    job.completed_at = datetime.now(timezone.utc)
+    db.add(job)
+
+    if job.document_id:
+        doc_result = await db.execute(
+            select(Document).where(Document.id == job.document_id, Document.status == "indexing")
+        )
+        doc = doc_result.scalar_one_or_none()
+        if doc:
+            doc.status = "uploaded"
+            db.add(doc)
+
+    await db.commit()
+    await db.refresh(job)
+    logger.info("Job cancelled: %s", job_id)
+    return job
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    summary="Delete a completed or failed indexing job",
+)
+async def delete_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job.document_id:
+        doc_result = await db.execute(
+            select(Document).where(Document.id == job.document_id, Document.owner_id == user.id)
+        )
+        if not doc_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    if job.status in ("pending", "running"):
+        job.status = "failed"
+        job.error = "Cancelled by user"
+        job.completed_at = datetime.now(timezone.utc)
+        db.add(job)
+
+        if job.document_id:
+            doc_result = await db.execute(
+                select(Document).where(Document.id == job.document_id, Document.status == "indexing")
+            )
+            doc = doc_result.scalar_one_or_none()
+            if doc:
+                doc.status = "uploaded"
+                db.add(doc)
+
+    await db.delete(job)
+    await db.commit()
+    logger.info("Job deleted: %s", job_id)
+    return {"detail": "Job deleted"}

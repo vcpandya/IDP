@@ -76,6 +76,58 @@
         <div x-show="viewMode === 'tree'" id="tree-container" class="tree-viz"></div>
     </div>
 
+    <!-- Job History -->
+    <div class="jobs-section" x-show="jobs.length > 0">
+        <div class="section-header">
+            <h3><i class="fas fa-tasks"></i> Indexing Jobs</h3>
+            <button @click="loadJobs()" class="btn btn-sm"><i class="fas fa-sync-alt"></i> Refresh</button>
+        </div>
+        <table class="jobs-table">
+            <thead>
+                <tr>
+                    <th>Status</th>
+                    <th>Progress</th>
+                    <th>Started</th>
+                    <th>Completed</th>
+                    <th>Error</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="job in jobs" :key="job.id">
+                    <tr>
+                        <td>
+                            <span class="status-badge" :class="'status-' + job.status" x-text="job.status"></span>
+                        </td>
+                        <td>
+                            <div style="display:flex;align-items:center;gap:6px">
+                                <div class="indexing-progress-bar" style="width:80px;height:6px">
+                                    <div class="indexing-progress-fill" :style="'width:' + (job.progress || 0) + '%'"></div>
+                                </div>
+                                <span style="font-size:0.75rem;color:var(--text-muted)" x-text="(job.progress || 0) + '%'"></span>
+                            </div>
+                        </td>
+                        <td style="font-size:0.8rem" x-text="new Date(job.created_at).toLocaleString()"></td>
+                        <td style="font-size:0.8rem" x-text="job.completed_at ? new Date(job.completed_at).toLocaleString() : '-'"></td>
+                        <td style="font-size:0.8rem;color:var(--danger);max-width:200px;overflow:hidden;text-overflow:ellipsis" x-text="job.error || '-'" :title="job.error || ''"></td>
+                        <td>
+                            <div style="display:flex;gap:4px">
+                                <button x-show="job.status === 'pending' || job.status === 'running'"
+                                        @click="cancelJob(job.id)" class="btn btn-sm btn-warning" title="Cancel">
+                                    <i class="fas fa-stop"></i>
+                                </button>
+                                <button x-show="job.status === 'completed' || job.status === 'failed'"
+                                        @click="deleteJob(job.id)" class="btn btn-sm btn-danger" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
     <!-- Query Section -->
     <div x-show="doc.status === 'indexed'" class="query-section">
         <h3><i class="fas fa-search"></i> Query Document</h3>
@@ -98,6 +150,7 @@ function documentView(docId) {
     return {
         doc: {}, viewMode: 'outline', query: '', answer: '', querying: false,
         indexing: false, indexProgress: 0, indexStatusText: '', indexError: '',
+        jobs: [],
         async load() {
             const res = await fetch(`/api/documents/${docId}`);
             if (res.ok) this.doc = await res.json();
@@ -107,6 +160,36 @@ function documentView(docId) {
                 this.pollStatus();
             }
             if (this.doc.tree_index && this.viewMode === 'tree') this.$nextTick(() => this.renderD3Tree());
+            await this.loadJobs();
+        },
+        async loadJobs() {
+            const res = await fetch(`/api/indexing/documents/${docId}/jobs`);
+            if (res.ok) this.jobs = await res.json();
+        },
+        async cancelJob(jobId) {
+            if (!confirm('Cancel this job?')) return;
+            const res = await fetch(`/api/indexing/jobs/${jobId}/cancel`, { method: 'POST' });
+            if (res.ok) {
+                this.indexing = false;
+                this.indexProgress = 0;
+                this.indexStatusText = '';
+                await this.loadJobs();
+                await this.load();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                alert(data.detail || 'Failed to cancel job');
+            }
+        },
+        async deleteJob(jobId) {
+            if (!confirm('Delete this job record?')) return;
+            const res = await fetch(`/api/indexing/jobs/${jobId}`, { method: 'DELETE' });
+            if (res.ok) {
+                await this.loadJobs();
+                await this.load();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                alert(data.detail || 'Failed to delete job');
+            }
         },
         formatSize(bytes) {
             if (!bytes) return '-';
