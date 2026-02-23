@@ -4,18 +4,24 @@
 <div class="page-header">
     <h2><i class="fas fa-brain"></i> IDA — Intelligent Document Assistant</h2>
 </div>
-<div class="chat-container" x-data="agentChat()">
-    <div class="chat-sidebar">
-        <!-- Conversations -->
+<div class="chat-container" x-data="agentChat()" @click.away="showAttachPopover = false; showTagMention = false">
+    <div class="chat-sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
+        <!-- Conversations only -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <h4 style="margin:0">Conversations</h4>
             <button class="btn btn-sm btn-primary" @click="newConversation()" title="New chat" style="padding:2px 8px;font-size:0.75rem">
                 <i class="fas fa-plus"></i>
             </button>
         </div>
-        <div class="conv-list" style="max-height:200px;overflow-y:auto;margin-bottom:16px">
-            <div x-show="conversations.length === 0" style="font-size:0.8rem;color:var(--text-muted)">No conversations yet</div>
-            <template x-for="conv in conversations" :key="conv.id">
+        <!-- Conversation search -->
+        <div class="conv-search">
+            <i class="fas fa-search conv-search-icon"></i>
+            <input type="text" x-model="convSearch" placeholder="Search conversations...">
+        </div>
+        <div class="conv-list" style="overflow-y:auto;flex:1">
+            <div x-show="filteredConversations().length === 0 && conversations.length === 0" style="font-size:0.8rem;color:var(--text-muted)">No conversations yet</div>
+            <div x-show="filteredConversations().length === 0 && conversations.length > 0" style="font-size:0.8rem;color:var(--text-muted)">No matches</div>
+            <template x-for="conv in filteredConversations()" :key="conv.id">
                 <div class="conv-item" :class="{ active: currentConversationId === conv.id }"
                      @click="loadConversation(conv.id)">
                     <span class="conv-title" x-text="conv.title"></span>
@@ -25,31 +31,11 @@
                 </div>
             </template>
         </div>
-
-        <h4>Tags</h4>
-        <div class="tag-selector" x-show="tags.length > 0">
-            <template x-for="tag in tags" :key="tag.id">
-                <label class="tag-check">
-                    <input type="checkbox" :value="tag.id" x-model="selectedTags" @change="onTagToggle(tag.id, $event.target.checked)">
-                    <span class="tag-dot" :style="'background:' + tag.color"></span>
-                    <span x-text="tag.name"></span>
-                    <span class="badge" x-text="tag.document_count || 0" style="font-size:0.7rem;padding:1px 6px"></span>
-                </label>
-            </template>
-        </div>
-        <div x-show="tags.length === 0" style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">No tags yet</div>
-        <h4 style="margin-top:16px">Documents</h4>
-        <div class="doc-selector">
-            <template x-for="doc in documents" :key="doc.id">
-                <label class="doc-check">
-                    <input type="checkbox" :value="doc.id" x-model="selectedDocs">
-                    <span x-text="doc.filename"></span>
-                    <span class="badge" x-text="doc.format"></span>
-                </label>
-            </template>
-        </div>
     </div>
     <div class="chat-main">
+        <button class="sidebar-toggle-btn" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? 'Hide sidebar' : 'Show conversations'">
+            <i :class="sidebarOpen ? 'fas fa-chevron-left' : 'fas fa-comments'"></i>
+        </button>
         <div class="chat-messages" id="chatMessages">
             <div class="welcome-msg" x-show="messages.length === 0">
                 <i class="fas fa-brain" style="color: #7c3aed"></i>
@@ -66,8 +52,8 @@
             </div>
             <template x-for="(msg, i) in messages" :key="i">
                 <div class="chat-msg" :class="'msg-' + msg.role"
-                     @click="msg.role === 'assistant' && msg.sources && msg.sources.length > 0 ? showSources(msg.sources) : null"
-                     :style="msg.role === 'assistant' && msg.sources && msg.sources.length > 0 ? 'cursor:pointer' : ''">
+                     @click="msg.role === 'assistant' && (msg.sources?.length > 0 || msg.searchAttempts?.length > 0) ? showSources(msg.sources, msg.searchAttempts) : null"
+                     :style="msg.role === 'assistant' && (msg.sources?.length > 0 || msg.searchAttempts?.length > 0) ? 'cursor:pointer' : ''">
                     <div class="msg-avatar" :style="msg.role === 'assistant' ? 'background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff' : ''">
                         <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
@@ -77,6 +63,13 @@
                             <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
                                   x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
                         </div>
+                        <!-- Source type banner -->
+                        <template x-if="msg.role === 'assistant' && msg.source_type">
+                            <div class="source-type-banner" :class="'banner-' + msg.source_type">
+                                <i :class="msg.source_type === 'documents' ? 'fas fa-file-alt' : msg.source_type === 'mixed' ? 'fas fa-layer-group' : 'fas fa-globe'"></i>
+                                <span x-text="msg.source_type === 'documents' ? 'Based on your documents' : msg.source_type === 'mixed' ? 'Based on documents + general knowledge' : 'Based on general knowledge'"></span>
+                            </div>
+                        </template>
                         <div class="msg-body"
                              x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.role === 'tool' ? '<pre>' + msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>' : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
                              x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
@@ -90,40 +83,107 @@
             </div>
         </div>
         <div class="chat-input-area">
-            <div class="chat-upload-tags" x-show="uploadFiles.length > 0">
-                <template x-for="(uf, idx) in uploadFiles" :key="idx">
+            <!-- Upload file tags + tag chips -->
+            <div class="chat-upload-tags" x-show="uploadFiles.length > 0 || selectedTagChips.length > 0 || selectedDocs.length > 0">
+                <template x-for="(uf, idx) in uploadFiles" :key="'uf-'+idx">
                     <span class="chat-upload-tag" :class="uf.status">
                         <i :class="uf.status === 'ready' ? 'fas fa-check-circle' : uf.status === 'failed' ? 'fas fa-times-circle' : 'fas fa-spinner'"></i>
                         <span class="tag-name" x-text="uf.filename"></span>
                     </span>
                 </template>
+                <template x-for="chip in selectedTagChips" :key="'tag-'+chip.id">
+                    <span class="tag-chip" :style="'border-color:' + chip.color">
+                        <span class="tag-dot" :style="'background:' + chip.color"></span>
+                        <span x-text="chip.name"></span>
+                        <button class="tag-chip-remove" @click="removeTagChip(chip.id)">&times;</button>
+                    </span>
+                </template>
+                <template x-for="did in selectedDocs" :key="'doc-'+did">
+                    <span class="chat-upload-tag ready" x-show="!uploadFiles.some(u => u.docId === did)">
+                        <i class="fas fa-file-alt"></i>
+                        <span class="tag-name" x-text="getDocName(did)"></span>
+                        <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit" @click="selectedDocs = selectedDocs.filter(d => d !== did)">&times;</button>
+                    </span>
+                </template>
             </div>
-            <div class="chat-input">
+            <!-- @mention tag dropdown -->
+            <div class="tag-mention-dropdown" x-show="showTagMention" x-cloak>
+                <template x-for="tag in filteredMentionTags()" :key="tag.id">
+                    <div class="tag-mention-item" @click="selectTagMention(tag)">
+                        <span class="tag-dot" :style="'background:' + tag.color"></span>
+                        <span x-text="tag.name"></span>
+                        <span style="font-size:0.7rem;color:var(--text-muted);margin-left:auto" x-text="(tag.document_count || 0) + ' docs'"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionTags().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching tags</div>
+            </div>
+            <div class="chat-input" style="position:relative">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
-                <button class="btn-upload" @click="$refs.chatFileBtn ? $refs.chatFileBtn.click() : document.getElementById('chatFileInput').click()" title="Upload files" :disabled="loading">
-                    <i class="fas fa-paperclip"></i>
-                </button>
-                <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask IDA anything about your documents..." :disabled="loading">
+                <!-- Paperclip with attach popover -->
+                <div style="position:relative">
+                    <button class="btn-upload" @click.stop="showAttachPopover = !showAttachPopover" title="Attach files" :disabled="loading">
+                        <i class="fas fa-paperclip"></i>
+                    </button>
+                    <div class="attach-popover" x-show="showAttachPopover" x-cloak @click.stop>
+                        <button class="attach-upload-btn" @click="document.getElementById('chatFileInput').click(); showAttachPopover = false">
+                            <i class="fas fa-upload"></i> Upload new file
+                        </button>
+                        <div class="attach-search" x-show="documents.length > 5">
+                            <input type="text" x-model="docFilter" placeholder="Search documents..." @click.stop>
+                        </div>
+                        <div class="attach-doc-list">
+                            <template x-for="doc in filteredAttachDocs()" :key="doc.id">
+                                <label class="attach-doc-item" @click.stop>
+                                    <input type="checkbox" :value="doc.id" x-model="selectedDocs">
+                                    <span class="attach-doc-name" x-text="doc.filename"></span>
+                                    <span class="badge" x-text="doc.format" style="font-size:0.65rem;padding:1px 5px"></span>
+                                </label>
+                            </template>
+                            <div x-show="filteredAttachDocs().length === 0" style="padding:8px;font-size:0.8rem;color:var(--text-muted);text-align:center">No documents found</div>
+                        </div>
+                    </div>
+                </div>
+                <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (type @ for tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
             </div>
         </div>
     </div>
-    <!-- Sources Panel -->
-    <div class="chat-sources-panel" x-show="currentSources.length > 0" x-cloak>
-        <h4><i class="fas fa-quote-left"></i> Sources</h4>
-        <template x-for="(src, si) in currentSources" :key="si">
-            <a :href="'/documents/' + src.document_id" class="source-card" target="_blank">
-                <div class="source-title" x-text="src.title || 'Untitled section'"></div>
-                <div class="source-meta">
-                    <span class="source-filename" x-text="src.filename"></span>
-                    <span class="source-pages" x-show="src.start_page != null">
-                        pp. <span x-text="src.start_page"></span><span x-show="src.end_page != null && src.end_page !== src.start_page">–<span x-text="src.end_page"></span></span>
-                    </span>
-                </div>
-                <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
-            </a>
+    <!-- Sources / Search Attempts Panel -->
+    <div class="chat-sources-panel" x-show="currentSources.length > 0 || currentSearchAttempts.length > 0" x-cloak>
+        <!-- Search Activity -->
+        <template x-if="currentSearchAttempts.length > 0">
+            <div style="margin-bottom:16px">
+                <h4><i class="fas fa-search"></i> Search Activity</h4>
+                <template x-for="(att, ai) in currentSearchAttempts" :key="ai">
+                    <div class="search-attempt-card" :class="'attempt-' + att.status">
+                        <div style="display:flex;align-items:center;gap:6px">
+                            <i :class="att.status === 'found' ? 'fas fa-check-circle' : att.status === 'no_results' ? 'fas fa-exclamation-triangle' : att.status === 'error' ? 'fas fa-times-circle' : 'fas fa-minus-circle'"></i>
+                            <span class="attempt-filename" x-text="att.filename"></span>
+                        </div>
+                        <div class="attempt-detail" x-text="att.status === 'found' ? att.results_found + ' sections found' : att.status === 'no_results' ? 'No relevant sections found' : att.status === 'error' ? 'Error during search' : 'Not searched'"></div>
+                    </div>
+                </template>
+            </div>
+        </template>
+        <!-- Found Sources -->
+        <template x-if="currentSources.length > 0">
+            <div>
+                <h4><i class="fas fa-quote-left"></i> Sources</h4>
+                <template x-for="(src, si) in currentSources" :key="si">
+                    <a :href="'/documents/' + src.document_id" class="source-card" target="_blank">
+                        <div class="source-title" x-text="src.title || 'Untitled section'"></div>
+                        <div class="source-meta">
+                            <span class="source-filename" x-text="src.filename"></span>
+                            <span class="source-pages" x-show="src.start_page != null">
+                                pp. <span x-text="src.start_page"></span><span x-show="src.end_page != null && src.end_page !== src.start_page">–<span x-text="src.end_page"></span></span>
+                            </span>
+                        </div>
+                        <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
+                    </a>
+                </template>
+            </div>
         </template>
     </div>
 </div>
@@ -134,8 +194,16 @@ function agentChat() {
         uploadFiles: [],
         tags: [], selectedTags: [],
         currentSources: [],
+        currentSearchAttempts: [],
         conversations: [],
         currentConversationId: null,
+        sidebarOpen: true,
+        convSearch: '',
+        showAttachPopover: false,
+        docFilter: '',
+        showTagMention: false,
+        tagMentionFilter: '',
+        selectedTagChips: [],
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -145,6 +213,66 @@ function agentChat() {
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
             if (tagRes.ok) { this.tags = await tagRes.json(); }
             if (convRes.ok) { this.conversations = await convRes.json(); }
+        },
+        filteredConversations() {
+            if (!this.convSearch.trim()) return this.conversations;
+            const q = this.convSearch.toLowerCase();
+            return this.conversations.filter(c => c.title.toLowerCase().includes(q));
+        },
+        filteredAttachDocs() {
+            if (!this.docFilter.trim()) return this.documents;
+            const q = this.docFilter.toLowerCase();
+            return this.documents.filter(d => d.filename.toLowerCase().includes(q));
+        },
+        filteredMentionTags() {
+            if (!this.tagMentionFilter.trim()) return this.tags;
+            const q = this.tagMentionFilter.toLowerCase();
+            return this.tags.filter(t => t.name.toLowerCase().includes(q));
+        },
+        getDocName(docId) {
+            const d = this.documents.find(x => x.id === docId);
+            return d ? d.filename : docId.substring(0, 8) + '...';
+        },
+        handleInputChange(event) {
+            const val = this.input;
+            const cursorPos = event.target.selectionStart || val.length;
+            const textBefore = val.substring(0, cursorPos);
+            const lastAtIdx = textBefore.lastIndexOf('@');
+            if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ')) {
+                const afterAt = textBefore.substring(lastAtIdx + 1);
+                if (!afterAt.includes(' ')) {
+                    this.showTagMention = true;
+                    this.tagMentionFilter = afterAt;
+                    return;
+                }
+            }
+            this.showTagMention = false;
+            this.tagMentionFilter = '';
+        },
+        async selectTagMention(tag) {
+            // Remove the @text from input
+            const cursorPos = this.input.length;
+            const lastAtIdx = this.input.lastIndexOf('@');
+            if (lastAtIdx !== -1) {
+                this.input = this.input.substring(0, lastAtIdx) + this.input.substring(cursorPos).replace(/^\S*/, '');
+                this.input = this.input.trim();
+            }
+            this.showTagMention = false;
+            this.tagMentionFilter = '';
+            // Add as chip if not already present
+            if (!this.selectedTagChips.find(c => c.id === tag.id)) {
+                this.selectedTagChips.push({ id: tag.id, name: tag.name, color: tag.color });
+                // Auto-select tag's docs
+                await this.onTagToggle(tag.id, true);
+                if (!this.selectedTags.includes(tag.id)) {
+                    this.selectedTags.push(tag.id);
+                }
+            }
+        },
+        async removeTagChip(tagId) {
+            this.selectedTagChips = this.selectedTagChips.filter(c => c.id !== tagId);
+            this.selectedTags = this.selectedTags.filter(t => t !== tagId);
+            await this.onTagToggle(tagId, false);
         },
         async onTagToggle(tagId, checked) {
             try {
@@ -215,14 +343,15 @@ function agentChat() {
             }
             event.target.value = '';
         },
-        showSources(sources) {
+        showSources(sources, searchAttempts) {
             this.currentSources = sources || [];
+            this.currentSearchAttempts = searchAttempts || [];
         },
         async sendMessage(text) {
             const msg = text || this.input.trim();
             if (!msg) return;
             this.input = '';
-            this.messages.push({ role: 'user', content: msg, sources: null });
+            this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null });
             this.loading = true;
             this.scrollToBottom();
 
@@ -255,14 +384,22 @@ function agentChat() {
                     const data = await res.json();
                     if (data.tool_calls) {
                         for (const tc of data.tool_calls) {
-                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name, sources: null });
+                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name, sources: null, source_type: null, searchAttempts: null });
                         }
                     }
                     const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
-                    this.messages.push({ role: 'assistant', content: data.response || data.detail || 'No response', sources: msgSources });
-                    // Update sources panel to show latest
-                    if (msgSources) {
-                        this.currentSources = msgSources;
+                    const msgSearchAttempts = (data.search_attempts && data.search_attempts.length > 0) ? data.search_attempts : null;
+                    this.messages.push({
+                        role: 'assistant',
+                        content: data.response || data.detail || 'No response',
+                        sources: msgSources,
+                        source_type: data.source_type || null,
+                        searchAttempts: msgSearchAttempts
+                    });
+                    // Update right panel
+                    if (msgSources || msgSearchAttempts) {
+                        this.currentSources = msgSources || [];
+                        this.currentSearchAttempts = msgSearchAttempts || [];
                     }
                     // Update conversation title in sidebar
                     if (this.currentConversationId) {
@@ -272,21 +409,23 @@ function agentChat() {
                         }
                     }
                 } else {
-                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null });
+                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null, source_type: null, searchAttempts: null });
                 }
-            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null }); }
+            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null, source_type: null, searchAttempts: null }); }
             finally { this.loading = false; this.scrollToBottom(); }
         },
         newConversation() {
             this.currentConversationId = null;
             this.messages = [];
             this.currentSources = [];
+            this.currentSearchAttempts = [];
         },
         async loadConversation(convId) {
             if (convId === this.currentConversationId) return;
             this.currentConversationId = convId;
             this.messages = [];
             this.currentSources = [];
+            this.currentSearchAttempts = [];
             try {
                 const res = await fetch('/api/agent/conversations/' + convId);
                 if (res.ok) {
@@ -296,7 +435,9 @@ function agentChat() {
                             role: m.role,
                             content: m.content || '',
                             tool_name: m.tool_name || null,
-                            sources: m.sources || null
+                            sources: m.sources || null,
+                            source_type: m.source_type || null,
+                            searchAttempts: null
                         });
                     }
                     this.scrollToBottom();
