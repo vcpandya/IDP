@@ -1749,6 +1749,72 @@ tbody tr:hover { background: var(--border-light); }
     gap: 10px;
 }
 
+/* ========== Conversation List ========== */
+.conv-list {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 4px;
+}
+
+.conv-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.82rem;
+    transition: background var(--transition);
+}
+
+.conv-item:hover {
+    background: var(--border-light);
+}
+
+.conv-item.active {
+    background: var(--primary-light);
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.conv-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+
+.conv-delete {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    padding: 2px 4px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: all var(--transition);
+    flex-shrink: 0;
+}
+
+.conv-item:hover .conv-delete {
+    opacity: 1;
+}
+
+.conv-delete:hover {
+    color: var(--danger);
+    background: var(--danger-light);
+}
+
+/* ========== Sources Badge ========== */
+.sources-badge {
+    font-size: 0.7rem;
+    color: var(--primary);
+    margin-left: 6px;
+    font-weight: 500;
+}
+
 /* ========== Responsive ========== */
 @media (max-width: 768px) {
     .sidebar {

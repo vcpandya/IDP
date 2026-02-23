@@ -11,8 +11,22 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 async def init_db():
-    """Create all tables."""
+    """Create all tables, migrating legacy schemas when needed."""
+    from sqlalchemy import inspect as sa_inspect, text
+
     async with engine.begin() as conn:
+        # Migrate conversation_messages: if the old table exists without the
+        # owner_id column, drop it (and the new conversations table if somehow
+        # partially created) so create_all rebuilds with the correct schema.
+        def _migrate_conversations(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "conversation_messages" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("conversation_messages")}
+                if "owner_id" not in cols:
+                    sync_conn.execute(text("DROP TABLE IF EXISTS conversation_messages"))
+                    sync_conn.execute(text("DROP TABLE IF EXISTS conversations"))
+
+        await conn.run_sync(_migrate_conversations)
         await conn.run_sync(Base.metadata.create_all)
 
 
