@@ -19,12 +19,6 @@ All data lives in a single PostgreSQL database (12 tables):
 - **Schema**: Auto-created via `Base.metadata.create_all()` at startup
 - **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
 
-## Settings & LLM Provider Management
-- **Settings API**: `/api/settings/providers` lists available LLM providers (OpenAI, Anthropic, Google, OpenRouter, Ollama) with configuration status
-- **Model selection**: `/api/settings/models?provider=<id>` fetches available models per provider (live API calls for OpenAI/Ollama, curated lists for Anthropic/Google)
-- **Prompt management**: CRUD endpoints for saved prompts at `/api/settings/prompts`
-- **Settings UI**: `/settings` page with provider/model selector, searchable model dropdown, and localStorage persistence
-
 ## Authentication & User Management
 - **Admin seeding**: On startup, if no users exist, a default admin is created (username: `admin`, password from `IDP_ADMIN_PASSWORD` env var, default: `admin123`)
 - **User approval flow**: New user registrations create accounts with `is_active=0` (pending). Users cannot log in until an admin approves them via the Admin panel.
@@ -38,7 +32,7 @@ All data lives in a single PostgreSQL database (12 tables):
 - **Selection**: `get_storage()` in `idpkit/api/deps.py` auto-selects based on env vars
 
 ## Project Structure
-- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings)
+- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin)
 - `idpkit/web/` — Web UI routes and Jinja2 templates
 - `idpkit/db/` — Database models, session management, and admin seeding
 - `idpkit/engine/` — PageIndex document indexing engine
@@ -59,11 +53,6 @@ All data lives in a single PostgreSQL database (12 tables):
 - `PRIVATE_OBJECT_DIR` — Private directory prefix in GCS bucket (set by Replit)
 - `IDP_ADMIN_PASSWORD` — Default admin password (default: `admin123`)
 - `IDP_SECRET_KEY` — JWT signing key (default: `dev-secret-change-in-production`)
-- `OPENAI_API_KEY` / `CHATGPT_API_KEY` — OpenAI provider
-- `ANTHROPIC_API_KEY` — Anthropic provider
-- `GOOGLE_API_KEY` / `GEMINI_API_KEY` — Google provider
-- `OPENROUTER_API_KEY` — OpenRouter provider
-- `OLLAMA_BASE_URL` — Ollama local server (default: `http://localhost:11434`)
 
 ## Running
 - Dev: `python run_server.py` (port 5000, host 0.0.0.0)

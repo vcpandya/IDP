@@ -39,7 +39,10 @@
                     </div>
                     <div class="msg-content">
                         <div class="msg-header" x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></div>
-                        <div class="msg-body" x-html="msg.content"></div>
+                        <div class="msg-body"
+                             x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.role === 'tool' ? '<pre>' + msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>' : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
+                             x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
+                        </div>
                     </div>
                 </div>
             </template>
@@ -48,11 +51,25 @@
                 <div class="msg-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
             </div>
         </div>
-        <div class="chat-input">
-            <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask IDA anything about your documents..." :disabled="loading">
-            <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
-                <i class="fas fa-paper-plane"></i>
-            </button>
+        <div class="chat-input-area">
+            <div class="chat-upload-tags" x-show="uploadFiles.length > 0">
+                <template x-for="(uf, idx) in uploadFiles" :key="idx">
+                    <span class="chat-upload-tag" :class="uf.status">
+                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle' : uf.status === 'failed' ? 'fas fa-times-circle' : 'fas fa-spinner'"></i>
+                        <span class="tag-name" x-text="uf.filename"></span>
+                    </span>
+                </template>
+            </div>
+            <div class="chat-input">
+                <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
+                <button class="btn-upload" @click="$refs.chatFileBtn ? $refs.chatFileBtn.click() : document.getElementById('chatFileInput').click()" title="Upload files" :disabled="loading">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask IDA anything about your documents..." :disabled="loading">
+                <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -60,9 +77,61 @@
 function agentChat() {
     return {
         messages: [], input: '', loading: false, documents: [], selectedDocs: [],
+        uploadFiles: [],
         async init() {
             const res = await fetch('/api/documents/?limit=100');
             if (res.ok) { const data = await res.json(); this.documents = data.items || data.documents || []; }
+        },
+        async handleChatUpload(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            for (const file of files) {
+                const entry = { file, docId: null, status: 'uploading', filename: file.name };
+                this.uploadFiles.push(entry);
+                try {
+                    // Upload
+                    const form = new FormData();
+                    form.append('file', file);
+                    const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
+                    if (!upRes.ok) { entry.status = 'failed'; continue; }
+                    const doc = await upRes.json();
+                    entry.docId = doc.id;
+                    entry.status = 'indexing';
+                    // Add to sidebar documents list
+                    this.documents.push(doc);
+                    // Trigger indexing
+                    await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                    // Poll for index completion
+                    let attempts = 0;
+                    const maxAttempts = 60;
+                    while (attempts < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        const statusRes = await fetch('/api/indexing/documents/' + doc.id + '/index/status');
+                        if (statusRes.ok) {
+                            const statusData = await statusRes.json();
+                            const st = statusData.status || statusData.index_status || '';
+                            if (st === 'indexed' || st === 'completed') {
+                                entry.status = 'ready';
+                                if (!this.selectedDocs.includes(doc.id)) {
+                                    this.selectedDocs.push(doc.id);
+                                }
+                                break;
+                            } else if (st === 'failed') {
+                                entry.status = 'failed';
+                                break;
+                            }
+                        }
+                        attempts++;
+                    }
+                    if (attempts >= maxAttempts && entry.status === 'indexing') {
+                        entry.status = 'failed';
+                    }
+                } catch (e) {
+                    entry.status = 'failed';
+                }
+            }
+            // Reset file input so the same file can be re-selected
+            event.target.value = '';
         },
         async sendMessage(text) {
             const msg = text || this.input.trim();

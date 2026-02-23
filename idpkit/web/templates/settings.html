@@ -38,46 +38,67 @@
             <!-- Provider selection -->
             <div class="form-group">
                 <label>Provider</label>
-                <div style="position:relative;">
-                    <select x-model="selectedProvider" @change="onProviderChange()">
-                        <option value="">-- Select Provider --</option>
-                        <template x-for="p in providers" :key="p.id">
-                            <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (not configured)')"></option>
-                        </template>
-                    </select>
-                    <div x-show="loadingProviders" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);">
-                        <i class="fas fa-spinner fa-spin" style="color:var(--text-muted);"></i>
-                    </div>
+                <select x-model="selectedProvider" @change="onProviderChange()">
+                    <option value="">-- Select Provider --</option>
+                    <template x-for="p in providers" :key="p.id">
+                        <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (not configured)')"></option>
+                    </template>
+                </select>
+                <div x-show="loadingProviders" style="margin-top:4px;font-size:.8rem;color:var(--text-muted);">
+                    <i class="fas fa-spinner fa-spin"></i> Loading providers...
                 </div>
             </div>
 
-            <!-- Model selection with search -->
+            <!-- Model selection -->
             <div class="form-group">
-                <label>Default Model</label>
-                <div class="model-search-container" @click.outside="modelDropdownOpen = false">
+                <label>Default Model
+                    <span x-show="models.length > 0" style="font-weight:400;color:var(--text-muted);">
+                        (<span x-text="models.length"></span> available)
+                    </span>
+                </label>
+
+                <!-- Search filter (shown when many models) -->
+                <div x-show="models.length > 10" class="doc-search" style="margin-bottom:6px;">
                     <i class="fas fa-search search-icon"></i>
-                    <input type="text"
-                        x-model="modelSearch"
-                        @focus="modelDropdownOpen = true"
-                        @input="modelDropdownOpen = true"
-                        :placeholder="loadingModels ? 'Fetching models...' : (selectedProvider ? 'Search models...' : 'Select a provider first')"
-                        :disabled="!selectedProvider"
-                        autocomplete="off">
-                    <div class="model-dropdown" x-show="modelDropdownOpen && !loadingModels" x-cloak>
-                        <template x-for="m in filteredModels" :key="m.id">
-                            <div class="model-option"
-                                :class="{'selected': defaultModel === m.id}"
-                                @click="selectModel(m)">
-                                <span x-text="m.name"></span>
-                                <span class="provider-tag" x-text="m.provider"></span>
-                            </div>
-                        </template>
-                        <div class="no-results" x-show="filteredModels.length === 0">
-                            No models found
+                    <input type="text" x-model="modelSearch" placeholder="Filter models...">
+                </div>
+
+                <div x-show="loadingModels" style="padding:10px;font-size:.85rem;color:var(--text-muted);">
+                    <i class="fas fa-spinner fa-spin"></i> Fetching models from <span x-text="selectedProvider"></span>...
+                </div>
+
+                <div x-show="!loadingModels && selectedProvider && models.length > 0"
+                    style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-white);">
+                    <template x-for="m in getFilteredModels()" :key="m.id">
+                        <div @click="selectModel(m)"
+                            style="padding:8px 14px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border-light);transition:background .15s;"
+                            :style="defaultModel === m.id ? 'background:var(--primary-light);font-weight:600;' : ''"
+                            @mouseenter="$el.style.background = defaultModel === m.id ? 'var(--primary-light)' : 'var(--border-light)'"
+                            @mouseleave="$el.style.background = defaultModel === m.id ? 'var(--primary-light)' : ''">
+                            <span style="font-size:.85rem;" x-text="m.name"></span>
+                            <span x-show="defaultModel === m.id" style="color:var(--primary);font-size:.8rem;">
+                                <i class="fas fa-check"></i>
+                            </span>
                         </div>
+                    </template>
+                    <div x-show="getFilteredModels().length === 0"
+                        style="padding:12px;text-align:center;color:var(--text-muted);font-size:.85rem;">
+                        No models match filter
                     </div>
                 </div>
-                <div x-show="defaultModel" style="margin-top:6px;font-size:0.8rem;color:var(--text-secondary);">
+
+                <div x-show="!loadingModels && selectedProvider && models.length === 0"
+                    style="padding:10px;font-size:.85rem;color:var(--warning);">
+                    <i class="fas fa-exclamation-triangle"></i> No models found for this provider
+                </div>
+
+                <div x-show="!selectedProvider"
+                    style="padding:10px;font-size:.85rem;color:var(--text-muted);">
+                    Select a provider above to see available models
+                </div>
+
+                <div x-show="defaultModel" style="margin-top:8px;font-size:0.82rem;color:var(--text-secondary);">
+                    <i class="fas fa-microchip" style="color:var(--primary);"></i>
                     Selected: <strong x-text="defaultModel"></strong>
                 </div>
             </div>
@@ -103,10 +124,9 @@ function settingsPage() {
         models: [],
         loadingModels: false,
         modelSearch: '',
-        modelDropdownOpen: false,
         defaultModel: '',
 
-        get filteredModels() {
+        getFilteredModels() {
             if (!this.modelSearch) return this.models;
             const q = this.modelSearch.toLowerCase();
             return this.models.filter(m =>
@@ -124,10 +144,8 @@ function settingsPage() {
             if (savedProvider) {
                 this.selectedProvider = savedProvider;
                 await this.fetchModels();
-                if (savedModel) {
+                if (savedModel && this.models.find(x => x.id === savedModel)) {
                     this.defaultModel = savedModel;
-                    const m = this.models.find(x => x.id === savedModel);
-                    if (m) this.modelSearch = m.name;
                 }
             }
         },
@@ -136,7 +154,13 @@ function settingsPage() {
             this.loadingProviders = true;
             try {
                 const res = await fetch('/api/settings/providers');
-                if (res.ok) this.providers = await res.json();
+                if (res.ok) {
+                    this.providers = await res.json();
+                } else {
+                    console.error('Failed to load providers:', res.status);
+                }
+            } catch(e) {
+                console.error('Error loading providers:', e);
             } finally {
                 this.loadingProviders = false;
             }
@@ -156,8 +180,15 @@ function settingsPage() {
             if (!this.selectedProvider) return;
             this.loadingModels = true;
             try {
-                const res = await fetch(`/api/settings/models?provider=${this.selectedProvider}`);
-                if (res.ok) this.models = await res.json();
+                const res = await fetch('/api/settings/models?provider=' + encodeURIComponent(this.selectedProvider));
+                if (res.ok) {
+                    this.models = await res.json();
+                    console.log('Loaded', this.models.length, 'models for', this.selectedProvider);
+                } else {
+                    console.error('Failed to fetch models:', res.status);
+                }
+            } catch(e) {
+                console.error('Error fetching models:', e);
             } finally {
                 this.loadingModels = false;
             }
@@ -165,8 +196,6 @@ function settingsPage() {
 
         selectModel(m) {
             this.defaultModel = m.id;
-            this.modelSearch = m.name;
-            this.modelDropdownOpen = false;
             localStorage.setItem('idpkit_model', m.id);
         },
 

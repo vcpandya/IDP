@@ -114,7 +114,11 @@
         <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:16px;">
             <!-- Provider → Model selection -->
             <div class="form-group" style="margin-bottom:0;">
-                <label>Model</label>
+                <label>Model
+                    <span x-show="models.length > 0" style="font-weight:400;color:var(--text-muted);font-size:.78rem;">
+                        (<span x-text="models.length"></span> available)
+                    </span>
+                </label>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                     <select x-model="selectedProvider" @change="onProviderChange()">
                         <option value="">Provider...</option>
@@ -122,31 +126,20 @@
                             <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (N/A)')"></option>
                         </template>
                     </select>
-                    <div class="model-search-container" @click.outside="modelDropdownOpen = false">
-                        <i class="fas fa-search search-icon"></i>
-                        <input type="text"
-                            x-model="modelSearch"
-                            @focus="modelDropdownOpen = true"
-                            @input="modelDropdownOpen = true"
-                            :placeholder="loadingModels ? 'Loading...' : 'Search models...'"
-                            :disabled="!selectedProvider"
-                            autocomplete="off">
-                        <div class="model-dropdown" x-show="modelDropdownOpen && !loadingModels" x-cloak>
-                            <template x-for="m in filteredModels" :key="m.id">
-                                <div class="model-option"
-                                    :class="{'selected': modelOverride === m.id}"
-                                    @click="selectModel(m)">
-                                    <span x-text="m.name"></span>
-                                </div>
+                    <div style="position:relative;">
+                        <select x-model="modelOverride" :disabled="!selectedProvider || loadingModels">
+                            <option value="" x-text="loadingModels ? 'Loading models...' : (selectedProvider ? 'Select model...' : 'Select provider first')"></option>
+                            <template x-for="m in models" :key="m.id">
+                                <option :value="m.id" x-text="m.name"></option>
                             </template>
-                            <div class="no-results" x-show="filteredModels.length === 0">
-                                No models match
-                            </div>
+                        </select>
+                        <div x-show="loadingModels" style="position:absolute;right:28px;top:50%;transform:translateY(-50%);">
+                            <i class="fas fa-spinner fa-spin" style="color:var(--text-muted);font-size:.8rem;"></i>
                         </div>
                     </div>
                 </div>
                 <div x-show="modelOverride" style="margin-top:4px;font-size:.78rem;color:var(--text-secondary);">
-                    <i class="fas fa-microchip"></i> <span x-text="modelOverride"></span>
+                    <i class="fas fa-microchip" style="color:var(--primary);"></i> <span x-text="modelOverride"></span>
                 </div>
             </div>
             <div class="form-group" style="margin-bottom:0;">
@@ -188,7 +181,7 @@
                 <span class="badge" x-text="selectedDocs.length + ' selected'" style="font-size:.75rem;"></span>
             </div>
             <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:4px;">
-                <template x-for="doc in filteredDocuments" :key="doc.id">
+                <template x-for="doc in getFilteredDocuments()" :key="doc.id">
                     <label style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-radius:4px;transition:background .15s;"
                         :style="selectedDocs.includes(doc.id) ? 'background:var(--primary-light)' : ''"
                         @mouseenter="$el.style.background = selectedDocs.includes(doc.id) ? 'var(--primary-light)' : 'var(--border-light)'"
@@ -199,7 +192,7 @@
                             style="font-size:.7rem;padding:2px 8px;"></span>
                     </label>
                 </template>
-                <div x-show="filteredDocuments.length === 0" class="empty-state">
+                <div x-show="getFilteredDocuments().length === 0" class="empty-state">
                     No documents found
                 </div>
             </div>
@@ -372,8 +365,6 @@ function batchPage() {
         selectedProvider: '',
         models: [],
         loadingModels: false,
-        modelSearch: '',
-        modelDropdownOpen: false,
         modelOverride: '',
         // Document selection
         docMode: 'existing',
@@ -394,15 +385,7 @@ function batchPage() {
         historyJobs: [],
         viewingJob: null,
 
-        get filteredModels() {
-            if (!this.modelSearch) return this.models;
-            const q = this.modelSearch.toLowerCase();
-            return this.models.filter(m =>
-                m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)
-            );
-        },
-
-        get filteredDocuments() {
+        getFilteredDocuments() {
             if (!this.docSearch) return this.documents;
             const q = this.docSearch.toLowerCase();
             return this.documents.filter(d => d.filename.toLowerCase().includes(q));
@@ -423,10 +406,8 @@ function batchPage() {
             if (savedProvider) {
                 this.selectedProvider = savedProvider;
                 await this.fetchModels();
-                if (savedModel) {
+                if (savedModel && this.models.find(x => x.id === savedModel)) {
                     this.modelOverride = savedModel;
-                    const m = this.models.find(x => x.id === savedModel);
-                    if (m) this.modelSearch = m.name;
                 }
             }
         },
@@ -464,7 +445,6 @@ function batchPage() {
         async onProviderChange() {
             this.models = [];
             this.modelOverride = '';
-            this.modelSearch = '';
             if (this.selectedProvider) {
                 localStorage.setItem('idpkit_provider', this.selectedProvider);
                 await this.fetchModels();
@@ -475,18 +455,18 @@ function batchPage() {
             if (!this.selectedProvider) return;
             this.loadingModels = true;
             try {
-                const res = await fetch(`/api/settings/models?provider=${this.selectedProvider}`);
-                if (res.ok) this.models = await res.json();
+                const res = await fetch('/api/settings/models?provider=' + encodeURIComponent(this.selectedProvider));
+                if (res.ok) {
+                    this.models = await res.json();
+                    console.log('Loaded', this.models.length, 'models for', this.selectedProvider);
+                } else {
+                    console.error('Failed to fetch models:', res.status);
+                }
+            } catch(e) {
+                console.error('Error fetching models:', e);
             } finally {
                 this.loadingModels = false;
             }
-        },
-
-        selectModel(m) {
-            this.modelOverride = m.id;
-            this.modelSearch = m.name;
-            this.modelDropdownOpen = false;
-            localStorage.setItem('idpkit_model', m.id);
         },
 
         // Prompt management
@@ -534,7 +514,7 @@ function batchPage() {
         // Document selection
         toggleAllDocs(e) {
             this.selectedDocs = e.target.checked
-                ? this.filteredDocuments.filter(d => d.status === 'indexed').map(d => d.id)
+                ? this.getFilteredDocuments().filter(d => d.status === 'indexed').map(d => d.id)
                 : [];
         },
 
