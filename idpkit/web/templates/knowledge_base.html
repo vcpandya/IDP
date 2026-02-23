@@ -37,6 +37,9 @@
                         <span x-show="!ytIngesting"><i class="fas fa-plus"></i> Add</span>
                         <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
                     </button>
+                    <button x-show="ytCurrentJobId" @click="cancelYouTubeJob()" class="btn btn-danger" x-cloak>
+                        <i class="fas fa-stop"></i> Stop
+                    </button>
                 </div>
                 <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
                     <label class="checkbox-label" style="font-size:0.75rem"><input type="checkbox" x-model="ytAutoTag"> Auto-tag</label>
@@ -215,6 +218,9 @@
                     <button @click="ingestYouTube(currentTag.id)" class="btn btn-primary btn-sm" :disabled="ytIngesting || !youtubeUrl.trim()">
                         <span x-show="!ytIngesting"><i class="fas fa-plus"></i></span>
                         <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
+                    </button>
+                    <button x-show="ytCurrentJobId" @click="cancelYouTubeJob()" class="btn btn-danger btn-sm" x-cloak>
+                        <i class="fas fa-stop"></i>
                     </button>
                 </div>
                 <div x-show="ytStatus" class="upload-hint" :class="ytStatusClass" style="margin-top:4px;font-size:0.75rem" x-text="ytStatus"></div>
@@ -429,6 +435,7 @@ function knowledgeBase() {
         filterTag: '',
         youtubeUrl: '',
         ytIngesting: false,
+        ytCurrentJobId: null,
         bulkBuildingGraphs: false,
         bulkBuildGraphStatus: '',
         ytStatus: '',
@@ -691,8 +698,18 @@ function knowledgeBase() {
             await this._runYouTubeIngest(this.youtubeUrl.trim(), selected, this.ytPendingTagId, defaultTag);
         },
 
+        async cancelYouTubeJob() {
+            if (!this.ytCurrentJobId) return;
+            try {
+                await fetch('/api/youtube/jobs/' + this.ytCurrentJobId + '/cancel', { method: 'POST' });
+                this.ytStatus = 'Cancelling...';
+                this.ytStatusClass = 'text-warning';
+            } catch(e) {}
+        },
+
         async _runYouTubeIngest(url, videoIds, tagId, defaultTagName) {
             this.ytIngesting = true;
+            this.ytCurrentJobId = null;
             this.ytStatus = `Importing ${videoIds ? videoIds.length : 1} video(s)...`;
             this.ytStatusClass = 'text-info';
             try {
@@ -713,6 +730,7 @@ function knowledgeBase() {
                     return;
                 }
                 const data = await res.json();
+                this.ytCurrentJobId = data.job_id;
                 this.ytStatus = `Processing ${data.video_count} video(s)...`;
 
                 let attempts = 0;
@@ -735,6 +753,16 @@ function knowledgeBase() {
                             this.ytStatus = job.error || 'Ingestion failed';
                             this.ytStatusClass = 'text-danger';
                             break;
+                        } else if (job.status === 'cancelled') {
+                            const result = job.result || {};
+                            this.ytStatus = `Stopped. ${result.documents_created || 0} video(s) added before cancellation.`;
+                            this.ytStatusClass = 'text-warning';
+                            this.youtubeUrl = '';
+                            await this.loadData();
+                            if (tagId && this.view === 'detail') {
+                                await this.openTag(this.currentTag);
+                            }
+                            break;
                         } else {
                             this.ytStatus = `Processing... ${job.progress || 0}%`;
                         }
@@ -750,6 +778,7 @@ function knowledgeBase() {
                 this.ytStatusClass = 'text-danger';
             }
             this.ytIngesting = false;
+            this.ytCurrentJobId = null;
         },
 
         async autoTagDoc(docId) {
