@@ -90,9 +90,9 @@
         <div class="sidebar-section">
             <h4>Entity Types</h4>
             <div class="type-filters">
-                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities()">All</button>
+                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities()"><i class="fas fa-globe" style="margin-right:3px"></i> All</button>
                 <template x-for="t in entityTypes" :key="t">
-                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities()" x-text="t"></button>
+                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities()"><i class="fas" :class="typeIcon(t)" style="margin-right:3px"></i> <span x-text="t"></span></button>
                 </template>
             </div>
         </div>
@@ -102,7 +102,7 @@
             <div class="entity-list">
                 <template x-for="ent in entities" :key="ent.id">
                     <div class="entity-item" :class="{ selected: selectedEntity?.id === ent.id }" @click="selectEntity(ent)">
-                        <span class="entity-type-badge" :style="'background:' + typeColor(ent.entity_type) + '22; color:' + typeColor(ent.entity_type)" x-text="ent.entity_type"></span>
+                        <span class="entity-type-badge" :style="'background:' + typeColor(ent.entity_type) + '22; color:' + typeColor(ent.entity_type)"><i class="fas" :class="typeIcon(ent.entity_type)" style="margin-right:3px"></i><span x-text="ent.entity_type"></span></span>
                         <span class="entity-name" x-text="ent.name"></span>
                         <span class="entity-count" x-text="(ent.mention_count || 0) + ' mentions'"></span>
                     </div>
@@ -138,7 +138,7 @@
             <button class="close-panel" @click="detailEntity = null">&times;</button>
             <h3 x-text="detailEntity?.entity?.name"></h3>
             <div class="detail-type">
-                <span class="entity-type-badge" :style="detailEntity ? 'background:' + typeColor(detailEntity.entity.entity_type) + '22; color:' + typeColor(detailEntity.entity.entity_type) : ''" x-text="detailEntity?.entity?.entity_type"></span>
+                <span class="entity-type-badge" :style="detailEntity ? 'background:' + typeColor(detailEntity.entity.entity_type) + '22; color:' + typeColor(detailEntity.entity.entity_type) : ''"><i class="fas" :class="typeIcon(detailEntity?.entity?.entity_type || '')" style="margin-right:3px"></i><span x-text="detailEntity?.entity?.entity_type"></span></span>
             </div>
 
             <div class="detail-section" x-show="detailEntity?.mentions?.length > 0">
@@ -175,6 +175,16 @@ const TYPE_COLORS = {
     CONCEPT: '#7c3aed', TERM: '#d97706', REGULATION: '#dc2626',
     PRODUCT: '#0891b2', EVENT: '#ea580c', DATE: '#65a30d', METRIC: '#db2777'
 };
+const TYPE_ICONS = {
+    PERSON: '\uf007', ORGANIZATION: '\uf1ad', LOCATION: '\uf3c5',
+    CONCEPT: '\uf0eb', TERM: '\uf02d', REGULATION: '\uf0e3',
+    PRODUCT: '\uf466', EVENT: '\uf073', DATE: '\uf017', METRIC: '\uf201'
+};
+const TYPE_FA_CLASSES = {
+    PERSON: 'fa-user', ORGANIZATION: 'fa-building', LOCATION: 'fa-map-marker-alt',
+    CONCEPT: 'fa-lightbulb', TERM: 'fa-book', REGULATION: 'fa-gavel',
+    PRODUCT: 'fa-box-open', EVENT: 'fa-calendar-alt', DATE: 'fa-clock', METRIC: 'fa-chart-line'
+};
 
 function graphExplorer() {
     return {
@@ -206,6 +216,7 @@ function graphExplorer() {
         },
 
         typeColor(t) { return TYPE_COLORS[t] || '#6b7280'; },
+        typeIcon(t) { return TYPE_FA_CLASSES[t] || 'fa-circle'; },
 
         async searchEntities() {
             this.loadingEntities = true;
@@ -309,7 +320,7 @@ function graphExplorer() {
                 .force('link', d3.forceLink(validEdges).id(d => d.id).distance(100))
                 .force('charge', d3.forceManyBody().strength(-200))
                 .force('center', d3.forceCenter(width / 2, height / 2))
-                .force('collision', d3.forceCollide().radius(30));
+                .force('collision', d3.forceCollide().radius(35));
             this.simulation = simulation;
 
             const link = g.append('g').selectAll('line')
@@ -339,13 +350,23 @@ function graphExplorer() {
             });
 
             node.append('circle')
-                .attr('r', 12)
+                .attr('r', 16)
                 .attr('fill', d => TYPE_COLORS[d.type] || '#6b7280')
-                .attr('stroke', '#fff').attr('stroke-width', 2);
+                .attr('stroke', '#fff').attr('stroke-width', 2.5);
+
+            node.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#fff')
+                .attr('font-family', '"Font Awesome 6 Free"')
+                .attr('font-weight', 900)
+                .attr('font-size', '12px')
+                .attr('pointer-events', 'none')
+                .text(d => TYPE_ICONS[d.type] || '\uf111');
 
             node.append('text')
                 .attr('class', 'node-label')
-                .attr('dy', -18).attr('text-anchor', 'middle')
+                .attr('dy', -22).attr('text-anchor', 'middle')
                 .text(d => d.label.length > 20 ? d.label.slice(0, 18) + '...' : d.label);
 
             simulation.on('tick', () => {
@@ -361,8 +382,8 @@ function graphExplorer() {
             if (!this.svg) return;
             this.svg.selectAll('.graph-node circle')
                 .attr('stroke', d => d.id === entityId ? '#7c3aed' : '#fff')
-                .attr('stroke-width', d => d.id === entityId ? 4 : 2)
-                .attr('r', d => d.id === entityId ? 16 : 12);
+                .attr('stroke-width', d => d.id === entityId ? 4 : 2.5)
+                .attr('r', d => d.id === entityId ? 20 : 16);
         },
 
         zoomIn() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 1.3); },
