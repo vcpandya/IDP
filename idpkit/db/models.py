@@ -56,6 +56,7 @@ document_tags = Table(
 
 
 class UserRole(str, enum.Enum):
+    SUPERADMIN = "superadmin"
     ADMIN = "admin"
     USER = "user"
 
@@ -281,6 +282,14 @@ class Tag(Base):
 
     owner = relationship("User", back_populates="tags")
     documents = relationship("Document", secondary=document_tags, back_populates="tags")
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.

@@ -12,15 +12,45 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import json
+
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from idpkit.db.session import get_db
-from idpkit.db.models import User
+from idpkit.db.models import User, SystemSetting, UserRole
 from idpkit.core.storage import LocalStorageBackend, GCSStorageBackend, StorageBackend
 from idpkit.core.llm import LLMClient, get_default_client
 
-limiter = Limiter(key_func=get_remote_address)
+DEFAULT_RATE_LIMITS = {
+    "agent_chat": "30/minute",
+    "batch_create": "10/minute",
+}
+
+_rate_limit_cache: dict[str, str] = {}
+
+
+def get_rate_limit(key: str) -> str:
+    if key in _rate_limit_cache:
+        return _rate_limit_cache[key]
+    return DEFAULT_RATE_LIMITS.get(key, "60/minute")
+
+
+def update_rate_limit_cache(limits: dict[str, str]):
+    _rate_limit_cache.update(limits)
+
+
+def _admin_exempt_key_func(request: Request) -> str:
+    user_role = getattr(request.state, "_user_role", None)
+    if user_role in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value):
+        return "__admin_exempt__"
+    return get_remote_address(request)
+
+
+limiter = Limiter(
+    key_func=_admin_exempt_key_func,
+    default_limits=[],
+)
 
 import logging as _logging
 
@@ -145,11 +175,23 @@ def get_storage() -> StorageBackend:
 async def require_admin(
     user: User = Depends(get_current_user),
 ) -> User:
-    """Require the current user to have admin role."""
-    if user.role != "admin":
+    """Require the current user to have admin or superadmin role."""
+    if user.role not in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
+        )
+    return user
+
+
+async def require_superadmin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Require the current user to have superadmin role."""
+    if user.role != UserRole.SUPERADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Superadmin access required",
         )
     return user
 

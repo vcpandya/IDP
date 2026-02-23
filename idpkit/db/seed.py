@@ -27,7 +27,7 @@ async def seed_default_admin(session_factory):
             username="admin",
             hashed_password=hash_password(password),
             email=None,
-            role=UserRole.ADMIN.value,
+            role=UserRole.SUPERADMIN.value,
             is_active=1,
         )
         session.add(admin)
