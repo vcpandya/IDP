@@ -66,3 +66,10 @@ All data lives in a single PostgreSQL database (15 tables):
 - Jinja2, Pydantic, httpx
 - passlib + bcrypt (auth), python-jose (JWT)
 - NetworkX (optional, for graph analytics)
+
+## Retrieval / Search Pipeline
+- **Tree index format**: `{"doc_name": ..., "doc_description": ..., "structure": [...]}` — the `structure` key holds the actual hierarchical node list
+- **Node fields**: `title`, `start_index`, `end_index`, `node_id`, `summary`, optional `text`, optional `nodes` (children)
+- **Search flow**: `_flatten_tree()` unwraps the `structure` key, flattens all nodes recursively, LLM ranks by title+summary, then actual PDF text is loaded on-demand for matched page ranges
+- **Text loading**: Nodes typically don't store inline text (config `if_add_node_text: "no"`). The search tool loads PDF pages from storage using `get_page_tokens()` for matched sections
+- **Config defaults** (`idpkit/engine/config.yaml`): model=gpt-4o, toc_check_page_num=20, max_page_num_each_node=10, if_add_node_id=yes, if_add_node_summary=yes, if_add_node_text=no
