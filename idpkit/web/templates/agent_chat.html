@@ -6,7 +6,19 @@
 </div>
 <div class="chat-container" x-data="agentChat()">
     <div class="chat-sidebar">
-        <h4>Documents</h4>
+        <h4>Tags</h4>
+        <div class="tag-selector" x-show="tags.length > 0">
+            <template x-for="tag in tags" :key="tag.id">
+                <label class="tag-check">
+                    <input type="checkbox" :value="tag.id" x-model="selectedTags" @change="onTagToggle(tag.id, $event.target.checked)">
+                    <span class="tag-dot" :style="'background:' + tag.color"></span>
+                    <span x-text="tag.name"></span>
+                    <span class="badge" x-text="tag.document_count || 0" style="font-size:0.7rem;padding:1px 6px"></span>
+                </label>
+            </template>
+        </div>
+        <div x-show="tags.length === 0" style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">No tags yet</div>
+        <h4 style="margin-top:16px">Documents</h4>
         <div class="doc-selector">
             <template x-for="doc in documents" :key="doc.id">
                 <label class="doc-check">
@@ -72,15 +84,62 @@
             </div>
         </div>
     </div>
+    <!-- Sources Panel -->
+    <div class="chat-sources-panel" x-show="currentSources.length > 0" x-cloak>
+        <h4><i class="fas fa-quote-left"></i> Sources</h4>
+        <template x-for="(src, si) in currentSources" :key="si">
+            <a :href="'/documents/' + src.document_id" class="source-card" target="_blank">
+                <div class="source-title" x-text="src.title || 'Untitled section'"></div>
+                <div class="source-meta">
+                    <span class="source-filename" x-text="src.filename"></span>
+                    <span class="source-pages" x-show="src.start_page != null">
+                        pp. <span x-text="src.start_page"></span><span x-show="src.end_page != null && src.end_page !== src.start_page">–<span x-text="src.end_page"></span></span>
+                    </span>
+                </div>
+                <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
+            </a>
+        </template>
+    </div>
 </div>
 <script>
 function agentChat() {
     return {
         messages: [], input: '', loading: false, documents: [], selectedDocs: [],
         uploadFiles: [],
+        tags: [], selectedTags: [],
+        currentSources: [],
         async init() {
-            const res = await fetch('/api/documents/?limit=100');
-            if (res.ok) { const data = await res.json(); this.documents = data.items || data.documents || []; }
+            const [docRes, tagRes] = await Promise.all([
+                fetch('/api/documents/?limit=100'),
+                fetch('/api/tags/')
+            ]);
+            if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
+            if (tagRes.ok) { this.tags = await tagRes.json(); }
+        },
+        async onTagToggle(tagId, checked) {
+            // When a tag is checked/unchecked, auto-select/deselect its documents
+            try {
+                const res = await fetch('/api/tags/' + tagId);
+                if (!res.ok) return;
+                const tag = await res.json();
+                const docIds = (tag.documents || []).map(d => d.id);
+                if (checked) {
+                    for (const did of docIds) {
+                        if (!this.selectedDocs.includes(did)) this.selectedDocs.push(did);
+                    }
+                } else {
+                    // Only remove docs that aren't in any other selected tag
+                    const otherTagDocs = new Set();
+                    for (const tid of this.selectedTags) {
+                        if (tid === tagId) continue;
+                        try {
+                            const r = await fetch('/api/tags/' + tid);
+                            if (r.ok) { const t = await r.json(); (t.documents || []).forEach(d => otherTagDocs.add(d.id)); }
+                        } catch(e) {}
+                    }
+                    this.selectedDocs = this.selectedDocs.filter(did => !docIds.includes(did) || otherTagDocs.has(did));
+                }
+            } catch(e) {}
         },
         async handleChatUpload(event) {
             const files = event.target.files;
@@ -139,11 +198,12 @@ function agentChat() {
             this.input = '';
             this.messages.push({ role: 'user', content: msg });
             this.loading = true;
+            this.currentSources = [];
             this.scrollToBottom();
             try {
                 const res = await fetch('/api/agent/chat', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ message: msg, document_ids: this.selectedDocs })
+                    body: JSON.stringify({ message: msg, document_ids: this.selectedDocs, tag_ids: this.selectedTags })
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -153,6 +213,9 @@ function agentChat() {
                         }
                     }
                     this.messages.push({ role: 'assistant', content: data.response || data.detail || 'No response' });
+                    if (data.sources && data.sources.length > 0) {
+                        this.currentSources = data.sources;
+                    }
                 } else {
                     this.messages.push({ role: 'assistant', content: 'Error: request failed' });
                 }

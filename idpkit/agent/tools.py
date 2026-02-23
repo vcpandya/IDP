@@ -439,6 +439,8 @@ async def _execute_search_document(
                     "title": node.get("title"),
                     "summary": node.get("summary") or node.get("prefix_summary") or "",
                     "text_preview": (node.get("text") or "")[:500],
+                    "start_page": node.get("start_index"),
+                    "end_page": node.get("end_index"),
                 })
                 break
 
