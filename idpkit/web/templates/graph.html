@@ -173,18 +173,73 @@
 const TYPE_COLORS = {
     PERSON: '#e11d48', ORGANIZATION: '#2563eb', LOCATION: '#059669',
     CONCEPT: '#7c3aed', TERM: '#d97706', REGULATION: '#dc2626',
-    PRODUCT: '#0891b2', EVENT: '#ea580c', DATE: '#65a30d', METRIC: '#db2777'
+    PRODUCT: '#0891b2', EVENT: '#ea580c', DATE: '#65a30d', METRIC: '#db2777',
+    DATE_REF: '#65a30d', TECHNOLOGY: '#0d9488', METHODOLOGY: '#8b5cf6',
+    DISEASE: '#f43f5e', CURRENCY: '#eab308', LANGUAGE: '#6366f1',
+    DOCUMENT: '#78716c', SOFTWARE: '#06b6d4', INDUSTRY: '#f97316',
+    COUNTRY: '#10b981', ROLE: '#a855f7', STANDARD: '#ef4444',
+    PROCESS: '#14b8a6', MATERIAL: '#84cc16', INSTRUMENT: '#ec4899'
 };
-const TYPE_ICONS = {
+const TYPE_ICONS_MAP = {
     PERSON: '\uf007', ORGANIZATION: '\uf1ad', LOCATION: '\uf3c5',
     CONCEPT: '\uf0eb', TERM: '\uf02d', REGULATION: '\uf0e3',
-    PRODUCT: '\uf466', EVENT: '\uf073', DATE: '\uf017', METRIC: '\uf201'
+    PRODUCT: '\uf466', EVENT: '\uf073', DATE: '\uf017', METRIC: '\uf201',
+    DATE_REF: '\uf017', TECHNOLOGY: '\uf085', METHODOLOGY: '\uf0d0',
+    DISEASE: '\uf469', CURRENCY: '\uf155', LANGUAGE: '\uf1ab',
+    DOCUMENT: '\uf15c', SOFTWARE: '\uf121', INDUSTRY: '\uf275',
+    COUNTRY: '\uf024', ROLE: '\uf2c2', STANDARD: '\uf0cb',
+    PROCESS: '\uf074', MATERIAL: '\uf0c3', INSTRUMENT: '\uf0f1'
 };
-const TYPE_FA_CLASSES = {
+const TYPE_FA_MAP = {
     PERSON: 'fa-user', ORGANIZATION: 'fa-building', LOCATION: 'fa-map-marker-alt',
     CONCEPT: 'fa-lightbulb', TERM: 'fa-book', REGULATION: 'fa-gavel',
-    PRODUCT: 'fa-box-open', EVENT: 'fa-calendar-alt', DATE: 'fa-clock', METRIC: 'fa-chart-line'
+    PRODUCT: 'fa-box-open', EVENT: 'fa-calendar-alt', DATE: 'fa-clock', METRIC: 'fa-chart-line',
+    DATE_REF: 'fa-clock', TECHNOLOGY: 'fa-cogs', METHODOLOGY: 'fa-drafting-compass',
+    DISEASE: 'fa-virus', CURRENCY: 'fa-dollar-sign', LANGUAGE: 'fa-language',
+    DOCUMENT: 'fa-file-alt', SOFTWARE: 'fa-code', INDUSTRY: 'fa-industry',
+    COUNTRY: 'fa-flag', ROLE: 'fa-id-badge', STANDARD: 'fa-list-ol',
+    PROCESS: 'fa-random', MATERIAL: 'fa-flask', INSTRUMENT: 'fa-stethoscope'
 };
+const ICON_KEYWORD_FALLBACKS = [
+    [/PERSON|PEOPLE|HUMAN|AUTHOR|EMPLOYEE|PATIENT/i, 'fa-user', '\uf007'],
+    [/ORG|COMPANY|CORP|INSTITUTION|AGENCY|FIRM/i, 'fa-building', '\uf1ad'],
+    [/LOCATION|PLACE|CITY|REGION|ADDRESS|GEO/i, 'fa-map-marker-alt', '\uf3c5'],
+    [/CONCEPT|IDEA|THEORY|PRINCIPLE|PHILOSOPHY/i, 'fa-lightbulb', '\uf0eb'],
+    [/TERM|DEFINITION|WORD|VOCAB|GLOSSARY/i, 'fa-book', '\uf02d'],
+    [/LAW|LEGAL|REGULATION|RULE|COMPLIANCE|POLICY/i, 'fa-gavel', '\uf0e3'],
+    [/PRODUCT|ITEM|GOOD|SERVICE|OFFERING/i, 'fa-box-open', '\uf466'],
+    [/EVENT|INCIDENT|MEETING|CONFERENCE/i, 'fa-calendar-alt', '\uf073'],
+    [/DATE|TIME|PERIOD|YEAR|MONTH|DURATION/i, 'fa-clock', '\uf017'],
+    [/METRIC|MEASURE|KPI|SCORE|STAT|NUMBER|QUANTITY/i, 'fa-chart-line', '\uf201'],
+    [/TECH|SOFTWARE|SYSTEM|PLATFORM|TOOL|FRAMEWORK/i, 'fa-cogs', '\uf085'],
+    [/METHOD|PROCESS|PROCEDURE|APPROACH|TECHNIQUE/i, 'fa-drafting-compass', '\uf0d0'],
+    [/DISEASE|HEALTH|MEDICAL|CONDITION|SYMPTOM|DRUG/i, 'fa-virus', '\uf469'],
+    [/MONEY|CURRENCY|FINANCIAL|PRICE|COST|FEE/i, 'fa-dollar-sign', '\uf155'],
+    [/LANGUAGE|LANG|TONGUE|DIALECT/i, 'fa-language', '\uf1ab'],
+    [/DOCUMENT|REPORT|FILE|PAPER|PUBLICATION/i, 'fa-file-alt', '\uf15c'],
+    [/CODE|PROGRAMMING|ALGORITHM/i, 'fa-code', '\uf121'],
+    [/COUNTRY|NATION|STATE|TERRITORY/i, 'fa-flag', '\uf024'],
+    [/ROLE|TITLE|POSITION|JOB|OCCUPATION/i, 'fa-id-badge', '\uf2c2'],
+    [/STANDARD|SPECIFICATION|PROTOCOL|FORMAT/i, 'fa-list-ol', '\uf0cb'],
+    [/MATERIAL|CHEMICAL|SUBSTANCE|ELEMENT/i, 'fa-flask', '\uf0c3'],
+];
+function autoTypeColor(t) {
+    if (TYPE_COLORS[t]) return TYPE_COLORS[t];
+    let hash = 0;
+    for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = ((hash % 360) + 360) % 360;
+    return `hsl(${hue}, 55%, 45%)`;
+}
+function autoTypeIcon(t) {
+    if (TYPE_FA_MAP[t]) return TYPE_FA_MAP[t];
+    for (const [re, cls] of ICON_KEYWORD_FALLBACKS) { if (re.test(t)) return cls; }
+    return 'fa-tag';
+}
+function autoTypeIconUnicode(t) {
+    if (TYPE_ICONS_MAP[t]) return TYPE_ICONS_MAP[t];
+    for (const [re, , uc] of ICON_KEYWORD_FALLBACKS) { if (re.test(t)) return uc; }
+    return '\uf02b';
+}
 
 function graphExplorer() {
     return {
@@ -193,7 +248,7 @@ function graphExplorer() {
         selectedDocId: '',
         searchQuery: '',
         selectedType: '',
-        entityTypes: ['PERSON','ORGANIZATION','LOCATION','CONCEPT','TERM','REGULATION','PRODUCT','EVENT','DATE','METRIC'],
+        entityTypes: [],
         selectedEntity: null,
         detailEntity: null,
         graphNodes: [],
@@ -207,16 +262,25 @@ function graphExplorer() {
         zoom: null,
 
         async init() {
-            const res = await fetch('/api/documents/?limit=100');
-            if (res.ok) {
-                const data = await res.json();
+            const [docRes, typesRes] = await Promise.all([
+                fetch('/api/documents/?limit=100'),
+                fetch('/api/graph/entity-types')
+            ]);
+            if (docRes.ok) {
+                const data = await docRes.json();
                 this.documents = (data.items || data.documents || []).filter(d => d.status === 'indexed');
+            }
+            if (typesRes.ok) {
+                this.entityTypes = await typesRes.json();
+            }
+            if (this.entityTypes.length === 0) {
+                this.entityTypes = ['PERSON','ORGANIZATION','LOCATION','CONCEPT','TERM','REGULATION','PRODUCT','EVENT','DATE_REF','METRIC'];
             }
             await this.searchEntities();
         },
 
-        typeColor(t) { return TYPE_COLORS[t] || '#6b7280'; },
-        typeIcon(t) { return TYPE_FA_CLASSES[t] || 'fa-circle'; },
+        typeColor(t) { return autoTypeColor(t); },
+        typeIcon(t) { return autoTypeIcon(t); },
 
         async searchEntities() {
             this.loadingEntities = true;
@@ -351,7 +415,7 @@ function graphExplorer() {
 
             node.append('circle')
                 .attr('r', 16)
-                .attr('fill', d => TYPE_COLORS[d.type] || '#6b7280')
+                .attr('fill', d => autoTypeColor(d.type))
                 .attr('stroke', '#fff').attr('stroke-width', 2.5);
 
             node.append('text')
@@ -362,7 +426,7 @@ function graphExplorer() {
                 .attr('font-weight', 900)
                 .attr('font-size', '12px')
                 .attr('pointer-events', 'none')
-                .text(d => TYPE_ICONS[d.type] || '\uf111');
+                .text(d => autoTypeIconUnicode(d.type));
 
             node.append('text')
                 .attr('class', 'node-label')
