@@ -141,6 +141,28 @@ def _storage_key(user_id: str, doc_id: str, ext: str) -> str:
     return f"{user_id}/{doc_id}/original{ext}"
 
 
+def _extract_page_count(content: bytes, fmt: str) -> Optional[int]:
+    """Best-effort page count extraction from file bytes."""
+    if fmt == "pdf":
+        try:
+            import fitz
+            doc = fitz.open(stream=content, filetype="pdf")
+            count = len(doc)
+            doc.close()
+            return count
+        except Exception:
+            pass
+    elif fmt == "pptx":
+        try:
+            import io
+            from pptx import Presentation
+            prs = Presentation(io.BytesIO(content))
+            return len(prs.slides)
+        except Exception:
+            pass
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -200,13 +222,19 @@ async def upload_document(
     # Update document with storage metadata
     doc.file_path = key
     doc.file_size = len(content)
+
+    # Extract page count for supported formats
+    page_count = _extract_page_count(content, fmt)
+    if page_count is not None:
+        doc.page_count = page_count
+
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
 
     logger.info(
-        "Document uploaded: %s (id=%s, format=%s, size=%d)",
-        doc.filename, doc.id, doc.format, doc.file_size,
+        "Document uploaded: %s (id=%s, format=%s, size=%d, pages=%s)",
+        doc.filename, doc.id, doc.format, doc.file_size, doc.page_count,
     )
     return doc
 
