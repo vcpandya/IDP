@@ -22,6 +22,13 @@ REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106"
 class StorageBackend(ABC):
     """Abstract interface for file storage operations."""
 
+    @property
+    def supports_signed_urls(self) -> bool:
+        return False
+
+    def get_signed_upload_url(self, key: str, content_type: str = "application/octet-stream", ttl_sec: int = 900) -> Optional[str]:
+        return None
+
     @abstractmethod
     def save(self, key: str, data: bytes | BinaryIO) -> str:
         """Save data and return the storage path/key."""
@@ -114,6 +121,14 @@ class GCSStorageBackend(StorageBackend):
         self.bucket_id = bucket_id
         self.private_dir = private_dir.rstrip("/")
         self._cache_dir = Path(tempfile.mkdtemp(prefix="idpkit_gcs_"))
+
+    @property
+    def supports_signed_urls(self) -> bool:
+        return True
+
+    def get_signed_upload_url(self, key: str, content_type: str = "application/octet-stream", ttl_sec: int = 900) -> Optional[str]:
+        obj_name = self._object_name(key)
+        return self._sign_url(obj_name, "PUT", ttl_sec)
 
     def _object_name(self, key: str) -> str:
         return f"{self.private_dir}/{key}"

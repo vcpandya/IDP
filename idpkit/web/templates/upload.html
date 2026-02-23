@@ -70,21 +70,50 @@ function uploadForm() {
             if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
             return (bytes / 1048576).toFixed(1) + ' MB';
         },
+        async _uploadDirect(item) {
+            const urlRes = await fetch('/api/documents/upload-url', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename: item.name, content_type: item.file.type || 'application/octet-stream', size: item.size}),
+            });
+            if (!urlRes.ok) return false;
+            const urlData = await urlRes.json();
+            item.docId = urlData.doc_id;
+            if (urlData.uses_signed_url) {
+                const putRes = await fetch(urlData.upload_url, {method: 'PUT', body: item.file, headers: {'Content-Type': item.file.type || 'application/octet-stream'}});
+                if (!putRes.ok) return false;
+                const confirmRes = await fetch(`/api/documents/${urlData.doc_id}/confirm-upload`, {method: 'POST'});
+                return confirmRes.ok;
+            } else {
+                const fd = new FormData();
+                fd.append('file', item.file);
+                const upRes = await fetch(urlData.upload_url, {method: 'POST', body: fd});
+                return upRes.ok;
+            }
+        },
+        async _uploadLegacy(item) {
+            const formData = new FormData();
+            formData.append('file', item.file);
+            const res = await fetch('/api/documents/', {method: 'POST', body: formData});
+            if (!res.ok) return false;
+            const data = await res.json();
+            item.docId = data.id;
+            return true;
+        },
         async uploadAll() {
             this.uploading = true;
+            let modeRes;
+            try { modeRes = await fetch('/api/documents/upload-mode'); } catch(e) {}
+            const directMode = modeRes && modeRes.ok ? (await modeRes.json()).direct_upload : false;
             for (const item of this.files) {
                 if (item.status !== 'pending') continue;
                 item.status = 'uploading';
                 try {
-                    const formData = new FormData();
-                    formData.append('file', item.file);
-                    const res = await fetch('/api/documents/', { method: 'POST', body: formData });
-                    if (res.ok) {
-                        const data = await res.json();
-                        item.docId = data.id;
+                    const ok = directMode ? await this._uploadDirect(item) : await this._uploadLegacy(item);
+                    if (ok) {
                         item.status = 'done';
-                        if (this.autoIndex) {
-                            fetch(`/api/indexing/documents/${data.id}/index`, { method: 'POST' });
+                        if (this.autoIndex && item.docId) {
+                            fetch(`/api/indexing/documents/${item.docId}/index`, {method: 'POST'});
                         }
                     } else { item.status = 'error'; }
                 } catch(e) { item.status = 'error'; }

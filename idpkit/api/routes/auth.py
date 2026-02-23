@@ -154,6 +154,7 @@ async def login(
         key="session_token",
         value=token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )

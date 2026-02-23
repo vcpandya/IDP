@@ -139,7 +139,7 @@ async def query_document(
         logger.error("Tree search failed for doc %s: %s", doc_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tree search failed: {exc}",
+            detail="Tree search failed",
         )
 
     # 3. Build context from relevant nodes
@@ -166,7 +166,7 @@ async def query_document(
         logger.error("LLM answer generation failed for doc %s: %s", doc_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate answer: {exc}",
+            detail="Failed to generate answer",
         )
 
     # 5. Build response

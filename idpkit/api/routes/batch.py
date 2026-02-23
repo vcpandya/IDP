@@ -14,6 +14,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -205,6 +206,7 @@ async def list_templates(
             (ProcessingTemplate.owner_id == user.id) | (ProcessingTemplate.is_public == 1)
         )
         .order_by(ProcessingTemplate.created_at.desc())
+        .limit(200)
     )
     return result.scalars().all()
 
@@ -383,7 +385,8 @@ Return ONLY valid JSON, no other text."""
 
         analysis = json.loads(resp_text)
     except (json.JSONDecodeError, Exception) as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to analyze document: {exc}")
+        logger.exception("Failed to analyze document")
+        raise HTTPException(status_code=500, detail="Failed to analyze document")
 
     tmpl = ProcessingTemplate(
         name=template_name,
@@ -517,13 +520,17 @@ async def convert_options(
 # Batch job endpoints
 # ---------------------------------------------------------------------------
 
+from idpkit.api.deps import limiter
+
 @router.post(
     "/",
     response_model=BatchJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create and start a batch job",
 )
+@limiter.limit("10/minute")
 async def create_batch(
+    request: Request,
     body: BatchCreateRequest,
     background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),

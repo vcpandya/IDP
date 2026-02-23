@@ -12,12 +12,28 @@ from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 from idpkit.db.session import get_db
 from idpkit.db.models import User
 from idpkit.core.storage import LocalStorageBackend, GCSStorageBackend, StorageBackend
 from idpkit.core.llm import LLMClient, get_default_client
 
-SECRET_KEY = os.getenv("IDP_SECRET_KEY", "dev-secret-change-in-production")
+limiter = Limiter(key_func=get_remote_address)
+
+import logging as _logging
+
+_deps_logger = _logging.getLogger(__name__)
+
+_secret = os.getenv("SESSION_SECRET") or os.getenv("IDP_SECRET_KEY")
+if not _secret:
+    _secret = secrets.token_urlsafe(64)
+    _deps_logger.warning(
+        "No SESSION_SECRET env var set — using an ephemeral random key. "
+        "Sessions will not survive server restarts."
+    )
+SECRET_KEY = _secret
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 

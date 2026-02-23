@@ -91,7 +91,7 @@ class Document(Base):
     file_size = Column(Integer, default=0)
     page_count = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
-    status = Column(String(20), default="uploaded")  # uploaded, indexing, indexed, failed
+    status = Column(String(20), default="uploaded", index=True)  # uploaded, indexing, indexed, failed
     tree_index = Column(JSON, nullable=True)
     description = Column(Text, nullable=True)
     metadata_json = Column(JSON, nullable=True)

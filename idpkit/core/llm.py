@@ -223,12 +223,8 @@ def get_default_client(
     global _default_client
 
     if _default_client is None or api_key or model:
-        resolved_key = api_key or os.getenv("CHATGPT_API_KEY") or os.getenv("OPENAI_API_KEY")
+        resolved_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY")
         resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-4o-2024-11-20")
-
-        # Set API keys for LiteLLM to discover
-        if resolved_key and not os.getenv("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = resolved_key
 
         client = LLMClient(
             default_model=resolved_model,
