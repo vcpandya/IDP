@@ -204,6 +204,28 @@ async def get_youtube_job(
     }
 
 
+@router.post(
+    "/jobs/{job_id}/cancel",
+    summary="Cancel a running YouTube ingestion job",
+)
+async def cancel_youtube_job(
+    job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job.status in ("completed", "failed", "cancelled"):
+        return {"id": job.id, "status": job.status, "message": "Job already finished"}
+    job.status = "cancelled"
+    job.completed_at = datetime.now(timezone.utc)
+    db.add(job)
+    await db.commit()
+    return {"id": job.id, "status": "cancelled", "message": "Job cancellation requested"}
+
+
 async def _run_youtube_ingest(
     job_id: str,
     user_id: str,
@@ -238,6 +260,23 @@ async def _run_youtube_ingest(
             }
 
             for i, video_info in enumerate(videos):
+                await db.refresh(job)
+                if job.status == "cancelled":
+                    logger.info("YouTube ingestion cancelled: job=%s after %d/%d videos", job_id, i, total)
+                    job.result = {
+                        "documents_created": len(created_doc_ids),
+                        "document_ids": created_doc_ids,
+                        "errors": errors,
+                        "total_videos": total,
+                        "processed_videos": i,
+                        "transcript_source_counts": source_counts,
+                        "cancelled": True,
+                    }
+                    job.completed_at = datetime.now(timezone.utc)
+                    db.add(job)
+                    await db.commit()
+                    return
+
                 video_id = video_info.get("video_id", "")
                 if not video_id:
                     continue
