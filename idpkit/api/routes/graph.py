@@ -310,7 +310,7 @@ class BulkBuildRequest(BaseModel):
 
 @router.post(
     "/build-bulk",
-    summary="Build graphs for multiple documents",
+    summary="Index (if needed) and build graphs for multiple documents",
 )
 async def build_bulk_graphs(
     body: BulkBuildRequest,
@@ -343,6 +343,7 @@ async def build_bulk_graphs(
         )).all()
         mention_counts = {r[0]: r[1] for r in rows}
 
+    indexed = 0
     built = 0
     skipped = 0
     failed = 0
@@ -354,10 +355,38 @@ async def build_bulk_graphs(
             results.append({"document_id": doc_id, "status": "not_found"})
             failed += 1
             continue
-        if not doc.tree_index:
-            results.append({"document_id": doc_id, "status": "no_tree_index", "filename": doc.filename})
+        if not doc.file_path:
+            results.append({"document_id": doc_id, "status": "no_file", "filename": doc.filename})
             skipped += 1
             continue
+
+        if not doc.tree_index:
+            try:
+                logger.info("Bulk build: indexing %s (%s) first", doc_id, doc.filename)
+                from idpkit.engine.page_index import build_tree_index
+                from idpkit.api.deps import get_storage as _get_storage
+
+                storage = _get_storage()
+                tree_result = await build_tree_index(
+                    file_key=doc.file_path,
+                    storage=storage,
+                    llm=llm,
+                )
+
+                doc.tree_index = tree_result.get("structure", [])
+                doc.description = tree_result.get("doc_description")
+                doc.status = "indexed"
+                db.add(doc)
+                await db.commit()
+                await db.refresh(doc)
+                indexed += 1
+                logger.info("Bulk build: indexed %s (%s)", doc_id, doc.filename)
+            except Exception as e:
+                logger.error("Bulk build: indexing failed for %s: %s", doc_id, e)
+                results.append({"document_id": doc_id, "status": "index_failed", "filename": doc.filename, "error": str(e)})
+                failed += 1
+                continue
+
         if mention_counts.get(doc_id, 0) > 0:
             results.append({"document_id": doc_id, "status": "already_built", "filename": doc.filename})
             skipped += 1
@@ -383,6 +412,7 @@ async def build_bulk_graphs(
 
     return {
         "total": len(unique_ids),
+        "indexed": indexed,
         "built": built,
         "skipped": skipped,
         "failed": failed,

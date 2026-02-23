@@ -180,8 +180,8 @@
             <div class="header-actions">
                 <button @click="bulkBuildTagGraphs()" class="btn btn-primary" :disabled="bulkBuildingGraphs">
                     <i class="fas" :class="bulkBuildingGraphs ? 'fa-spinner fa-spin' : 'fa-project-diagram'"></i>
-                    <span x-show="!bulkBuildingGraphs">Build Graphs</span>
-                    <span x-show="bulkBuildingGraphs">Building...</span>
+                    <span x-show="!bulkBuildingGraphs">Index & Build Graphs</span>
+                    <span x-show="bulkBuildingGraphs">Processing...</span>
                 </button>
                 <button @click="editTag = {name: currentTag.name, color: currentTag.color, description: currentTag.description || ''}; showEditModal = true" class="btn"><i class="fas fa-edit"></i> Edit</button>
                 <button @click="deleteCurrentTag()" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Tag</button>
@@ -547,26 +547,37 @@ function knowledgeBase() {
         },
 
         async bulkBuildTagGraphs() {
-            const indexedDocs = this.tagDocuments.filter(d => d.status === 'indexed');
-            if (indexedDocs.length === 0) { alert('No indexed documents to build graphs for.'); return; }
+            const eligibleDocs = this.tagDocuments.filter(d => d.status !== 'failed');
+            if (eligibleDocs.length === 0) { alert('No documents available to process.'); return; }
             this.bulkBuildingGraphs = true;
-            this.bulkBuildGraphStatus = `Building graphs for ${indexedDocs.length} documents...`;
+            this.bulkBuildGraphStatus = `Processing ${eligibleDocs.length} documents (indexing & building graphs)...`;
             try {
                 const res = await fetch('/api/graph/build-bulk', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ document_ids: indexedDocs.map(d => d.id) })
+                    body: JSON.stringify({ document_ids: eligibleDocs.map(d => d.id) })
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    this.bulkBuildGraphStatus = `Done: ${data.built} built, ${data.skipped} already had graphs` + (data.failed > 0 ? `, ${data.failed} failed` : '');
-                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 5000);
+                    const parts = [];
+                    if (data.indexed > 0) parts.push(`${data.indexed} indexed`);
+                    if (data.built > 0) parts.push(`${data.built} graphs built`);
+                    if (data.skipped > 0) parts.push(`${data.skipped} already done`);
+                    if (data.failed > 0) parts.push(`${data.failed} failed`);
+                    this.bulkBuildGraphStatus = `Done: ${parts.join(', ')}`;
+                    for (const r of (data.results || [])) {
+                        if (r.status === 'built' || r.status === 'already_built') {
+                            const td = this.tagDocuments.find(d => d.id === r.document_id);
+                            if (td) td.status = 'indexed';
+                        }
+                    }
+                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 8000);
                 } else {
-                    this.bulkBuildGraphStatus = 'Graph build failed';
+                    this.bulkBuildGraphStatus = 'Processing failed';
                     setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
                 }
             } catch(e) {
-                this.bulkBuildGraphStatus = 'Graph build failed';
+                this.bulkBuildGraphStatus = 'Processing failed';
                 setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
             }
             this.bulkBuildingGraphs = false;

@@ -148,7 +148,7 @@
             </button>
             <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length > 0" @click="bulkBuildGraphs()" :disabled="bulkBuilding || building">
                 <i class="fas" :class="bulkBuilding ? 'fa-spinner fa-spin' : 'fa-hammer'"></i>
-                <span x-show="!bulkBuilding">Build Graphs</span>
+                <span x-show="!bulkBuilding">Index & Build Graphs</span>
                 <span x-show="bulkBuilding" x-text="bulkBuildStatus"></span>
             </button>
             <div style="position:relative" x-data="{ downloadOpen: false }">
@@ -360,9 +360,13 @@ function graphExplorer() {
                 const res = await fetch(`/api/tags/${this.selectedTagId}`);
                 if (res.ok) {
                     const tag = await res.json();
-                    const tagDocIds = (tag.documents || [])
-                        .filter(d => d.status === 'indexed')
-                        .map(d => d.id);
+                    const tagDocs = (tag.documents || []).filter(d => d.status !== 'failed');
+                    const tagDocIds = tagDocs.map(d => d.id);
+                    for (const td of tagDocs) {
+                        if (!this.documents.find(d => d.id === td.id)) {
+                            this.documents.push(td);
+                        }
+                    }
                     this.selectedDocIds = tagDocIds;
                     this.loadDocGraph();
                 }
@@ -456,10 +460,15 @@ function graphExplorer() {
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    this.bulkBuildStatus = `Done: ${data.built} built, ${data.skipped} skipped`;
+                    const parts = [];
+                    if (data.indexed > 0) parts.push(`${data.indexed} indexed`);
+                    if (data.built > 0) parts.push(`${data.built} graphs built`);
+                    if (data.skipped > 0) parts.push(`${data.skipped} skipped`);
+                    if (data.failed > 0) parts.push(`${data.failed} failed`);
+                    this.bulkBuildStatus = `Done: ${parts.join(', ')}`;
                     await this.loadDocGraph();
                     await this.searchEntities();
-                    setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
+                    setTimeout(() => { this.bulkBuildStatus = ''; }, 5000);
                 } else {
                     this.bulkBuildStatus = 'Build failed';
                     setTimeout(() => { this.bulkBuildStatus = ''; }, 3000);
