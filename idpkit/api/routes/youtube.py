@@ -359,8 +359,16 @@ async def _run_youtube_ingest(
                         )
                         await db.commit()
 
-                    if auto_index and doc.file_path and has_transcript:
-                        await _trigger_indexing(doc.id, user_id, doc.file_path, db)
+                    if auto_index and has_transcript:
+                        tree_structure = _build_youtube_tree_index(
+                            transcript_result, metadata
+                        )
+                        doc.tree_index = tree_structure.get("structure", [])
+                        doc.description = tree_structure.get("doc_description")
+                        doc.status = "indexed"
+                        db.add(doc)
+                        await db.commit()
+                        logger.info("Indexed YouTube doc %s inline", doc.id)
 
                     if auto_tag and has_transcript:
                         try:
@@ -443,6 +451,45 @@ async def _trigger_indexing(doc_id: str, user_id: str, storage_path: str, db: As
         )
     except Exception as exc:
         logger.warning("Failed to trigger indexing for doc %s: %s", doc_id, exc)
+
+
+def _build_youtube_tree_index(transcript_result, metadata: dict) -> dict:
+    title = metadata.get("title", "YouTube Video")
+    channel = metadata.get("channel_title", "")
+    url = metadata.get("url", "")
+    description_parts = [f"YouTube video: {title}"]
+    if channel:
+        description_parts.append(f"by {channel}")
+    doc_description = " ".join(description_parts)
+
+    children = []
+    for page in transcript_result.pages:
+        label = page.get("timestamp_label", "")
+        text = page.get("text", "")
+        summary = text[:200].replace("\n", " ").strip()
+        if not summary:
+            continue
+        children.append({
+            "title": f"[{label}]" if label else f"Segment {len(children) + 1}",
+            "summary": summary,
+            "page_start": page.get("page", 0),
+            "page_end": page.get("page", 0),
+        })
+
+    structure = [{
+        "title": title,
+        "summary": doc_description,
+        "page_start": 0,
+        "page_end": max((p.get("page", 0) for p in transcript_result.pages), default=0),
+        "children": children,
+    }]
+
+    return {
+        "doc_name": title,
+        "doc_description": doc_description,
+        "structure": structure,
+        "source_url": url,
+    }
 
 
 def _sanitize_filename(title: str) -> str:
