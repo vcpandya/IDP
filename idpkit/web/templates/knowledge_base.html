@@ -178,10 +178,17 @@
                 <span x-text="currentTag.name"></span>
             </h2>
             <div class="header-actions">
+                <button @click="bulkBuildTagGraphs()" class="btn btn-primary" :disabled="bulkBuildingGraphs">
+                    <i class="fas" :class="bulkBuildingGraphs ? 'fa-spinner fa-spin' : 'fa-project-diagram'"></i>
+                    <span x-show="!bulkBuildingGraphs">Build Graphs</span>
+                    <span x-show="bulkBuildingGraphs">Building...</span>
+                </button>
                 <button @click="editTag = {name: currentTag.name, color: currentTag.color, description: currentTag.description || ''}; showEditModal = true" class="btn"><i class="fas fa-edit"></i> Edit</button>
                 <button @click="deleteCurrentTag()" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Tag</button>
             </div>
         </div>
+
+        <div x-show="bulkBuildGraphStatus" style="margin-bottom:12px;padding:10px 14px;background:var(--bg-hover,#f0f4ff);border-radius:8px;font-size:0.85rem;color:var(--text-secondary)" x-text="bulkBuildGraphStatus"></div>
 
         <p class="text-muted" x-show="currentTag.description" x-text="currentTag.description" style="margin-bottom:16px"></p>
 
@@ -422,6 +429,8 @@ function knowledgeBase() {
         filterTag: '',
         youtubeUrl: '',
         ytIngesting: false,
+        bulkBuildingGraphs: false,
+        bulkBuildGraphStatus: '',
         ytStatus: '',
         ytStatusClass: '',
         ytAutoTag: false,
@@ -535,6 +544,32 @@ function knowledgeBase() {
         async removeDocFromTag(docId) {
             await fetch('/api/tags/' + this.currentTag.id + '/documents/' + docId, { method: 'DELETE' });
             this.tagDocuments = this.tagDocuments.filter(d => d.id !== docId);
+        },
+
+        async bulkBuildTagGraphs() {
+            const indexedDocs = this.tagDocuments.filter(d => d.status === 'indexed');
+            if (indexedDocs.length === 0) { alert('No indexed documents to build graphs for.'); return; }
+            this.bulkBuildingGraphs = true;
+            this.bulkBuildGraphStatus = `Building graphs for ${indexedDocs.length} documents...`;
+            try {
+                const res = await fetch('/api/graph/build-bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: indexedDocs.map(d => d.id) })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.bulkBuildGraphStatus = `Done: ${data.built} built, ${data.skipped} already had graphs` + (data.failed > 0 ? `, ${data.failed} failed` : '');
+                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 5000);
+                } else {
+                    this.bulkBuildGraphStatus = 'Graph build failed';
+                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
+                }
+            } catch(e) {
+                this.bulkBuildGraphStatus = 'Graph build failed';
+                setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
+            }
+            this.bulkBuildingGraphs = false;
         },
 
         handleDrop(event, tagId) {
