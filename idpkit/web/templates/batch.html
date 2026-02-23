@@ -54,20 +54,61 @@
                 </div>
                 <div x-show="showRefDocs" x-collapse class="bp-ref-body">
                     <p class="bp-ref-desc">Attach documents as additional context for your prompt. The AI will reference these alongside the instructions when processing each target document.</p>
-                    <div class="bp-ref-search">
-                        <i class="fas fa-search"></i>
-                        <input type="text" x-model="refSearch" placeholder="Search documents to attach...">
+                    <div class="bp-doc-tabs" style="margin-bottom:8px;">
+                        <button class="bp-doc-tab" :class="{'active': refMode === 'existing'}" @click="refMode = 'existing'" style="font-size:.8rem;padding:6px 12px;">
+                            <i class="fas fa-database"></i> Select Existing
+                        </button>
+                        <button class="bp-doc-tab" :class="{'active': refMode === 'upload'}" @click="refMode = 'upload'" style="font-size:.8rem;padding:6px 12px;">
+                            <i class="fas fa-cloud-upload-alt"></i> Upload New
+                            <span class="bp-tab-count" x-show="refUploadFiles.length > 0" x-text="refUploadFiles.length"></span>
+                        </button>
                     </div>
-                    <div class="bp-ref-list">
-                        <template x-for="doc in getFilteredRefDocs()" :key="doc.id">
-                            <label class="bp-doc-item compact" :class="{'selected': refDocs.includes(doc.id)}">
-                                <input type="checkbox" :value="doc.id" x-model="refDocs">
-                                <span class="bp-doc-name" x-text="doc.filename" style="flex:1;"></span>
-                                <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:.65rem;padding:1px 6px;"></span>
-                            </label>
-                        </template>
+                    <div x-show="refMode === 'existing'">
+                        <div class="bp-ref-search">
+                            <i class="fas fa-search"></i>
+                            <input type="text" x-model="refSearch" placeholder="Search documents to attach...">
+                        </div>
+                        <div class="bp-ref-list">
+                            <template x-for="doc in getFilteredRefDocs()" :key="doc.id">
+                                <label class="bp-doc-item compact" :class="{'selected': refDocs.includes(doc.id)}">
+                                    <input type="checkbox" :value="doc.id" x-model="refDocs">
+                                    <span class="bp-doc-name" x-text="doc.filename" style="flex:1;"></span>
+                                    <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:.65rem;padding:1px 6px;"></span>
+                                </label>
+                            </template>
+                        </div>
                     </div>
-                    <div class="bp-ref-chips" x-show="refDocs.length > 0">
+                    <div x-show="refMode === 'upload'">
+                        <div class="bp-upload-zone" :class="{'dragover': refDragOver}" style="padding:20px;"
+                             @dragover.prevent="refDragOver=true" @dragleave="refDragOver=false"
+                             @drop.prevent="refDragOver=false; handleRefUploadDrop($event)"
+                             @click="$refs.refFileInput.click()">
+                            <div class="bp-upload-icon" style="font-size:1.5rem;"><i class="fas fa-cloud-upload-alt"></i></div>
+                            <p style="margin:4px 0 0;font-size:.85rem;">Drag & drop or <strong>click to browse</strong></p>
+                            <span class="bp-upload-formats" style="font-size:.75rem;">PDF, DOCX, HTML, XLSX, PPTX, Images</span>
+                            <input type="file" multiple x-ref="refFileInput" @change="handleRefFileSelect($event)" style="display:none;"
+                                accept=".pdf,.docx,.doc,.md,.html,.htm,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.bmp,.tiff,.tif,.webp">
+                        </div>
+                        <div class="bp-file-tags" x-show="refUploadFiles.length > 0">
+                            <template x-for="(f, i) in refUploadFiles" :key="'ref-'+i">
+                                <div class="bp-file-tag">
+                                    <i :class="f.uploading ? 'fas fa-spinner fa-spin' : f.uploaded ? 'fas fa-check-circle' : 'fas fa-file'" :style="f.uploaded ? 'color:var(--success)' : ''"></i>
+                                    <span class="bp-tag-name" x-text="f.name"></span>
+                                    <span class="bp-tag-size" x-text="formatSize(f.size)"></span>
+                                    <button class="bp-tag-remove" @click.stop="removeRefUpload(i)" x-show="!f.uploading">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                        <button class="btn btn-sm btn-primary" style="width:100%;margin-top:8px;"
+                                @click="uploadRefFiles()" :disabled="refUploading || refUploadFiles.filter(f => !f.uploaded).length === 0"
+                                x-show="refUploadFiles.length > 0">
+                            <i :class="refUploading ? 'fas fa-spinner fa-spin' : 'fas fa-upload'"></i>
+                            <span x-text="refUploading ? 'Uploading & indexing...' : 'Upload & Index as Reference'"></span>
+                        </button>
+                    </div>
+                    <div class="bp-ref-chips" x-show="refDocs.length > 0" style="margin-top:8px;">
                         <template x-for="rid in refDocs" :key="rid">
                             <div class="bp-ref-chip">
                                 <i class="fas fa-paperclip"></i>
@@ -238,9 +279,10 @@
                     </div>
                 </div>
                 <div class="bp-setting">
-                    <label><i class="fas fa-code"></i> Options (JSON)</label>
-                    <textarea x-model="optionsJson" rows="2" placeholder='{"length": "brief"}'
-                        style="font-family:monospace;font-size:.82rem;"></textarea>
+                    <label><i class="fas fa-sliders-h"></i> Options</label>
+                    <textarea x-model="optionsText" rows="2" placeholder="e.g. Keep it brief, focus on financial data, output in bullet points"
+                        style="font-size:.82rem;"></textarea>
+                    <span class="bp-setting-hint">Describe processing preferences in plain text — AI will interpret them</span>
                 </div>
                 <div class="bp-setting">
                     <label><i class="fas fa-tachometer-alt"></i> Concurrency: <strong x-text="concurrency" style="color:var(--primary);"></strong></label>
@@ -429,7 +471,7 @@ function batchPage() {
         toolName: 'custom',
         templateId: '',
         prompt: '',
-        optionsJson: '',
+        optionsText: '',
         concurrency: 3,
         providers: [],
         selectedProvider: '',
@@ -452,6 +494,10 @@ function batchPage() {
         refDocs: [],
         refSearch: '',
         showRefDocs: false,
+        refMode: 'existing',
+        refUploadFiles: [],
+        refDragOver: false,
+        refUploading: false,
 
         formatSize(bytes) {
             if (!bytes) return '';
@@ -597,18 +643,59 @@ function batchPage() {
             e.target.value = '';
         },
 
+        handleRefUploadDrop(e) {
+            this.refUploadFiles = [...this.refUploadFiles, ...Array.from(e.dataTransfer.files).map(f => ({file: f, name: f.name, size: f.size, uploading: false, uploaded: false, docId: null}))];
+        },
+
+        handleRefFileSelect(e) {
+            this.refUploadFiles = [...this.refUploadFiles, ...Array.from(e.target.files).map(f => ({file: f, name: f.name, size: f.size, uploading: false, uploaded: false, docId: null}))];
+            e.target.value = '';
+        },
+
+        removeRefUpload(idx) {
+            const item = this.refUploadFiles[idx];
+            if (item.docId) {
+                this.refDocs = this.refDocs.filter(id => id !== item.docId);
+            }
+            this.refUploadFiles.splice(idx, 1);
+        },
+
+        async uploadRefFiles() {
+            this.refUploading = true;
+            for (const rf of this.refUploadFiles) {
+                if (rf.uploaded) continue;
+                rf.uploading = true;
+                try {
+                    const fd = new FormData();
+                    fd.append('file', rf.file);
+                    const uploadRes = await fetch('/api/documents/upload', { method: 'POST', body: fd });
+                    if (!uploadRes.ok) { rf.uploading = false; continue; }
+                    const doc = await uploadRes.json();
+                    const indexRes = await fetch(`/api/indexing/${doc.id}/index`, { method: 'POST' });
+                    rf.uploading = false;
+                    rf.uploaded = true;
+                    rf.docId = doc.id;
+                    this.refDocs.push(doc.id);
+                    await this.loadDocuments();
+                } catch(e) {
+                    rf.uploading = false;
+                    console.error('Ref upload failed:', e);
+                }
+            }
+            this.refUploading = false;
+        },
+
         async runBatch() {
-            let options = {};
-            if (this.optionsJson.trim()) {
-                try { options = JSON.parse(this.optionsJson); }
-                catch(e) { alert('Invalid JSON in options'); return; }
+            let fullPrompt = this.prompt || '';
+            if (this.optionsText.trim()) {
+                fullPrompt += '\n\nAdditional processing preferences:\n' + this.optionsText.trim();
             }
             const body = {
                 template_id: this.templateId || null,
                 tool_name: this.toolName,
                 document_ids: this.selectedDocs,
-                prompt: this.prompt || null,
-                options: Object.keys(options).length ? options : null,
+                prompt: fullPrompt || null,
+                options: null,
                 model: this.modelOverride || null,
                 concurrency: parseInt(this.concurrency),
                 reference_doc_ids: this.refDocs.length > 0 ? this.refDocs : null,
@@ -632,8 +719,11 @@ function batchPage() {
             for (const f of this.uploadFiles) fd.append('files', f);
             fd.append('tool_name', this.toolName);
             if (this.templateId) fd.append('template_id', this.templateId);
-            if (this.prompt) fd.append('prompt', this.prompt);
-            if (this.optionsJson.trim()) fd.append('options', this.optionsJson.trim());
+            let uploadPrompt = this.prompt || '';
+            if (this.optionsText.trim()) {
+                uploadPrompt += '\n\nAdditional processing preferences:\n' + this.optionsText.trim();
+            }
+            if (uploadPrompt) fd.append('prompt', uploadPrompt);
             if (this.modelOverride) fd.append('model', this.modelOverride);
             fd.append('auto_index', this.autoIndex);
             fd.append('concurrency', this.concurrency);
