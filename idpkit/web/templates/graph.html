@@ -146,6 +146,22 @@
             <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building">
                 <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
             </button>
+            <div style="position:relative" x-data="{ downloadOpen: false }">
+                <button class="btn btn-sm" @click="downloadOpen = !downloadOpen" :disabled="graphNodes.length === 0" title="Download graph data">
+                    <i class="fas fa-download"></i> <i class="fas fa-caret-down" style="font-size:0.7rem;margin-left:2px"></i>
+                </button>
+                <div x-show="downloadOpen" @click.outside="downloadOpen = false" x-cloak style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--card-bg,#fff);border:1px solid var(--border,#e5e7eb);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:200px;z-index:20;overflow:hidden">
+                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadJSON(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON (Full Graph)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-top:1px solid var(--border,#e5e7eb)" @click="downloadCSVEntities(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-table" style="width:20px;color:#059669"></i> CSV (Entities)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-top:1px solid var(--border,#e5e7eb)" @click="downloadCSVRelationships(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-project-diagram" style="width:20px;color:#2563eb"></i> CSV (Relationships)
+                    </button>
+                </div>
+            </div>
             <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
         </div>
         <div class="graph-canvas" id="graphCanvas">
@@ -526,7 +542,63 @@ function graphExplorer() {
 
         zoomIn() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 1.3); },
         zoomOut() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 0.7); },
-        resetZoom() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.transform, d3.zoomIdentity); }
+        resetZoom() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.transform, d3.zoomIdentity); },
+
+        _triggerDownload(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        _escapeCSV(val) {
+            const s = String(val == null ? '' : val);
+            if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                return '"' + s.replace(/"/g, '""') + '"';
+            }
+            return s;
+        },
+
+        downloadJSON() {
+            const data = { nodes: this.graphNodes, edges: this.graphEdges };
+            this._triggerDownload(JSON.stringify(data, null, 2), 'knowledge-graph.json', 'application/json');
+        },
+
+        downloadCSVEntities() {
+            const rows = [['name', 'type', 'mention_count', 'document_ids'].join(',')];
+            for (const n of this.graphNodes) {
+                const docIds = Array.isArray(n.document_ids) ? n.document_ids.join(';') : (n.document_ids || '');
+                rows.push([
+                    this._escapeCSV(n.label || n.name),
+                    this._escapeCSV(n.type || n.entity_type),
+                    this._escapeCSV(n.mention_count || 0),
+                    this._escapeCSV(docIds)
+                ].join(','));
+            }
+            this._triggerDownload(rows.join('\n'), 'graph-entities.csv', 'text/csv');
+        },
+
+        downloadCSVRelationships() {
+            const nodeMap = {};
+            for (const n of this.graphNodes) { nodeMap[n.id] = n.label || n.name || n.id; }
+            const rows = [['source_name', 'relation', 'target_name', 'weight'].join(',')];
+            for (const e of this.graphEdges) {
+                const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+                const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+                rows.push([
+                    this._escapeCSV(nodeMap[srcId] || srcId),
+                    this._escapeCSV(e.relation_type || ''),
+                    this._escapeCSV(nodeMap[tgtId] || tgtId),
+                    this._escapeCSV(e.weight || 1)
+                ].join(','));
+            }
+            this._triggerDownload(rows.join('\n'), 'graph-relationships.csv', 'text/csv');
+        }
     };
 }
 </script>

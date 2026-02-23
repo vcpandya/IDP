@@ -77,14 +77,71 @@
         <!-- Recent untagged documents -->
         <div class="dashboard-section" style="margin-top:24px" x-show="documents.length > 0">
             <div class="documents-table">
-                <h3>All Documents</h3>
+                <h3>All Documents <span class="text-muted" style="font-size:0.85rem;font-weight:normal" x-text="'(' + filteredDocuments.length + ' of ' + documents.length + ')'"></span></h3>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center">
+                    <input type="text" x-model="filterSearch" placeholder="Search by filename..."
+                           style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;min-width:180px;flex:1;max-width:280px">
+                    <select x-model="filterFormat" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Formats</option>
+                        <template x-for="fmt in availableFormats" :key="fmt">
+                            <option :value="fmt" x-text="fmt"></option>
+                        </template>
+                    </select>
+                    <select x-model="filterStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Statuses</option>
+                        <template x-for="st in availableStatuses" :key="st">
+                            <option :value="st" x-text="st"></option>
+                        </template>
+                    </select>
+                    <select x-model="filterTag" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Tags</option>
+                        <option value="__untagged__">Untagged</option>
+                        <template x-for="tag in tags" :key="tag.id">
+                            <option :value="tag.id" x-text="tag.name"></option>
+                        </template>
+                    </select>
+                    <button class="btn btn-sm" @click="filterSearch=''; filterFormat=''; filterStatus=''; filterTag=''"
+                            x-show="filterSearch || filterFormat || filterStatus || filterTag"
+                            style="font-size:0.8rem"><i class="fas fa-times"></i> Clear</button>
+                </div>
+                <div x-show="selectedDocIds.length > 0"
+                     style="display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:10px;background:var(--bg-hover,#f0f4ff);border:1px solid var(--border);border-radius:8px">
+                    <span style="font-size:0.85rem;font-weight:500" x-text="selectedDocIds.length + ' selected'"></span>
+                    <div style="position:relative" x-data="{ showTagPicker: false }">
+                        <button class="btn btn-sm btn-primary" @click="showTagPicker = !showTagPicker">
+                            <i class="fas fa-tag"></i> Tag selected
+                        </button>
+                        <div x-show="showTagPicker" @click.away="showTagPicker = false" x-cloak
+                             style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:50;min-width:180px;max-height:220px;overflow-y:auto">
+                            <template x-for="tag in tags" :key="tag.id">
+                                <button @click="bulkTagSelected(tag.id); showTagPicker = false"
+                                        style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;cursor:pointer;font-size:0.85rem;text-align:left"
+                                        onmouseover="this.style.background='var(--bg-hover,#f0f4ff)'" onmouseout="this.style.background='none'">
+                                    <span style="width:10px;height:10px;border-radius:50%;flex-shrink:0" :style="'background:' + tag.color"></span>
+                                    <span x-text="tag.name"></span>
+                                </button>
+                            </template>
+                            <div x-show="tags.length === 0" style="padding:12px;font-size:0.8rem;color:var(--text-muted);text-align:center">No tags available</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm btn-danger" @click="bulkDeleteSelected()">
+                        <i class="fas fa-trash"></i> Delete selected
+                    </button>
+                    <button class="btn btn-sm" @click="deselectAll()" style="margin-left:auto">
+                        <i class="fas fa-times"></i> Deselect
+                    </button>
+                </div>
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th style="min-width:120px">Actions</th></tr>
+                        <tr>
+                            <th style="width:36px"><input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAllVisible($event.target.checked)" style="width:16px;height:16px"></th>
+                            <th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th style="min-width:120px">Actions</th>
+                        </tr>
                     </thead>
                     <tbody>
-                        <template x-for="doc in documents" :key="doc.id">
-                            <tr>
+                        <template x-for="doc in filteredDocuments" :key="doc.id">
+                            <tr :style="selectedDocIds.includes(doc.id) ? 'background:var(--bg-hover,#f0f4ff)' : ''">
+                                <td><input type="checkbox" :checked="selectedDocIds.includes(doc.id)" @change="toggleDocSelection(doc.id)" style="width:16px;height:16px"></td>
                                 <td>
                                     <i x-show="doc.format === 'youtube'" class="fab fa-youtube" style="color:#ff0000;margin-right:4px"></i>
                                     <a :href="doc.source_url || ('/documents/' + doc.id)" :target="doc.source_url ? '_blank' : '_self'" x-text="doc.filename" class="doc-link"></a>
@@ -103,6 +160,9 @@
                                 </td>
                             </tr>
                         </template>
+                        <tr x-show="filteredDocuments.length === 0">
+                            <td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No documents match the current filters.</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -356,6 +416,10 @@ function knowledgeBase() {
         newTag: { name: '', color: '#4f46e5', description: '' },
         editTag: { name: '', color: '#4f46e5', description: '' },
         presetColors: ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'],
+        filterSearch: '',
+        filterFormat: '',
+        filterStatus: '',
+        filterTag: '',
         youtubeUrl: '',
         ytIngesting: false,
         ytStatus: '',
@@ -373,6 +437,12 @@ function knowledgeBase() {
         ytSourceName: '',
         ytDefaultTagName: '',
         ytApplyDefaultTag: true,
+        selectedDocIds: [],
+
+        get allVisibleSelected() {
+            const visible = this.filteredDocuments;
+            return visible.length > 0 && visible.every(d => this.selectedDocIds.includes(d.id));
+        },
 
         async init() { await this.loadData(); },
 
@@ -383,6 +453,31 @@ function knowledgeBase() {
             ]);
             if (tagRes.ok) this.tags = await tagRes.json();
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
+        },
+
+        get filteredDocuments() {
+            let docs = this.documents;
+            const q = this.filterSearch.toLowerCase().trim();
+            if (q) docs = docs.filter(d => (d.filename || '').toLowerCase().includes(q));
+            if (this.filterFormat) docs = docs.filter(d => d.format === this.filterFormat);
+            if (this.filterStatus) docs = docs.filter(d => d.status === this.filterStatus);
+            if (this.filterTag === '__untagged__') {
+                docs = docs.filter(d => !d.tags || d.tags.length === 0);
+            } else if (this.filterTag) {
+                const tagId = parseInt(this.filterTag);
+                docs = docs.filter(d => d.tags && d.tags.some(t => t.id === tagId));
+            }
+            return docs;
+        },
+
+        get availableFormats() {
+            const formats = new Set(this.documents.map(d => d.format).filter(Boolean));
+            return [...formats].sort();
+        },
+
+        get availableStatuses() {
+            const statuses = new Set(this.documents.map(d => d.status).filter(Boolean));
+            return [...statuses].sort();
         },
 
         async openTag(tag) {
@@ -632,6 +727,61 @@ function knowledgeBase() {
                 }
             } catch (e) {
                 alert('Auto-tag failed: ' + e.message);
+            }
+        },
+
+        toggleDocSelection(docId) {
+            const idx = this.selectedDocIds.indexOf(docId);
+            if (idx >= 0) {
+                this.selectedDocIds.splice(idx, 1);
+            } else {
+                this.selectedDocIds.push(docId);
+            }
+        },
+
+        toggleSelectAllVisible(checked) {
+            const visibleIds = this.filteredDocuments.map(d => d.id);
+            if (checked) {
+                visibleIds.forEach(id => {
+                    if (!this.selectedDocIds.includes(id)) this.selectedDocIds.push(id);
+                });
+            } else {
+                this.selectedDocIds = this.selectedDocIds.filter(id => !visibleIds.includes(id));
+            }
+        },
+
+        deselectAll() {
+            this.selectedDocIds = [];
+        },
+
+        async bulkTagSelected(tagId) {
+            try {
+                const res = await fetch('/api/tags/' + tagId + '/documents', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ document_ids: this.selectedDocIds })
+                });
+                if (res.ok) {
+                    this.selectedDocIds = [];
+                    await this.loadData();
+                }
+            } catch (e) {
+                alert('Failed to tag documents: ' + e.message);
+            }
+        },
+
+        async bulkDeleteSelected() {
+            const count = this.selectedDocIds.length;
+            if (!confirm('Delete ' + count + ' selected document(s)? This cannot be undone.')) return;
+            try {
+                await Promise.all(this.selectedDocIds.map(id =>
+                    fetch('/api/documents/' + id, { method: 'DELETE' })
+                ));
+                this.selectedDocIds = [];
+                await this.loadData();
+            } catch (e) {
+                alert('Failed to delete some documents: ' + e.message);
+                await this.loadData();
             }
         },
 
