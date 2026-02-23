@@ -1,5 +1,7 @@
 /* IDP Kit — Intelligent Document Processing Toolkit */
 
+[x-cloak] { display: none !important; }
+
 /* ========== Variables ========== */
 :root {
     --primary: #4f46e5;
