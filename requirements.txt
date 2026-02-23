@@ -31,3 +31,5 @@ uvicorn[standard]
 asyncpg
 google-cloud-storage
 slowapi
+google-api-python-client
+youtube-transcript-api

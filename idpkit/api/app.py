@@ -209,6 +209,7 @@ def create_app() -> FastAPI:
         admin_router,
         settings_router,
         tags_router,
+        youtube_router,
     )
 
     app.include_router(auth_router)
@@ -226,6 +227,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(settings_router)
     app.include_router(tags_router)
+    app.include_router(youtube_router)
 
     # Register web UI routes
     from idpkit.web.routes import router as web_router

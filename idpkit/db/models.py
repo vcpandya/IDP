@@ -87,8 +87,10 @@ class Document(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     filename = Column(String(500), nullable=False)
-    format = Column(String(20))  # pdf, docx, md, html, xlsx, csv, pptx, image
+    format = Column(String(20))  # pdf, docx, md, html, xlsx, csv, pptx, image, youtube
     file_path = Column(String(1000))
+    source_url = Column(String(1000), nullable=True)
+    source_type = Column(String(20), nullable=True)  # upload, youtube
     file_size = Column(Integer, default=0)
     page_count = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
