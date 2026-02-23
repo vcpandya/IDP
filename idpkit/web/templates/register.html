@@ -45,8 +45,7 @@ function registerForm() {
                 });
                 const data = await res.json();
                 if (!res.ok) { this.error = data.detail || 'Registration failed'; return; }
-                this.success = 'Account created! Redirecting...';
-                setTimeout(() => window.location.href = '/login', 1000);
+                this.success = 'Account created! Your account is pending admin approval. You will be able to sign in once an administrator approves your account.';
             } catch(e) { this.error = 'Network error'; }
             finally { this.loading = false; }
         }

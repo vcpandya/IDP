@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column,
-    DateTime,
     Enum,
     ForeignKey,
     Integer,
@@ -14,7 +13,25 @@ from sqlalchemy import (
     Text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.types import DateTime as _SADateTime, TypeDecorator
 import enum
+
+
+class TZDateTime(TypeDecorator):
+    """A DateTime type that stores timezone-aware datetimes in PostgreSQL
+    and handles naive datetimes for SQLite compatibility."""
+    impl = _SADateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None and value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class Base(DeclarativeBase):
@@ -44,7 +61,7 @@ class User(Base):
     role = Column(String(20), default=UserRole.USER.value)
     api_key = Column(String(64), unique=True, nullable=True, index=True)
     is_active = Column(Integer, default=1)
-    created_at = Column(DateTime, default=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
 
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     prompts = relationship("Prompt", back_populates="owner", cascade="all, delete-orphan")
@@ -68,8 +85,8 @@ class Document(Base):
     description = Column(Text, nullable=True)
     metadata_json = Column(JSON, nullable=True)
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner = relationship("User", back_populates="documents")
     jobs = relationship("Job", back_populates="document", cascade="all, delete-orphan")
@@ -86,8 +103,8 @@ class Job(Base):
     params = Column(JSON, nullable=True)
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=utcnow)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    completed_at = Column(TZDateTime, nullable=True)
 
     document = relationship("Document", back_populates="jobs")
 
@@ -100,8 +117,8 @@ class Prompt(Base):
     content = Column(Text, nullable=False)
     category = Column(String(100), nullable=True)
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner = relationship("User", back_populates="prompts")
 
@@ -117,8 +134,8 @@ class Template(Base):
     file_path = Column(String(1000), nullable=True)
     schema_json = Column(JSON, nullable=True)
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner = relationship("User", back_populates="templates")
 
@@ -133,7 +150,7 @@ class ConversationMessage(Base):
     tool_calls = Column(JSON, nullable=True)
     tool_name = Column(String(100), nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
-    created_at = Column(DateTime, default=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
 
 
 class ProcessingTemplate(Base):
@@ -153,8 +170,8 @@ class ProcessingTemplate(Base):
     model = Column(String(200), nullable=True)
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     is_public = Column(Integer, default=0)
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     owner = relationship("User", back_populates="processing_templates")
     batch_jobs = relationship("BatchJob", back_populates="template")
@@ -180,9 +197,9 @@ class BatchJob(Base):
     concurrency = Column(Integer, default=3)
     result_summary = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=utcnow)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    started_at = Column(TZDateTime, nullable=True)
+    completed_at = Column(TZDateTime, nullable=True)
 
     owner = relationship("User", back_populates="batch_jobs")
     template = relationship("ProcessingTemplate", back_populates="batch_jobs")
@@ -202,9 +219,9 @@ class BatchItem(Base):
     result = Column(JSON, nullable=True)
     output_file = Column(String(1000), nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=utcnow)
-    started_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    started_at = Column(TZDateTime, nullable=True)
+    completed_at = Column(TZDateTime, nullable=True)
 
     batch_job = relationship("BatchJob", back_populates="items")
     document = relationship("Document")

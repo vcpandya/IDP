@@ -3,7 +3,6 @@
 from sqlalchemy import (
     CheckConstraint,
     Column,
-    DateTime,
     ForeignKey,
     Index,
     Integer,
@@ -12,7 +11,7 @@ from sqlalchemy import (
     Text,
 )
 
-from idpkit.db.models import Base, generate_uuid, utcnow
+from idpkit.db.models import Base, TZDateTime, generate_uuid, utcnow
 
 
 class Entity(Base):
@@ -27,8 +26,8 @@ class Entity(Base):
     aliases = Column(JSON, nullable=True)  # list of alternative names
     first_document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     document_count = Column(Integer, default=1)
-    created_at = Column(DateTime, default=utcnow)
-    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index("ix_entities_name_type", "canonical_name", "entity_type"),

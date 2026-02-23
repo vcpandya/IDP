@@ -126,5 +126,17 @@ def get_storage() -> StorageBackend:
     return _storage_instance
 
 
+async def require_admin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Require the current user to have admin role."""
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
 def get_llm() -> LLMClient:
     return get_default_client()

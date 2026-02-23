@@ -12,6 +12,7 @@ from .processing import router as processing_router
 from .plugins import router as plugins_router
 from .graph import router as graph_router
 from .batch import router as batch_router
+from .admin import router as admin_router
 
 __all__ = [
     "auth_router",
@@ -26,4 +27,5 @@ __all__ = [
     "plugins_router",
     "graph_router",
     "batch_router",
+    "admin_router",
 ]

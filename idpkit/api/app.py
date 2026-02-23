@@ -13,10 +13,12 @@ from idpkit.version import __version__
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and load plugins on startup."""
-    from idpkit.db.session import init_db
+    from idpkit.db.session import init_db, async_session
+    from idpkit.db.seed import seed_default_admin
     from idpkit.plugins import plugin_manager
 
     await init_db()
+    await seed_default_admin(async_session)
     plugin_manager.load_entry_points()
     yield
 
@@ -79,6 +81,7 @@ def create_app() -> FastAPI:
         plugins_router,
         graph_router,
         batch_router,
+        admin_router,
     )
 
     app.include_router(auth_router)
@@ -93,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(plugins_router)
     app.include_router(graph_router)
     app.include_router(batch_router)
+    app.include_router(admin_router)
 
     # Register web UI routes
     from idpkit.web.routes import router as web_router

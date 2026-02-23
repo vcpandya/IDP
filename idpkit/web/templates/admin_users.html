@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}User Management - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-users-cog"></i> User Management</h2>
+</div>
+<div x-data="adminUsersPage()" x-init="loadUsers()">
+    <div class="admin-stats" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
+        <div class="stat-card" style="flex: 1; background: var(--bg-card); border-radius: 8px; padding: 1rem; border: 1px solid var(--border-color);">
+            <div style="font-size: 0.85rem; color: var(--text-muted);">Total Users</div>
+            <div style="font-size: 1.5rem; font-weight: 600;" x-text="total"></div>
+        </div>
+        <div class="stat-card" style="flex: 1; background: var(--bg-card); border-radius: 8px; padding: 1rem; border: 1px solid var(--border-color);">
+            <div style="font-size: 0.85rem; color: var(--text-muted);">Pending Approval</div>
+            <div style="font-size: 1.5rem; font-weight: 600; color: var(--warning-color, #f59e0b);" x-text="pendingCount"></div>
+        </div>
+        <div class="stat-card" style="flex: 1; background: var(--bg-card); border-radius: 8px; padding: 1rem; border: 1px solid var(--border-color);">
+            <div style="font-size: 0.85rem; color: var(--text-muted);">Active Users</div>
+            <div style="font-size: 1.5rem; font-weight: 600; color: var(--success-color, #22c55e);" x-text="activeCount"></div>
+        </div>
+    </div>
+
+    <div x-show="message" class="alert alert-success" x-text="message" style="margin-bottom: 1rem;"></div>
+    <div x-show="error" class="alert alert-error" x-text="error" style="margin-bottom: 1rem;"></div>
+
+    <div style="background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); overflow: hidden;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-hover);">
+                    <th style="text-align: left; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Username</th>
+                    <th style="text-align: left; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Email</th>
+                    <th style="text-align: left; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Role</th>
+                    <th style="text-align: left; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Status</th>
+                    <th style="text-align: left; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Registered</th>
+                    <th style="text-align: right; padding: 0.75rem 1rem; font-size: 0.85rem; font-weight: 600;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="u in users" :key="u.id">
+                    <tr style="border-bottom: 1px solid var(--border-color);"
+                        :style="!u.is_active ? 'background: rgba(245, 158, 11, 0.05)' : ''">
+                        <td style="padding: 0.75rem 1rem;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <i class="fas fa-user-circle" style="color: var(--text-muted);"></i>
+                                <span x-text="u.username" style="font-weight: 500;"></span>
+                            </div>
+                        </td>
+                        <td style="padding: 0.75rem 1rem; color: var(--text-muted);" x-text="u.email || '—'"></td>
+                        <td style="padding: 0.75rem 1rem;">
+                            <span class="badge"
+                                  :style="u.role === 'admin' ? 'background: rgba(99, 102, 241, 0.1); color: #818cf8;' : 'background: rgba(107, 114, 128, 0.1); color: #9ca3af;'"
+                                  x-text="u.role"></span>
+                        </td>
+                        <td style="padding: 0.75rem 1rem;">
+                            <span x-show="u.is_active"
+                                  style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--success-color, #22c55e); font-size: 0.85rem;">
+                                <i class="fas fa-check-circle"></i> Active
+                            </span>
+                            <span x-show="!u.is_active"
+                                  style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--warning-color, #f59e0b); font-size: 0.85rem;">
+                                <i class="fas fa-clock"></i> Pending
+                            </span>
+                        </td>
+                        <td style="padding: 0.75rem 1rem; color: var(--text-muted); font-size: 0.85rem;"
+                            x-text="new Date(u.created_at).toLocaleDateString()"></td>
+                        <td style="padding: 0.75rem 1rem; text-align: right;">
+                            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;"
+                                 x-show="u.username !== '{{ user.username }}'">
+                                <button x-show="!u.is_active"
+                                        @click="approveUser(u.id)"
+                                        class="btn btn-sm"
+                                        style="background: var(--success-color, #22c55e); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                                    <i class="fas fa-check"></i> Approve
+                                </button>
+                                <button x-show="u.is_active"
+                                        @click="deactivateUser(u.id)"
+                                        class="btn btn-sm"
+                                        style="background: var(--warning-color, #f59e0b); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                                    <i class="fas fa-ban"></i> Deactivate
+                                </button>
+                                <button @click="confirmDelete(u)"
+                                        class="btn btn-sm"
+                                        style="background: var(--danger-color, #ef4444); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                            <span x-show="u.username === '{{ user.username }}'"
+                                  style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">You</span>
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+        <div x-show="users.length === 0" style="padding: 2rem; text-align: center; color: var(--text-muted);">
+            No users found.
+        </div>
+    </div>
+
+    <div x-show="deleteTarget" @click.self="deleteTarget = null"
+         style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;">
+        <div style="background: var(--bg-card); border-radius: 8px; padding: 1.5rem; max-width: 400px; width: 90%;">
+            <h3 style="margin: 0 0 0.75rem 0;">Delete User</h3>
+            <p>Are you sure you want to permanently delete user <strong x-text="deleteTarget?.username"></strong>? This will also delete all their documents and data.</p>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                <button @click="deleteTarget = null" class="btn" style="padding: 0.5rem 1rem;">Cancel</button>
+                <button @click="deleteUser(deleteTarget.id)"
+                        style="background: var(--danger-color, #ef4444); color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function adminUsersPage() {
+    return {
+        users: [],
+        total: 0,
+        message: '',
+        error: '',
+        deleteTarget: null,
+        get pendingCount() { return this.users.filter(u => !u.is_active).length; },
+        get activeCount() { return this.users.filter(u => u.is_active).length; },
+        async loadUsers() {
+            try {
+                const res = await fetch('/api/admin/users');
+                if (!res.ok) { this.error = 'Failed to load users'; return; }
+                const data = await res.json();
+                this.users = data.users;
+                this.total = data.total;
+            } catch(e) { this.error = 'Network error'; }
+        },
+        async approveUser(id) {
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch(`/api/admin/users/${id}/approve`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) { this.message = data.detail; await this.loadUsers(); }
+                else { this.error = data.detail || 'Failed to approve user'; }
+            } catch(e) { this.error = 'Network error'; }
+        },
+        async deactivateUser(id) {
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch(`/api/admin/users/${id}/deactivate`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) { this.message = data.detail; await this.loadUsers(); }
+                else { this.error = data.detail || 'Failed to deactivate user'; }
+            } catch(e) { this.error = 'Network error'; }
+        },
+        confirmDelete(user) { this.deleteTarget = user; },
+        async deleteUser(id) {
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (res.ok) { this.message = data.detail; this.deleteTarget = null; await this.loadUsers(); }
+                else { this.error = data.detail || 'Failed to delete user'; }
+            } catch(e) { this.error = 'Network error'; }
+        }
+    }
+}
+</script>
+{% endblock %}

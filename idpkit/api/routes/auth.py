@@ -107,12 +107,13 @@ async def register(
         username=body.username,
         hashed_password=hash_password(body.password),
         email=body.email,
+        is_active=0,
     )
     db.add(user)
     await db.flush()
     await db.refresh(user)
 
-    logger.info("New user registered: %s (id=%s)", user.username, user.id)
+    logger.info("New user registered (pending approval): %s (id=%s)", user.username, user.id)
     return user
 
 
@@ -143,7 +144,7 @@ async def login(
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is inactive",
+            detail="Your account is pending admin approval. Please contact an administrator.",
         )
 
     token = create_access_token(user.id)
