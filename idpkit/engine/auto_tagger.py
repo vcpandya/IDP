@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, insert, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.core.llm import LLMClient
@@ -197,15 +197,29 @@ async def apply_tags(
                 select(Tag).where(Tag.id == s["existing_id"], Tag.owner_id == user_id)
             )
             tag = tag_result.scalar_one_or_none()
-            if tag and doc not in tag.documents:
-                tag.documents.append(doc)
-                db.add(tag)
-                applied.append({"tag_id": tag.id, "name": tag.name, "action": "assigned"})
+            if tag:
+                already_linked = await db.execute(
+                    select(document_tags).where(
+                        document_tags.c.document_id == doc_id,
+                        document_tags.c.tag_id == tag.id,
+                    )
+                )
+                if not already_linked.first():
+                    await db.execute(
+                        insert(document_tags).values(
+                            document_id=doc_id, tag_id=tag.id
+                        )
+                    )
+                    applied.append({"tag_id": tag.id, "name": tag.name, "action": "assigned"})
         else:
             tag = Tag(name=s["name"], owner_id=user_id)
             db.add(tag)
             await db.flush()
-            tag.documents.append(doc)
+            await db.execute(
+                insert(document_tags).values(
+                    document_id=doc_id, tag_id=tag.id
+                )
+            )
             applied.append({"tag_id": tag.id, "name": tag.name, "action": "created"})
 
     await db.commit()
