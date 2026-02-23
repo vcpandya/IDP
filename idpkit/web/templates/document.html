@@ -9,11 +9,30 @@
         <h2><i class="fas fa-file-alt"></i> <span x-text="doc.filename || 'Loading...'"></span></h2>
         <div class="header-actions">
             <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
-            <button @click="triggerIndex()" class="btn btn-primary" x-show="doc.status === 'uploaded' || doc.status === 'failed'">
+            <button @click="triggerIndex()" class="btn btn-primary" x-show="doc.status === 'uploaded' || doc.status === 'failed'" :disabled="indexing">
                 <i class="fas fa-tree"></i> Index Document
             </button>
             <a :href="'/api/documents/' + doc.id + '/download'" class="btn"><i class="fas fa-download"></i> Download</a>
         </div>
+    </div>
+
+    <!-- Indexing Progress -->
+    <div x-show="indexing || doc.status === 'indexing'" class="indexing-progress-card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+            <i class="fas fa-cog fa-spin" style="color:var(--primary);font-size:1.1rem"></i>
+            <strong style="color:var(--text)">Indexing in progress...</strong>
+            <span style="color:var(--text-secondary);font-size:0.85rem" x-text="indexProgress + '%'"></span>
+        </div>
+        <div class="indexing-progress-bar">
+            <div class="indexing-progress-fill" :style="'width:' + indexProgress + '%'"></div>
+        </div>
+        <p style="margin:6px 0 0;font-size:0.8rem;color:var(--text-muted)" x-text="indexStatusText"></p>
+    </div>
+
+    <!-- Indexing Error -->
+    <div x-show="indexError" class="indexing-error-card">
+        <i class="fas fa-exclamation-triangle"></i>
+        <span x-text="indexError"></span>
     </div>
 
     <!-- Document Info -->
@@ -75,9 +94,15 @@
 function documentView(docId) {
     return {
         doc: {}, viewMode: 'outline', query: '', answer: '', querying: false,
+        indexing: false, indexProgress: 0, indexStatusText: '', indexError: '',
         async load() {
             const res = await fetch(`/api/documents/${docId}`);
             if (res.ok) this.doc = await res.json();
+            if (this.doc.status === 'indexing') {
+                this.indexing = true;
+                this.indexStatusText = 'Resuming indexing...';
+                this.pollStatus();
+            }
             if (this.doc.tree_index && this.viewMode === 'tree') this.$nextTick(() => this.renderD3Tree());
         },
         formatSize(bytes) {
@@ -87,20 +112,52 @@ function documentView(docId) {
             return (bytes / 1048576).toFixed(1) + ' MB';
         },
         async triggerIndex() {
-            await fetch(`/api/indexing/documents/${this.doc.id}/index`, { method: 'POST' });
+            this.indexError = '';
+            this.indexProgress = 0;
+            this.indexStatusText = 'Starting indexing...';
+            this.indexing = true;
+            const res = await fetch(`/api/indexing/documents/${this.doc.id}/index`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                this.indexError = data.detail || 'Failed to start indexing';
+                this.indexing = false;
+                return;
+            }
             this.doc.status = 'indexing';
+            this.indexStatusText = 'Analyzing document structure...';
             this.pollStatus();
         },
         async pollStatus() {
             const interval = setInterval(async () => {
-                const res = await fetch(`/api/indexing/documents/${this.doc.id}/index/status`);
-                if (res.ok) {
-                    const job = await res.json();
-                    if (job.status === 'completed' || job.status === 'failed') {
-                        clearInterval(interval);
-                        this.load();
+                try {
+                    const res = await fetch(`/api/indexing/documents/${this.doc.id}/index/status`);
+                    if (res.ok) {
+                        const job = await res.json();
+                        this.indexProgress = job.progress || 0;
+                        if (job.status === 'running') {
+                            if (this.indexProgress < 20) this.indexStatusText = 'Extracting pages and detecting structure...';
+                            else if (this.indexProgress < 50) this.indexStatusText = 'Analyzing table of contents...';
+                            else if (this.indexProgress < 80) this.indexStatusText = 'Building document tree...';
+                            else this.indexStatusText = 'Finalizing index...';
+                        } else if (job.status === 'pending') {
+                            this.indexStatusText = 'Queued, waiting to start...';
+                        }
+                        if (job.status === 'completed') {
+                            clearInterval(interval);
+                            this.indexProgress = 100;
+                            this.indexStatusText = 'Indexing complete!';
+                            setTimeout(() => { this.indexing = false; this.load(); }, 800);
+                        } else if (job.status === 'failed') {
+                            clearInterval(interval);
+                            this.indexing = false;
+                            this.indexError = job.error || 'Indexing failed';
+                            this.load();
+                        }
                     }
-                }
+                } catch(e) {}
             }, 2000);
         },
         renderOutline(nodes, depth) {
