@@ -78,6 +78,7 @@ def create_app() -> FastAPI:
         processing_router,
         plugins_router,
         graph_router,
+        batch_router,
     )
 
     app.include_router(auth_router)
@@ -91,6 +92,7 @@ def create_app() -> FastAPI:
     app.include_router(processing_router)
     app.include_router(plugins_router)
     app.include_router(graph_router)
+    app.include_router(batch_router)
 
     # Register web UI routes
     from idpkit.web.routes import router as web_router

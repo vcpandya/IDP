@@ -49,6 +49,8 @@ class User(Base):
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     prompts = relationship("Prompt", back_populates="owner", cascade="all, delete-orphan")
     templates = relationship("Template", back_populates="owner", cascade="all, delete-orphan")
+    processing_templates = relationship("ProcessingTemplate", back_populates="owner", cascade="all, delete-orphan")
+    batch_jobs = relationship("BatchJob", back_populates="owner", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -132,6 +134,80 @@ class ConversationMessage(Base):
     tool_name = Column(String(100), nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     created_at = Column(DateTime, default=utcnow)
+
+
+class ProcessingTemplate(Base):
+    """Reusable batch processing template — prompt + tool config + output formatting."""
+
+    __tablename__ = "processing_templates"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
+    system_prompt = Column(Text, nullable=True)
+    tool_name = Column(String(100), nullable=False, default="custom")
+    tool_options = Column(JSON, nullable=True)
+    reference_content = Column(Text, nullable=True)
+    output_format = Column(String(20), default="json")
+    output_template = Column(JSON, nullable=True)
+    model = Column(String(200), nullable=True)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False)
+    is_public = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", back_populates="processing_templates")
+    batch_jobs = relationship("BatchJob", back_populates="template")
+
+
+class BatchJob(Base):
+    """Parent record tracking a batch of document processing operations."""
+
+    __tablename__ = "batch_jobs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    template_id = Column(String, ForeignKey("processing_templates.id"), nullable=True)
+    tool_name = Column(String(100), nullable=False)
+    status = Column(String(20), default="pending")
+    progress = Column(Integer, default=0)
+    total_items = Column(Integer, default=0)
+    completed_items = Column(Integer, default=0)
+    failed_items = Column(Integer, default=0)
+    prompt = Column(Text, nullable=True)
+    options = Column(JSON, nullable=True)
+    model = Column(String(200), nullable=True)
+    concurrency = Column(Integer, default=3)
+    result_summary = Column(JSON, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    owner = relationship("User", back_populates="batch_jobs")
+    template = relationship("ProcessingTemplate", back_populates="batch_jobs")
+    items = relationship("BatchItem", back_populates="batch_job", cascade="all, delete-orphan")
+
+
+class BatchItem(Base):
+    """Per-document child record within a batch."""
+
+    __tablename__ = "batch_items"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    batch_job_id = Column(String, ForeignKey("batch_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String, ForeignKey("documents.id"), nullable=False)
+    position = Column(Integer, default=0)
+    status = Column(String(20), default="pending")
+    result = Column(JSON, nullable=True)
+    output_file = Column(String(1000), nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    batch_job = relationship("BatchJob", back_populates="items")
+    document = relationship("Document")
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.

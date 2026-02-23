@@ -4,83 +4,499 @@
 <div class="page-header">
     <h2><i class="fas fa-layer-group"></i> Batch Processing</h2>
 </div>
-<div x-data="batchPage()" x-init="loadDocuments()">
-    <div class="batch-controls">
-        <div class="form-group">
-            <label>Select Documents</label>
-            <div class="doc-checklist">
-                <label class="doc-check">
-                    <input type="checkbox" @change="toggleAll($event)"> <strong>Select All</strong>
-                </label>
-                <template x-for="doc in documents" :key="doc.id">
-                    <label class="doc-check">
-                        <input type="checkbox" :value="doc.id" x-model="selectedDocs">
-                        <span x-text="doc.filename"></span>
-                        <span class="badge" x-text="doc.status"></span>
-                    </label>
-                </template>
-            </div>
-        </div>
-        <div class="form-group">
-            <label>Operation</label>
-            <select x-model="operation">
-                <option value="index">Index All</option>
-                <option value="smart_summary">Smart Summary</option>
-                <option value="smart_classify">Smart Classify</option>
-                <option value="smart_extract">Smart Extract</option>
-                <option value="smart_redaction">Smart Redaction</option>
-            </select>
-        </div>
-        <button @click="runBatch()" class="btn btn-primary" :disabled="selectedDocs.length === 0 || running">
-            <span x-show="!running"><i class="fas fa-play"></i> Run Batch (<span x-text="selectedDocs.length"></span> docs)</span>
-            <span x-show="running"><i class="fas fa-spinner fa-spin"></i> Processing...</span>
+<div x-data="batchPage()" x-init="init()">
+    <!-- Tabs -->
+    <div class="tabs" style="display:flex;gap:0;margin-bottom:1.5rem;border-bottom:2px solid var(--border-color, #e2e8f0);">
+        <button @click="tab='run'" class="tab-btn" :class="{'active': tab==='run'}"
+            style="padding:.75rem 1.5rem;border:none;background:none;cursor:pointer;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px;"
+            :style="tab==='run' ? 'border-bottom-color:var(--primary-color, #3b82f6);color:var(--primary-color, #3b82f6)' : ''">
+            <i class="fas fa-play"></i> Run Batch
+        </button>
+        <button @click="tab='upload'" class="tab-btn" :class="{'active': tab==='upload'}"
+            style="padding:.75rem 1.5rem;border:none;background:none;cursor:pointer;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px;"
+            :style="tab==='upload' ? 'border-bottom-color:var(--primary-color, #3b82f6);color:var(--primary-color, #3b82f6)' : ''">
+            <i class="fas fa-cloud-upload-alt"></i> Upload & Process
+        </button>
+        <button @click="tab='history'; loadHistory()" class="tab-btn" :class="{'active': tab==='history'}"
+            style="padding:.75rem 1.5rem;border:none;background:none;cursor:pointer;font-weight:600;border-bottom:2px solid transparent;margin-bottom:-2px;"
+            :style="tab==='history' ? 'border-bottom-color:var(--primary-color, #3b82f6);color:var(--primary-color, #3b82f6)' : ''">
+            <i class="fas fa-history"></i> History
         </button>
     </div>
-    <div x-show="results.length > 0" class="batch-results">
-        <h3>Results</h3>
-        <template x-for="(r, i) in results" :key="i">
-            <div class="result-item" :class="r.status">
-                <span x-text="r.filename"></span>
-                <span class="status-badge" :class="'status-' + r.status" x-text="r.status"></span>
-                <span x-show="r.error" class="text-danger" x-text="r.error"></span>
+
+    <!-- Tab 1: Run Batch from existing documents -->
+    <div x-show="tab==='run'" style="display:flex;flex-direction:column;gap:1rem;">
+        <div class="card" style="padding:1.5rem;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                <div class="form-group">
+                    <label>Processing Template</label>
+                    <select x-model="templateId" @change="onTemplateChange()">
+                        <option value="">Ad-hoc (no template)</option>
+                        <template x-for="t in templates" :key="t.id">
+                            <option :value="t.id" x-text="t.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tool</label>
+                    <select x-model="toolName">
+                        <option value="custom">Custom (raw LLM)</option>
+                        <template x-for="t in tools" :key="t.name">
+                            <option :value="t.name" x-text="t.display_name"></option>
+                        </template>
+                    </select>
+                </div>
             </div>
-        </template>
+            <div class="form-group">
+                <label>Prompt / Instructions</label>
+                <textarea x-model="prompt" rows="4" placeholder="Instructions to apply to each document..."
+                    style="width:100%;resize:vertical;"></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;">
+                <div class="form-group">
+                    <label>Options (JSON)</label>
+                    <textarea x-model="optionsJson" rows="2" placeholder='{"length": "brief"}'
+                        style="width:100%;resize:vertical;font-family:monospace;font-size:0.85rem;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Model Override</label>
+                    <input type="text" x-model="modelOverride" placeholder="e.g. gpt-4o">
+                </div>
+                <div class="form-group">
+                    <label>Concurrency (1-10)</label>
+                    <input type="range" x-model="concurrency" min="1" max="10" style="width:100%;">
+                    <span x-text="concurrency" style="font-weight:600;"></span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="padding:1.5rem;">
+            <label style="font-weight:600;margin-bottom:.5rem;display:block;">Select Documents</label>
+            <div style="margin-bottom:.5rem;">
+                <label style="cursor:pointer;">
+                    <input type="checkbox" @change="toggleAllDocs($event)"> <strong>Select All Indexed</strong>
+                </label>
+            </div>
+            <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border-color, #e2e8f0);border-radius:6px;padding:.5rem;">
+                <template x-for="doc in documents" :key="doc.id">
+                    <label style="display:flex;align-items:center;gap:.5rem;padding:.25rem .5rem;cursor:pointer;">
+                        <input type="checkbox" :value="doc.id" x-model="selectedDocs">
+                        <span x-text="doc.filename" style="flex:1;"></span>
+                        <span class="badge" :class="'status-' + doc.status" x-text="doc.status"
+                            style="font-size:0.75rem;padding:2px 8px;border-radius:10px;"></span>
+                    </label>
+                </template>
+                <div x-show="documents.length === 0" style="padding:1rem;text-align:center;color:#999;">
+                    No documents found. Upload some first.
+                </div>
+            </div>
+        </div>
+
+        <button @click="runBatch()" class="btn btn-primary" :disabled="selectedDocs.length === 0 || activeBatch"
+            style="align-self:flex-start;padding:.75rem 2rem;">
+            <i class="fas fa-play"></i> Run Batch (<span x-text="selectedDocs.length"></span> docs)
+        </button>
+    </div>
+
+    <!-- Tab 2: Upload & Process -->
+    <div x-show="tab==='upload'" style="display:flex;flex-direction:column;gap:1rem;">
+        <div class="card" style="padding:1.5rem;">
+            <div class="form-group">
+                <label>Upload Files</label>
+                <div @dragover.prevent="dragOver=true" @dragleave="dragOver=false"
+                     @drop.prevent="handleDrop($event)"
+                     style="border:2px dashed var(--border-color, #ccc);border-radius:8px;padding:2rem;text-align:center;cursor:pointer;transition:border-color .2s;"
+                     :style="dragOver ? 'border-color:var(--primary-color, #3b82f6);background:rgba(59,130,246,0.05)' : ''"
+                     @click="$refs.fileInput.click()">
+                    <i class="fas fa-cloud-upload-alt" style="font-size:2rem;color:#999;"></i>
+                    <p style="margin:.5rem 0 0;">Drag & drop files here or click to browse</p>
+                    <p style="font-size:.85rem;color:#999;">PDF, DOCX, HTML, XLSX, PPTX, Images</p>
+                    <input type="file" multiple x-ref="fileInput" @change="handleFileSelect($event)" style="display:none;"
+                        accept=".pdf,.docx,.doc,.md,.html,.htm,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.bmp,.tiff,.tif,.webp">
+                </div>
+                <div x-show="uploadFiles.length > 0" style="margin-top:.5rem;">
+                    <template x-for="(f, i) in uploadFiles" :key="i">
+                        <div style="display:flex;align-items:center;gap:.5rem;padding:.25rem 0;">
+                            <i class="fas fa-file"></i>
+                            <span x-text="f.name" style="flex:1;"></span>
+                            <span x-text="(f.size/1024).toFixed(1) + ' KB'" style="color:#999;font-size:.85rem;"></span>
+                            <button @click="uploadFiles.splice(i, 1)" style="border:none;background:none;color:#e74c3c;cursor:pointer;">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                <div class="form-group">
+                    <label>Processing Template</label>
+                    <select x-model="uploadTemplateId" @change="onUploadTemplateChange()">
+                        <option value="">Ad-hoc (no template)</option>
+                        <template x-for="t in templates" :key="t.id">
+                            <option :value="t.id" x-text="t.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tool</label>
+                    <select x-model="uploadToolName">
+                        <option value="custom">Custom (raw LLM)</option>
+                        <template x-for="t in tools" :key="t.name">
+                            <option :value="t.name" x-text="t.display_name"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Prompt / Instructions</label>
+                <textarea x-model="uploadPrompt" rows="3" placeholder="Instructions..."
+                    style="width:100%;resize:vertical;"></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;">
+                <div class="form-group">
+                    <label>Options (JSON)</label>
+                    <textarea x-model="uploadOptionsJson" rows="2" placeholder="{}"
+                        style="width:100%;resize:vertical;font-family:monospace;font-size:0.85rem;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Model Override</label>
+                    <input type="text" x-model="uploadModel" placeholder="e.g. gpt-4o">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:.5rem;">
+                        <input type="checkbox" x-model="autoIndex"> Auto-index before processing
+                    </label>
+                    <label>Concurrency: <span x-text="uploadConcurrency"></span></label>
+                    <input type="range" x-model="uploadConcurrency" min="1" max="10" style="width:100%;">
+                </div>
+            </div>
+        </div>
+        <button @click="uploadAndProcess()" class="btn btn-primary" :disabled="uploadFiles.length === 0 || activeBatch"
+            style="align-self:flex-start;padding:.75rem 2rem;">
+            <i class="fas fa-rocket"></i> Upload & Process (<span x-text="uploadFiles.length"></span> files)
+        </button>
+    </div>
+
+    <!-- Tab 3: History -->
+    <div x-show="tab==='history'">
+        <div class="card" style="padding:1rem;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="text-align:left;border-bottom:2px solid var(--border-color, #e2e8f0);">
+                        <th style="padding:.5rem;">Tool</th>
+                        <th style="padding:.5rem;">Status</th>
+                        <th style="padding:.5rem;">Progress</th>
+                        <th style="padding:.5rem;">Items</th>
+                        <th style="padding:.5rem;">Created</th>
+                        <th style="padding:.5rem;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="job in historyJobs" :key="job.id">
+                        <tr style="border-bottom:1px solid var(--border-color, #e2e8f0);cursor:pointer;"
+                            @click="viewJob(job.id)">
+                            <td style="padding:.5rem;" x-text="job.tool_name"></td>
+                            <td style="padding:.5rem;">
+                                <span class="badge" :class="'status-' + job.status" x-text="job.status"
+                                    style="padding:2px 8px;border-radius:10px;font-size:.8rem;"></span>
+                            </td>
+                            <td style="padding:.5rem;">
+                                <div style="background:#e2e8f0;border-radius:4px;height:8px;width:100px;">
+                                    <div style="height:100%;border-radius:4px;transition:width .3s;"
+                                        :style="'width:' + job.progress + '%;background:' + (job.status === 'failed' ? '#e74c3c' : '#3b82f6')"></div>
+                                </div>
+                            </td>
+                            <td style="padding:.5rem;" x-text="job.completed_items + '/' + job.total_items"></td>
+                            <td style="padding:.5rem;" x-text="new Date(job.created_at).toLocaleString()"></td>
+                            <td style="padding:.5rem;">
+                                <button @click.stop="viewJob(job.id)" class="btn btn-sm" style="padding:2px 8px;font-size:.8rem;">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="historyJobs.length === 0">
+                        <td colspan="6" style="padding:2rem;text-align:center;color:#999;">No batch jobs yet</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Progress Panel (shown when batch is active) -->
+    <div x-show="activeBatch" class="card" style="padding:1.5rem;margin-top:1.5rem;border:2px solid var(--primary-color, #3b82f6);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+            <h3 style="margin:0;"><i class="fas fa-spinner fa-spin"></i> Batch Processing</h3>
+            <div style="display:flex;gap:.5rem;align-items:center;">
+                <span x-text="activeBatch?.status" class="badge"
+                    :class="'status-' + (activeBatch?.status || '')"
+                    style="padding:4px 12px;border-radius:10px;"></span>
+                <button x-show="activeBatch?.status === 'running' || activeBatch?.status === 'pending'"
+                    @click="cancelBatch()" class="btn" style="padding:4px 12px;background:#e74c3c;color:white;border:none;border-radius:4px;">
+                    <i class="fas fa-stop"></i> Cancel
+                </button>
+            </div>
+        </div>
+        <div style="margin-bottom:1rem;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:.25rem;">
+                <span>Progress</span>
+                <span x-text="(activeBatch?.progress || 0) + '%'"></span>
+            </div>
+            <div style="background:#e2e8f0;border-radius:6px;height:12px;overflow:hidden;">
+                <div style="height:100%;border-radius:6px;transition:width .3s;background:var(--primary-color, #3b82f6);"
+                    :style="'width:' + (activeBatch?.progress || 0) + '%'"></div>
+            </div>
+            <div style="display:flex;gap:1.5rem;margin-top:.5rem;font-size:.9rem;color:#666;">
+                <span><i class="fas fa-check" style="color:#27ae60;"></i> <span x-text="activeBatch?.completed_items || 0"></span> completed</span>
+                <span><i class="fas fa-times" style="color:#e74c3c;"></i> <span x-text="activeBatch?.failed_items || 0"></span> failed</span>
+                <span><i class="fas fa-list"></i> <span x-text="activeBatch?.total_items || 0"></span> total</span>
+            </div>
+        </div>
+        <div x-show="activeBatch?.items" style="max-height:300px;overflow-y:auto;">
+            <template x-for="item in (activeBatch?.items || [])" :key="item.id">
+                <div style="display:flex;align-items:center;gap:.5rem;padding:.35rem .5rem;border-bottom:1px solid #f0f0f0;">
+                    <span x-show="item.status==='pending'" style="color:#999;"><i class="fas fa-clock"></i></span>
+                    <span x-show="item.status==='running'" style="color:#3b82f6;"><i class="fas fa-spinner fa-spin"></i></span>
+                    <span x-show="item.status==='completed'" style="color:#27ae60;"><i class="fas fa-check-circle"></i></span>
+                    <span x-show="item.status==='failed'" style="color:#e74c3c;"><i class="fas fa-times-circle"></i></span>
+                    <span x-show="item.status==='skipped'" style="color:#999;"><i class="fas fa-forward"></i></span>
+                    <span x-text="item.filename || item.document_id" style="flex:1;"></span>
+                    <span class="badge" :class="'status-' + item.status" x-text="item.status"
+                        style="font-size:.75rem;padding:1px 6px;border-radius:8px;"></span>
+                    <span x-show="item.error" style="color:#e74c3c;font-size:.8rem;" x-text="item.error"></span>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Job Detail Modal -->
+    <div x-show="viewingJob" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;"
+        @click.self="viewingJob=null">
+        <div class="card" style="width:90%;max-width:800px;max-height:80vh;overflow-y:auto;padding:1.5rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h3 style="margin:0;">Batch Job Details</h3>
+                <button @click="viewingJob=null" style="border:none;background:none;font-size:1.5rem;cursor:pointer;">&times;</button>
+            </div>
+            <template x-if="viewingJob">
+                <div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:1rem;">
+                        <div><strong>Tool:</strong> <span x-text="viewingJob.tool_name"></span></div>
+                        <div><strong>Status:</strong> <span x-text="viewingJob.status"></span></div>
+                        <div><strong>Items:</strong> <span x-text="viewingJob.completed_items + ' / ' + viewingJob.total_items"></span></div>
+                        <div><strong>Failed:</strong> <span x-text="viewingJob.failed_items"></span></div>
+                    </div>
+                    <div x-show="viewingJob.prompt" style="margin-bottom:1rem;">
+                        <strong>Prompt:</strong>
+                        <pre style="background:#f5f5f5;padding:.5rem;border-radius:4px;white-space:pre-wrap;max-height:150px;overflow-y:auto;" x-text="viewingJob.prompt"></pre>
+                    </div>
+                    <h4>Results</h4>
+                    <template x-for="item in (viewingJob.items || [])" :key="item.id">
+                        <div class="card" style="padding:.75rem;margin-bottom:.5rem;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;">
+                                <span x-text="item.filename || item.document_id" style="font-weight:600;"></span>
+                                <span class="badge" :class="'status-' + item.status" x-text="item.status"
+                                    style="font-size:.75rem;padding:2px 8px;border-radius:8px;"></span>
+                            </div>
+                            <div x-show="item.error" style="color:#e74c3c;margin-top:.25rem;font-size:.85rem;" x-text="item.error"></div>
+                            <div x-show="item.result" style="margin-top:.5rem;">
+                                <pre style="background:#f8f9fa;padding:.5rem;border-radius:4px;font-size:.8rem;max-height:200px;overflow-y:auto;white-space:pre-wrap;"
+                                    x-text="JSON.stringify(item.result, null, 2)"></pre>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
     </div>
 </div>
+
 <script>
 function batchPage() {
     return {
-        documents: [], selectedDocs: [], operation: 'index', running: false, results: [],
+        tab: 'run',
+        // Data
+        documents: [],
+        tools: [],
+        templates: [],
+        // Run Batch state
+        selectedDocs: [],
+        templateId: '',
+        toolName: 'custom',
+        prompt: '',
+        optionsJson: '',
+        modelOverride: '',
+        concurrency: 3,
+        // Upload state
+        uploadFiles: [],
+        uploadTemplateId: '',
+        uploadToolName: 'custom',
+        uploadPrompt: '',
+        uploadOptionsJson: '',
+        uploadModel: '',
+        uploadConcurrency: 3,
+        autoIndex: true,
+        dragOver: false,
+        // Active batch tracking
+        activeBatch: null,
+        pollInterval: null,
+        // History
+        historyJobs: [],
+        viewingJob: null,
+
+        async init() {
+            await Promise.all([
+                this.loadDocuments(),
+                this.loadTools(),
+                this.loadTemplates(),
+            ]);
+        },
+
         async loadDocuments() {
             const res = await fetch('/api/documents/?limit=200');
-            if (res.ok) { const data = await res.json(); this.documents = data.documents || []; }
+            if (res.ok) { const data = await res.json(); this.documents = data.items || []; }
         },
-        toggleAll(e) {
-            this.selectedDocs = e.target.checked ? this.documents.map(d => d.id) : [];
+
+        async loadTools() {
+            const res = await fetch('/api/tools/');
+            if (res.ok) { const data = await res.json(); this.tools = data.tools || []; }
         },
-        async runBatch() {
-            this.running = true; this.results = [];
-            for (const docId of this.selectedDocs) {
-                const doc = this.documents.find(d => d.id === docId);
-                const r = { filename: doc?.filename || docId, status: 'running', error: null };
-                this.results.push(r);
-                try {
-                    let res;
-                    if (this.operation === 'index') {
-                        res = await fetch(`/api/indexing/documents/${docId}/index`, { method: 'POST' });
-                    } else {
-                        res = await fetch(`/api/tools/${this.operation}`, {
-                            method: 'POST', headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ document_id: docId })
-                        });
-                    }
-                    r.status = res.ok ? 'completed' : 'failed';
-                    if (!res.ok) r.error = (await res.json()).detail;
-                } catch(e) { r.status = 'failed'; r.error = e.message; }
+
+        async loadTemplates() {
+            const res = await fetch('/api/batch/templates');
+            if (res.ok) { this.templates = await res.json(); }
+        },
+
+        toggleAllDocs(e) {
+            this.selectedDocs = e.target.checked
+                ? this.documents.filter(d => d.status === 'indexed').map(d => d.id)
+                : [];
+        },
+
+        onTemplateChange() {
+            const tmpl = this.templates.find(t => t.id === this.templateId);
+            if (tmpl) {
+                this.toolName = tmpl.tool_name || 'custom';
+                this.prompt = tmpl.system_prompt || '';
+                this.optionsJson = tmpl.tool_options ? JSON.stringify(tmpl.tool_options, null, 2) : '';
+                this.modelOverride = tmpl.model || '';
             }
-            this.running = false;
-        }
+        },
+
+        onUploadTemplateChange() {
+            const tmpl = this.templates.find(t => t.id === this.uploadTemplateId);
+            if (tmpl) {
+                this.uploadToolName = tmpl.tool_name || 'custom';
+                this.uploadPrompt = tmpl.system_prompt || '';
+                this.uploadOptionsJson = tmpl.tool_options ? JSON.stringify(tmpl.tool_options, null, 2) : '';
+                this.uploadModel = tmpl.model || '';
+            }
+        },
+
+        async runBatch() {
+            let options = {};
+            if (this.optionsJson.trim()) {
+                try { options = JSON.parse(this.optionsJson); }
+                catch(e) { alert('Invalid JSON in options'); return; }
+            }
+            const body = {
+                template_id: this.templateId || null,
+                tool_name: this.toolName,
+                document_ids: this.selectedDocs,
+                prompt: this.prompt || null,
+                options: Object.keys(options).length ? options : null,
+                model: this.modelOverride || null,
+                concurrency: parseInt(this.concurrency),
+            };
+            const res = await fetch('/api/batch/', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                this.startPolling(data.id);
+            } else {
+                const err = await res.json();
+                alert('Failed: ' + (err.detail || 'Unknown error'));
+            }
+        },
+
+        handleDrop(e) {
+            this.dragOver = false;
+            this.uploadFiles = [...this.uploadFiles, ...Array.from(e.dataTransfer.files)];
+        },
+
+        handleFileSelect(e) {
+            this.uploadFiles = [...this.uploadFiles, ...Array.from(e.target.files)];
+            e.target.value = '';
+        },
+
+        async uploadAndProcess() {
+            const fd = new FormData();
+            for (const f of this.uploadFiles) fd.append('files', f);
+            fd.append('tool_name', this.uploadToolName);
+            if (this.uploadTemplateId) fd.append('template_id', this.uploadTemplateId);
+            if (this.uploadPrompt) fd.append('prompt', this.uploadPrompt);
+            if (this.uploadOptionsJson.trim()) fd.append('options', this.uploadOptionsJson.trim());
+            if (this.uploadModel) fd.append('model', this.uploadModel);
+            fd.append('auto_index', this.autoIndex);
+            fd.append('concurrency', this.uploadConcurrency);
+
+            const res = await fetch('/api/batch/upload-and-process', { method: 'POST', body: fd });
+            if (res.ok) {
+                const data = await res.json();
+                this.uploadFiles = [];
+                this.startPolling(data.id);
+            } else {
+                const err = await res.json();
+                alert('Failed: ' + (err.detail || 'Unknown error'));
+            }
+        },
+
+        startPolling(batchId) {
+            this.stopPolling();
+            this.activeBatch = { id: batchId, status: 'pending', progress: 0, items: [] };
+            this.pollInterval = setInterval(async () => {
+                const res = await fetch(`/api/batch/${batchId}`);
+                if (res.ok) {
+                    this.activeBatch = await res.json();
+                    if (['completed', 'failed', 'cancelled'].includes(this.activeBatch.status)) {
+                        this.stopPolling();
+                    }
+                }
+            }, 2000);
+        },
+
+        stopPolling() {
+            if (this.pollInterval) { clearInterval(this.pollInterval); this.pollInterval = null; }
+        },
+
+        async cancelBatch() {
+            if (!this.activeBatch) return;
+            await fetch(`/api/batch/${this.activeBatch.id}/cancel`, { method: 'POST' });
+        },
+
+        async loadHistory() {
+            const res = await fetch('/api/batch/?limit=50');
+            if (res.ok) { const data = await res.json(); this.historyJobs = data.jobs || []; }
+        },
+
+        async viewJob(jobId) {
+            const res = await fetch(`/api/batch/${jobId}`);
+            if (res.ok) { this.viewingJob = await res.json(); }
+        },
     }
 }
 </script>
+
+<style>
+.status-pending { background: #fef3c7; color: #92400e; }
+.status-running { background: #dbeafe; color: #1e40af; }
+.status-completed { background: #d1fae5; color: #065f46; }
+.status-failed { background: #fee2e2; color: #991b1b; }
+.status-cancelled { background: #f3f4f6; color: #4b5563; }
+.status-skipped { background: #f3f4f6; color: #6b7280; }
+.status-indexed { background: #d1fae5; color: #065f46; }
+.status-uploaded { background: #fef3c7; color: #92400e; }
+</style>
 {% endblock %}

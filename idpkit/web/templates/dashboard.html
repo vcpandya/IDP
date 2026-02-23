@@ -6,74 +6,238 @@
     <a href="/upload" class="btn btn-primary"><i class="fas fa-plus"></i> Upload Document</a>
 </div>
 
-<div class="stats-grid" id="stats" hx-get="/api/documents?limit=1" hx-trigger="load" hx-swap="none"
-     x-data="dashboard()" x-init="loadDocuments()">
+<div x-data="dashboard()" x-init="loadDocuments()">
 
-    <div class="stat-card">
-        <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
-        <div class="stat-info">
-            <span class="stat-value" x-text="documents.length"></span>
-            <span class="stat-label">Documents</span>
+    <!-- Stats Row -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
+            <div class="stat-info">
+                <span class="stat-value" x-text="documents.length"></span>
+                <span class="stat-label">Documents</span>
+            </div>
         </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon indexed"><i class="fas fa-tree"></i></div>
-        <div class="stat-info">
-            <span class="stat-value" x-text="documents.filter(d => d.status === 'indexed').length"></span>
-            <span class="stat-label">Indexed</span>
+        <div class="stat-card">
+            <div class="stat-icon indexed"><i class="fas fa-tree"></i></div>
+            <div class="stat-info">
+                <span class="stat-value" x-text="documents.filter(d => d.status === 'indexed').length"></span>
+                <span class="stat-label">Indexed</span>
+            </div>
         </div>
-    </div>
-    <div class="stat-card">
-        <div class="stat-icon processing"><i class="fas fa-spinner"></i></div>
-        <div class="stat-info">
-            <span class="stat-value" x-text="documents.filter(d => d.status === 'indexing').length"></span>
-            <span class="stat-label">Processing</span>
+        <div class="stat-card">
+            <div class="stat-icon processing"><i class="fas fa-spinner"></i></div>
+            <div class="stat-info">
+                <span class="stat-value" x-text="documents.filter(d => d.status === 'indexing').length"></span>
+                <span class="stat-label">Processing</span>
+            </div>
         </div>
     </div>
 
-    <div class="documents-table">
-        <h3>Recent Documents</h3>
-        <table>
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Format</th>
-                    <th>Status</th>
-                    <th>Uploaded</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <template x-for="doc in documents" :key="doc.id">
+    <!-- IDA Hero Banner -->
+    <div class="ida-hero">
+        <div class="ida-hero-content">
+            <h3><i class="fas fa-brain"></i> Meet IDA — Your Intelligent Document Assistant</h3>
+            <p>Chat with IDA to analyze, summarize, translate, compare, and compose content from your documents. Access all 13 Smart Tools, generate reports, run batch jobs, and compose multi-document deliverables — all from a single conversation.</p>
+        </div>
+        <a href="/chat" class="btn"><i class="fas fa-comments"></i> Chat with IDA</a>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="dashboard-section">
+        <div class="dashboard-section-header"><i class="fas fa-bolt"></i> Quick Actions</div>
+        <div class="quick-actions-grid">
+            <a href="/upload" class="feature-tile quick-action">
+                <div class="tile-icon" style="background: #eef2ff; color: #4f46e5">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <h4>Upload Documents</h4>
+                <p>Upload PDFs, DOCX, HTML, spreadsheets, and more</p>
+            </a>
+            <a href="/chat" class="feature-tile quick-action">
+                <div class="tile-icon" style="background: #f3e8ff; color: #7c3aed">
+                    <i class="fas fa-brain"></i>
+                </div>
+                <h4>Ask IDA</h4>
+                <p>Chat with your intelligent document assistant</p>
+            </a>
+            <a href="/batch" class="feature-tile quick-action">
+                <div class="tile-icon" style="background: #fff7ed; color: #d97706">
+                    <i class="fas fa-layer-group"></i>
+                </div>
+                <h4>Batch Processing</h4>
+                <p>Process multiple documents at once</p>
+            </a>
+        </div>
+    </div>
+
+    <!-- Smart Tools Section -->
+    <div class="dashboard-section">
+        <div class="dashboard-section-header"><i class="fas fa-tools"></i> Smart Tools</div>
+        <div class="feature-grid">
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #eef2ff; color: #4f46e5"><i class="fas fa-file-alt"></i></div>
+                <h4>Smart Summary</h4>
+                <p>Hierarchical summaries with customizable length and style</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #ecfeff; color: #0891b2"><i class="fas fa-tags"></i></div>
+                <h4>Smart Classify</h4>
+                <p>Categorize documents by type, topic, or custom taxonomy</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #ecfdf5; color: #059669"><i class="fas fa-database"></i></div>
+                <h4>Smart Extract</h4>
+                <p>Extract structured data, fields, and entities</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #fffbeb; color: #d97706"><i class="fas fa-balance-scale"></i></div>
+                <h4>Smart Compare</h4>
+                <p>Compare documents for differences and similarities</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #f3e8ff; color: #7c3aed"><i class="fas fa-question-circle"></i></div>
+                <h4>Smart Q&A</h4>
+                <p>Answer questions about document content</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #fef2f2; color: #dc2626"><i class="fas fa-cut"></i></div>
+                <h4>Smart Split</h4>
+                <p>Split documents into logical sections</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #fff1f2; color: #e11d48"><i class="fas fa-eraser"></i></div>
+                <h4>Smart Redaction</h4>
+                <p>Identify and redact sensitive information</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #faf5ff; color: #9333ea"><i class="fas fa-user-secret"></i></div>
+                <h4>Smart Anonymize</h4>
+                <p>Anonymize personal data while preserving meaning</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #f0fdfa; color: #0d9488"><i class="fas fa-fill-drip"></i></div>
+                <h4>Smart Fill</h4>
+                <p>Fill templates and forms using document data</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #fff7ed; color: #ea580c"><i class="fas fa-pen-fancy"></i></div>
+                <h4>Smart Rewrite</h4>
+                <p>Rewrite content in a different tone or style</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #eff6ff; color: #2563eb"><i class="fas fa-language"></i></div>
+                <h4>Smart Translate</h4>
+                <p>Translate document content to another language</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #f7fee7; color: #65a30d"><i class="fas fa-object-group"></i></div>
+                <h4>Smart Merge</h4>
+                <p>Merge content from multiple documents</p>
+            </a>
+            <a href="/tools" class="feature-tile">
+                <div class="tile-icon" style="background: #fdf2f8; color: #db2777"><i class="fas fa-clipboard-check"></i></div>
+                <h4>Smart Audit</h4>
+                <p>Audit documents for compliance, completeness, or quality</p>
+            </a>
+        </div>
+    </div>
+
+    <!-- AI & Knowledge Section -->
+    <div class="dashboard-section">
+        <div class="dashboard-section-header"><i class="fas fa-brain"></i> AI & Knowledge</div>
+        <div class="feature-grid">
+            <a href="/chat" class="feature-tile">
+                <div class="tile-icon" style="background: #f3e8ff; color: #7c3aed"><i class="fas fa-comments"></i></div>
+                <h4>IDA Chat</h4>
+                <p>Conversational AI with access to all tools and documents</p>
+            </a>
+            <a href="/chat" class="feature-tile">
+                <div class="tile-icon" style="background: #ecfdf5; color: #059669"><i class="fas fa-project-diagram"></i></div>
+                <h4>Knowledge Graph</h4>
+                <p>Explore entities and relationships across documents</p>
+            </a>
+            <a href="/chat" class="feature-tile">
+                <div class="tile-icon" style="background: #eff6ff; color: #2563eb"><i class="fas fa-search"></i></div>
+                <h4>Cross-Document Search</h4>
+                <p>Find topics and entities mentioned across all documents</p>
+            </a>
+            <a href="/chat" class="feature-tile">
+                <div class="tile-icon" style="background: #ecfeff; color: #0891b2"><i class="fas fa-sitemap"></i></div>
+                <h4>Entity Discovery</h4>
+                <p>Discover and track people, organizations, and key concepts</p>
+            </a>
+        </div>
+    </div>
+
+    <!-- Generation & Processing Section -->
+    <div class="dashboard-section">
+        <div class="dashboard-section-header"><i class="fas fa-file-export"></i> Generation & Processing</div>
+        <div class="feature-grid">
+            <a href="/chat" class="feature-tile">
+                <div class="tile-icon" style="background: #eef2ff; color: #4f46e5"><i class="fas fa-file-pdf"></i></div>
+                <h4>Report Generation</h4>
+                <p>Generate structured reports in Markdown or DOCX format</p>
+            </a>
+            <a href="/templates" class="feature-tile">
+                <div class="tile-icon" style="background: #fff7ed; color: #d97706"><i class="fas fa-clipboard-list"></i></div>
+                <h4>Processing Templates</h4>
+                <p>Create and manage reusable processing templates</p>
+            </a>
+            <a href="/batch" class="feature-tile">
+                <div class="tile-icon" style="background: #ecfdf5; color: #059669"><i class="fas fa-upload"></i></div>
+                <h4>Upload & Process</h4>
+                <p>Upload documents and run batch processing pipelines</p>
+            </a>
+        </div>
+    </div>
+
+    <!-- Recent Documents Table -->
+    <div class="dashboard-section">
+        <div class="documents-table">
+            <h3>Recent Documents</h3>
+            <table>
+                <thead>
                     <tr>
-                        <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
-                        <td><span class="badge" x-text="doc.format"></span></td>
-                        <td>
-                            <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
-                        </td>
-                        <td x-text="new Date(doc.created_at).toLocaleDateString()"></td>
-                        <td class="actions">
-                            <a :href="'/documents/' + doc.id" class="btn btn-sm" title="View">
-                                <i class="fas fa-eye"></i>
-                            </a>
-                            <button @click="indexDoc(doc.id)" class="btn btn-sm btn-primary"
-                                    x-show="doc.status === 'uploaded' || doc.status === 'failed'" title="Index">
-                                <i class="fas fa-tree"></i>
-                            </button>
-                            <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger" title="Delete">
-                                <i class="fas fa-trash"></i>
-                            </button>
+                        <th>Name</th>
+                        <th>Format</th>
+                        <th>Status</th>
+                        <th>Uploaded</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="doc in documents" :key="doc.id">
+                        <tr>
+                            <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
+                            <td><span class="badge" x-text="doc.format"></span></td>
+                            <td>
+                                <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
+                            </td>
+                            <td x-text="new Date(doc.created_at).toLocaleDateString()"></td>
+                            <td class="actions">
+                                <a :href="'/documents/' + doc.id" class="btn btn-sm" title="View">
+                                    <i class="fas fa-eye"></i>
+                                </a>
+                                <button @click="indexDoc(doc.id)" class="btn btn-sm btn-primary"
+                                        x-show="doc.status === 'uploaded' || doc.status === 'failed'" title="Index">
+                                    <i class="fas fa-tree"></i>
+                                </button>
+                                <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="documents.length === 0">
+                        <td colspan="5" class="empty-state">
+                            No documents yet. <a href="/upload">Upload your first document</a>
                         </td>
                     </tr>
-                </template>
-                <tr x-show="documents.length === 0">
-                    <td colspan="5" class="empty-state">
-                        No documents yet. <a href="/upload">Upload your first document</a>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     </div>
+
 </div>
 
 <script>
@@ -84,7 +248,7 @@ function dashboard() {
             const res = await fetch('/api/documents/?limit=50');
             if (res.ok) {
                 const data = await res.json();
-                this.documents = data.documents || [];
+                this.documents = data.items || data.documents || [];
             }
         },
         async indexDoc(docId) {

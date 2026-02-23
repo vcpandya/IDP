@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}Processing Templates - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-clipboard-list"></i> Processing Templates</h2>
+</div>
+<div x-data="templatesPage()" x-init="init()">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+        <p style="color:#666;">Reusable configurations for batch document processing</p>
+        <div style="display:flex;gap:.5rem;">
+            <button @click="showAnalyze=true" class="btn" style="padding:.5rem 1rem;">
+                <i class="fas fa-magic"></i> Analyze Sample
+            </button>
+            <button @click="editing={}; showEditor=true" class="btn btn-primary" style="padding:.5rem 1rem;">
+                <i class="fas fa-plus"></i> New Template
+            </button>
+        </div>
+    </div>
+
+    <!-- Template List -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(350px, 1fr));gap:1rem;">
+        <template x-for="t in templates" :key="t.id">
+            <div class="card" style="padding:1.25rem;">
+                <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:.5rem;">
+                    <h3 style="margin:0;font-size:1.1rem;" x-text="t.name"></h3>
+                    <div style="display:flex;gap:.25rem;">
+                        <button @click="editTemplate(t)" style="border:none;background:none;cursor:pointer;color:#3b82f6;" title="Edit">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button @click="deleteTemplate(t.id)" style="border:none;background:none;cursor:pointer;color:#e74c3c;" title="Delete">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+                <p style="color:#666;font-size:.9rem;margin:0 0 .75rem;" x-text="t.description || 'No description'"></p>
+                <div style="display:flex;gap:.5rem;flex-wrap:wrap;">
+                    <span class="badge" style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:8px;font-size:.8rem;"
+                        x-text="t.tool_name"></span>
+                    <span class="badge" style="background:#f3e8ff;color:#6b21a8;padding:2px 8px;border-radius:8px;font-size:.8rem;"
+                        x-text="t.output_format"></span>
+                    <span x-show="t.model" class="badge" style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:8px;font-size:.8rem;"
+                        x-text="t.model"></span>
+                    <span x-show="t.is_public" class="badge" style="background:#d1fae5;color:#065f46;padding:2px 8px;border-radius:8px;font-size:.8rem;">
+                        Public
+                    </span>
+                </div>
+                <div x-show="t.system_prompt" style="margin-top:.75rem;">
+                    <pre style="background:#f8f9fa;padding:.5rem;border-radius:4px;font-size:.8rem;max-height:100px;overflow-y:auto;white-space:pre-wrap;"
+                        x-text="t.system_prompt"></pre>
+                </div>
+            </div>
+        </template>
+        <div x-show="templates.length === 0" style="grid-column:1/-1;text-align:center;padding:3rem;color:#999;">
+            <i class="fas fa-clipboard-list" style="font-size:3rem;margin-bottom:1rem;display:block;"></i>
+            <p>No templates yet. Create one to get started.</p>
+        </div>
+    </div>
+
+    <!-- Editor Modal -->
+    <div x-show="showEditor" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;"
+        @click.self="showEditor=false">
+        <div class="card" style="width:90%;max-width:700px;max-height:85vh;overflow-y:auto;padding:1.5rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h3 style="margin:0;" x-text="editing?.id ? 'Edit Template' : 'New Template'"></h3>
+                <button @click="showEditor=false" style="border:none;background:none;font-size:1.5rem;cursor:pointer;">&times;</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:1rem;">
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" x-model="editing.name" placeholder="e.g. Contract Review">
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" x-model="editing.description" placeholder="What this template does...">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                    <div class="form-group">
+                        <label>Tool</label>
+                        <select x-model="editing.tool_name">
+                            <option value="custom">Custom (raw LLM)</option>
+                            <template x-for="t in tools" :key="t.name">
+                                <option :value="t.name" x-text="t.display_name"></option>
+                            </template>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Output Format</label>
+                        <select x-model="editing.output_format">
+                            <option value="json">JSON</option>
+                            <option value="text">Text</option>
+                            <option value="markdown">Markdown</option>
+                            <option value="docx">DOCX</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>System Prompt</label>
+                    <textarea x-model="editing.system_prompt" rows="5" placeholder="Instructions for processing each document..."
+                        style="width:100%;resize:vertical;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Reference Content (optional)</label>
+                    <textarea x-model="editing.reference_content" rows="3"
+                        placeholder="Reference text applied alongside the prompt (e.g. evaluation criteria, question paper)..."
+                        style="width:100%;resize:vertical;"></textarea>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                    <div class="form-group">
+                        <label>Tool Options (JSON)</label>
+                        <textarea x-model="editing.tool_options_json" rows="3" placeholder='{"length": "brief"}'
+                            style="width:100%;resize:vertical;font-family:monospace;font-size:.85rem;"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Output Template (JSON)</label>
+                        <textarea x-model="editing.output_template_json" rows="3" placeholder='{"sections": [...]}'
+                            style="width:100%;resize:vertical;font-family:monospace;font-size:.85rem;"></textarea>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+                    <div class="form-group">
+                        <label>Model Override</label>
+                        <input type="text" x-model="editing.model" placeholder="e.g. gpt-4o">
+                    </div>
+                    <div class="form-group" style="display:flex;align-items:center;gap:.5rem;padding-top:1.5rem;">
+                        <label style="cursor:pointer;display:flex;align-items:center;gap:.5rem;">
+                            <input type="checkbox" x-model="editing.is_public_bool"> Public (visible to all users)
+                        </label>
+                    </div>
+                </div>
+                <button @click="saveTemplate()" class="btn btn-primary" style="align-self:flex-end;padding:.5rem 2rem;">
+                    <i class="fas fa-save"></i> Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analyze Sample Modal -->
+    <div x-show="showAnalyze" style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;display:flex;align-items:center;justify-content:center;"
+        @click.self="showAnalyze=false">
+        <div class="card" style="width:90%;max-width:500px;padding:1.5rem;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
+                <h3 style="margin:0;">AI-Analyze Sample Document</h3>
+                <button @click="showAnalyze=false" style="border:none;background:none;font-size:1.5rem;cursor:pointer;">&times;</button>
+            </div>
+            <p style="color:#666;margin-bottom:1rem;">Upload a sample document and AI will analyze its structure to create a processing template.</p>
+            <div class="form-group">
+                <label>Template Name *</label>
+                <input type="text" x-model="analyzeName" placeholder="e.g. Financial Report Format">
+            </div>
+            <div class="form-group">
+                <label>Sample Document *</label>
+                <input type="file" x-ref="analyzeFile" accept=".pdf,.docx,.doc,.md,.html,.htm,.xlsx,.pptx">
+            </div>
+            <button @click="analyzeSample()" class="btn btn-primary" :disabled="analyzing" style="width:100%;padding:.75rem;">
+                <span x-show="!analyzing"><i class="fas fa-magic"></i> Analyze & Create Template</span>
+                <span x-show="analyzing"><i class="fas fa-spinner fa-spin"></i> Analyzing...</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function templatesPage() {
+    return {
+        templates: [],
+        tools: [],
+        showEditor: false,
+        showAnalyze: false,
+        editing: {},
+        analyzeName: '',
+        analyzing: false,
+
+        async init() {
+            await Promise.all([this.loadTemplates(), this.loadTools()]);
+        },
+
+        async loadTemplates() {
+            const res = await fetch('/api/batch/templates');
+            if (res.ok) this.templates = await res.json();
+        },
+
+        async loadTools() {
+            const res = await fetch('/api/tools/');
+            if (res.ok) { const data = await res.json(); this.tools = data.tools || []; }
+        },
+
+        editTemplate(t) {
+            this.editing = {
+                ...t,
+                tool_options_json: t.tool_options ? JSON.stringify(t.tool_options, null, 2) : '',
+                output_template_json: t.output_template ? JSON.stringify(t.output_template, null, 2) : '',
+                is_public_bool: !!t.is_public,
+            };
+            this.showEditor = true;
+        },
+
+        async saveTemplate() {
+            if (!this.editing.name) { alert('Name is required'); return; }
+            let tool_options = null;
+            if (this.editing.tool_options_json?.trim()) {
+                try { tool_options = JSON.parse(this.editing.tool_options_json); }
+                catch(e) { alert('Invalid JSON in tool options'); return; }
+            }
+            let output_template = null;
+            if (this.editing.output_template_json?.trim()) {
+                try { output_template = JSON.parse(this.editing.output_template_json); }
+                catch(e) { alert('Invalid JSON in output template'); return; }
+            }
+            const body = {
+                name: this.editing.name,
+                description: this.editing.description || null,
+                system_prompt: this.editing.system_prompt || null,
+                tool_name: this.editing.tool_name || 'custom',
+                tool_options: tool_options,
+                reference_content: this.editing.reference_content || null,
+                output_format: this.editing.output_format || 'json',
+                output_template: output_template,
+                model: this.editing.model || null,
+                is_public: this.editing.is_public_bool ? 1 : 0,
+            };
+            let res;
+            if (this.editing.id) {
+                res = await fetch(`/api/batch/templates/${this.editing.id}`, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+                });
+            } else {
+                res = await fetch('/api/batch/templates', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+                });
+            }
+            if (res.ok) {
+                this.showEditor = false;
+                await this.loadTemplates();
+            } else {
+                const err = await res.json();
+                alert('Error: ' + (err.detail || 'Failed to save'));
+            }
+        },
+
+        async deleteTemplate(id) {
+            if (!confirm('Delete this template?')) return;
+            const res = await fetch(`/api/batch/templates/${id}`, { method: 'DELETE' });
+            if (res.ok) await this.loadTemplates();
+        },
+
+        async analyzeSample() {
+            if (!this.analyzeName) { alert('Template name is required'); return; }
+            const file = this.$refs.analyzeFile?.files?.[0];
+            if (!file) { alert('Please select a sample file'); return; }
+            this.analyzing = true;
+            try {
+                const fd = new FormData();
+                fd.append('sample_file', file);
+                fd.append('template_name', this.analyzeName);
+                const res = await fetch('/api/batch/templates/analyze', { method: 'POST', body: fd });
+                if (res.ok) {
+                    this.showAnalyze = false;
+                    this.analyzeName = '';
+                    await this.loadTemplates();
+                } else {
+                    const err = await res.json();
+                    alert('Analysis failed: ' + (err.detail || 'Unknown error'));
+                }
+            } finally {
+                this.analyzing = false;
+            }
+        },
+    }
+}
+</script>
+{% endblock %}

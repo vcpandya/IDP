@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}AI Agent - IDP Kit{% endblock %}
+{% block title %}IDA - Intelligent Document Assistant{% endblock %}
 {% block content %}
 <div class="page-header">
-    <h2><i class="fas fa-robot"></i> AI Agent</h2>
+    <h2><i class="fas fa-brain"></i> IDA — Intelligent Document Assistant</h2>
 </div>
 <div class="chat-container" x-data="agentChat()">
     <div class="chat-sidebar">
@@ -20,33 +20,36 @@
     <div class="chat-main">
         <div class="chat-messages" id="chatMessages">
             <div class="welcome-msg" x-show="messages.length === 0">
-                <i class="fas fa-robot"></i>
-                <h3>IDP Kit Agent</h3>
-                <p>Ask me to analyze, summarize, compare, or extract data from your documents.</p>
+                <i class="fas fa-brain" style="color: #7c3aed"></i>
+                <h3>IDA — Intelligent Document Assistant</h3>
+                <p>I can analyze, summarize, translate, compare, and compose content from your documents. I have access to 13 Smart Tools, knowledge graph queries, report generation, batch processing, and multi-document composition.</p>
                 <div class="suggestions">
-                    <button @click="sendMessage('Summarize the main findings')" class="suggestion-btn">Summarize findings</button>
-                    <button @click="sendMessage('Extract key financial data')" class="suggestion-btn">Extract financial data</button>
-                    <button @click="sendMessage('What are the main topics covered?')" class="suggestion-btn">List main topics</button>
+                    <button @click="sendMessage('List my documents')" class="suggestion-btn">List my documents</button>
+                    <button @click="sendMessage('Summarize a document')" class="suggestion-btn">Summarize a document</button>
+                    <button @click="sendMessage('Extract entities from my documents')" class="suggestion-btn">Extract entities</button>
+                    <button @click="sendMessage('What tools are available?')" class="suggestion-btn">Available tools</button>
+                    <button @click="sendMessage('Generate a report from a document')" class="suggestion-btn">Generate report</button>
+                    <button @click="sendMessage('Translate a document to Spanish')" class="suggestion-btn">Translate document</button>
                 </div>
             </div>
             <template x-for="(msg, i) in messages" :key="i">
                 <div class="chat-msg" :class="'msg-' + msg.role">
-                    <div class="msg-avatar">
-                        <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-robot'"></i>
+                    <div class="msg-avatar" :style="msg.role === 'assistant' ? 'background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff' : ''">
+                        <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
                     <div class="msg-content">
-                        <div class="msg-header" x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'Agent'"></div>
+                        <div class="msg-header" x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></div>
                         <div class="msg-body" x-html="msg.content"></div>
                     </div>
                 </div>
             </template>
             <div x-show="loading" class="chat-msg msg-assistant">
-                <div class="msg-avatar"><i class="fas fa-robot"></i></div>
+                <div class="msg-avatar" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff"><i class="fas fa-brain"></i></div>
                 <div class="msg-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
             </div>
         </div>
         <div class="chat-input">
-            <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask the agent..." :disabled="loading">
+            <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask IDA anything about your documents..." :disabled="loading">
             <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                 <i class="fas fa-paper-plane"></i>
             </button>
@@ -59,7 +62,7 @@ function agentChat() {
         messages: [], input: '', loading: false, documents: [], selectedDocs: [],
         async init() {
             const res = await fetch('/api/documents/?limit=100');
-            if (res.ok) { const data = await res.json(); this.documents = data.documents || []; }
+            if (res.ok) { const data = await res.json(); this.documents = data.items || data.documents || []; }
         },
         async sendMessage(text) {
             const msg = text || this.input.trim();

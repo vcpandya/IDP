@@ -1084,6 +1084,100 @@ tbody tr:hover { background: var(--border-light); }
     margin-top: 8px;
 }
 
+/* ========== IDA Hero Banner ========== */
+.ida-hero {
+    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 50%, #6366f1 100%);
+    color: #fff;
+    border-radius: var(--radius-lg);
+    padding: 32px 36px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    box-shadow: var(--shadow-md);
+    margin-bottom: 28px;
+}
+
+.ida-hero-content h3 { font-size: 1.35rem; font-weight: 700; margin-bottom: 6px; }
+.ida-hero-content p { font-size: 0.9rem; opacity: 0.9; max-width: 520px; line-height: 1.5; }
+
+.ida-hero .btn {
+    background: rgba(255,255,255,0.2);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.35);
+    padding: 10px 24px;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+.ida-hero .btn:hover { background: rgba(255,255,255,0.3); }
+
+/* ========== Dashboard Sections ========== */
+.dashboard-section { margin-bottom: 32px; }
+
+.dashboard-section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+}
+
+.dashboard-section-header i { color: var(--primary); font-size: 1rem; }
+
+/* ========== Feature Tile Grid ========== */
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.quick-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+/* ========== Feature Tile ========== */
+.feature-tile {
+    background: var(--bg-white);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    transition: all var(--transition);
+    border: 2px solid transparent;
+    text-decoration: none;
+    color: var(--text);
+    display: block;
+}
+
+.feature-tile:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+    border-color: var(--primary-light);
+    text-decoration: none;
+}
+
+.tile-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    margin-bottom: 12px;
+}
+
+.feature-tile h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 4px; }
+.feature-tile p { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.4; margin: 0; }
+
+.feature-tile.quick-action { text-align: center; padding: 24px 16px; }
+.feature-tile.quick-action .tile-icon { margin: 0 auto 12px; width: 48px; height: 48px; font-size: 1.2rem; }
+.feature-tile.quick-action h4 { font-size: 1rem; }
+
 /* ========== Utilities ========== */
 .text-success { color: var(--success); }
 .text-danger { color: var(--danger); }
@@ -1102,4 +1196,7 @@ tbody tr:hover { background: var(--border-light); }
     .tools-grid { grid-template-columns: 1fr; }
     .settings-grid { grid-template-columns: 1fr; }
     .chat-sidebar { display: none; }
+    .quick-actions-grid { grid-template-columns: 1fr; }
+    .feature-grid { grid-template-columns: 1fr 1fr; }
+    .ida-hero { flex-direction: column; text-align: center; padding: 24px; }
 }
