@@ -10,6 +10,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from idpkit.version import __version__
 
 
+async def _recover_stale_jobs(session_factory) -> None:
+    """Reset any jobs/documents stuck in pending/running from a prior crash."""
+    from sqlalchemy import select, update
+    from idpkit.db.models import Job, Document
+    from datetime import datetime, timezone
+
+    async with session_factory() as db:
+        stuck = await db.execute(
+            select(Job).where(Job.status.in_(["pending", "running"]))
+        )
+        stuck_jobs = stuck.scalars().all()
+        if not stuck_jobs:
+            return
+
+        job_ids = [j.id for j in stuck_jobs]
+        doc_ids = [j.document_id for j in stuck_jobs if j.document_id]
+
+        await db.execute(
+            update(Job)
+            .where(Job.id.in_(job_ids))
+            .values(
+                status="failed",
+                error="Server restarted while job was in progress",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+
+        if doc_ids:
+            await db.execute(
+                update(Document)
+                .where(Document.id.in_(doc_ids), Document.status == "indexing")
+                .values(status="uploaded")
+            )
+
+        await db.commit()
+
+        import logging
+        logging.getLogger(__name__).info(
+            "Recovered %d stale jobs on startup: %s", len(job_ids), job_ids
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and load plugins on startup."""
@@ -19,6 +61,7 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     await seed_default_admin(async_session)
+    await _recover_stale_jobs(async_session)
     plugin_manager.load_entry_points()
     yield
 
