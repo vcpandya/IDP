@@ -115,6 +115,18 @@ def get_video_metadata(video_id: str) -> dict:
     }
 
 
+def get_playlist_name(playlist_id: str) -> str:
+    try:
+        yt = _build_youtube()
+        resp = yt.playlists().list(part="snippet", id=playlist_id).execute()
+        items = resp.get("items", [])
+        if items:
+            return items[0]["snippet"].get("title", "")
+    except Exception as exc:
+        logger.warning("Failed to fetch playlist name: %s", exc)
+    return ""
+
+
 def get_playlist_videos(playlist_id: str) -> list[dict]:
     yt = _build_youtube()
     videos = []
@@ -144,22 +156,22 @@ def get_playlist_videos(playlist_id: str) -> list[dict]:
     return videos[:_MAX_PLAYLIST_VIDEOS]
 
 
-def _resolve_channel_id(identifier: str) -> str:
+def _resolve_channel_id(identifier: str) -> tuple[str, str]:
     yt = _build_youtube()
 
     if identifier.startswith("@"):
         resp = yt.channels().list(
-            part="contentDetails",
+            part="snippet,contentDetails",
             forHandle=identifier[1:],
         ).execute()
     elif identifier.startswith("user:"):
         resp = yt.channels().list(
-            part="contentDetails",
+            part="snippet,contentDetails",
             forUsername=identifier[5:],
         ).execute()
     else:
         resp = yt.channels().list(
-            part="contentDetails",
+            part="snippet,contentDetails",
             id=identifier,
         ).execute()
 
@@ -168,12 +180,13 @@ def _resolve_channel_id(identifier: str) -> str:
         raise ValueError(f"Channel not found: {identifier}")
 
     uploads_playlist = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
-    return uploads_playlist
+    channel_name = items[0].get("snippet", {}).get("title", "")
+    return uploads_playlist, channel_name
 
 
-def get_channel_videos(channel_identifier: str) -> list[dict]:
-    uploads_playlist = _resolve_channel_id(channel_identifier)
-    return get_playlist_videos(uploads_playlist)
+def get_channel_videos(channel_identifier: str) -> tuple[list[dict], str]:
+    uploads_playlist, channel_name = _resolve_channel_id(channel_identifier)
+    return get_playlist_videos(uploads_playlist), channel_name
 
 
 def enrich_videos(videos: list[dict]) -> list[dict]:
@@ -226,18 +239,21 @@ def resolve_url(url: str) -> dict:
 
     if url_type == YouTubeURLType.PLAYLIST:
         videos = get_playlist_videos(identifier)
+        playlist_name = get_playlist_name(identifier)
         return {
             "type": url_type.value,
             "playlist_id": identifier,
+            "source_name": playlist_name,
             "videos": videos,
             "total": len(videos),
         }
 
     if url_type == YouTubeURLType.CHANNEL:
-        videos = get_channel_videos(identifier)
+        videos, channel_name = get_channel_videos(identifier)
         return {
             "type": url_type.value,
             "channel": identifier,
+            "source_name": channel_name,
             "videos": videos,
             "total": len(videos),
         }
