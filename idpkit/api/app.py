@@ -3,9 +3,11 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
 from idpkit.version import __version__
 
@@ -79,13 +81,26 @@ def create_app() -> FastAPI:
     )
 
     # CORS middleware
+    import os
+    allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
+    allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Configure for production
+        allow_origins=allowed_origins or ["*"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    from idpkit.api.deps import limiter
+    app.state.limiter = limiter
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down."},
+        )
 
     # Mount static files
     static_dir = Path(__file__).parent.parent / "web" / "static"

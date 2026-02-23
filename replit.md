@@ -19,6 +19,16 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Connection**: `idpkit/db/session.py` reads `DATABASE_URL`, converts to `postgresql+asyncpg://`, strips sslmode params
 - **Schema**: Auto-created via `Base.metadata.create_all()` at startup; includes migration helper to drop/recreate legacy `conversation_messages` table if missing `owner_id` column
 - **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
+- **Indexes**: `Document.status` is indexed for fast status-based filtering
+
+## Security
+- **JWT signing**: Uses `SESSION_SECRET` env var (required); falls back to ephemeral random key with a logged warning — no hardcoded default
+- **CORS**: Reads `ALLOWED_ORIGINS` env var (comma-separated); defaults to wildcard if not set
+- **Session cookies**: Login sets `secure=True`, `httponly=True` flags
+- **Error responses**: All API exception messages are sanitized — no internal details leaked to clients; full tracebacks logged server-side via `logger.exception()`
+- **Rate limiting**: slowapi with `get_remote_address` key function — 30/min for agent chat, 10/min for batch creation; returns 429 on excess
+- **File uploads**: SVG uploads blocked (XSS risk); max upload size enforced (50 MB)
+- **API keys**: All LLM provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`) read from env only — no `os.environ` mutation at runtime
 
 ## Authentication & User Management
 - **Admin seeding**: On startup, if no users exist, a default admin is created (username: `admin`, password from `IDP_ADMIN_PASSWORD` env var, default: `admin123`)
@@ -29,11 +39,13 @@ All data lives in a single PostgreSQL database (15 tables):
 ## File Storage
 - **Abstract interface**: `StorageBackend` in `idpkit/core/storage.py`
 - **GCS backend**: `GCSStorageBackend` uses Replit's sidecar API at `127.0.0.1:1106` for signed URL upload/download with local caching
+- **Direct upload**: GCS backend supports `get_signed_upload_url()` — clients upload directly to GCS via signed PUT URL, then call `POST /api/documents/{id}/confirm-upload`; local backend falls back to server-proxied multipart upload via `POST /api/documents/{id}/upload-content`
 - **Local backend**: `LocalStorageBackend` for development/fallback
 - **Selection**: `get_storage()` in `idpkit/api/deps.py` auto-selects based on env vars
 
 ## Project Structure
 - `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings, tags)
+- `idpkit/api/deps.py` — Shared dependencies: auth, storage, rate limiter
 - `idpkit/web/` — Web UI routes and Jinja2 templates
 - `idpkit/db/` — Database models, session management, and admin seeding
 - `idpkit/engine/` — PageIndex document indexing engine
@@ -46,6 +58,7 @@ All data lives in a single PostgreSQL database (15 tables):
 - `idpkit/generation/` — Document generation (DOCX, Markdown)
 - `idpkit/plugins/` — Plugin system
 - `idpkit/core/storage.py` — File storage abstraction (GCS + local)
+- `idpkit/core/llm.py` — LLM client (LiteLLM-based, passes API keys via kwargs not env mutation)
 - `pageindex/` — Standalone PageIndex library
 
 ## Environment Variables
@@ -53,7 +66,8 @@ All data lives in a single PostgreSQL database (15 tables):
 - `DEFAULT_OBJECT_STORAGE_BUCKET_ID` — GCS bucket for file storage (set by Replit)
 - `PRIVATE_OBJECT_DIR` — Private directory prefix in GCS bucket (set by Replit)
 - `IDP_ADMIN_PASSWORD` — Default admin password (default: `admin123`)
-- `IDP_SECRET_KEY` — JWT signing key (default: `dev-secret-change-in-production`)
+- `SESSION_SECRET` — JWT signing key (required for production; ephemeral random fallback in dev)
+- `ALLOWED_ORIGINS` — Comma-separated CORS allowed origins (optional)
 
 ## Running
 - Dev: `python run_server.py` (port 5000, host 0.0.0.0)
@@ -65,6 +79,7 @@ All data lives in a single PostgreSQL database (15 tables):
 - PyMuPDF, PyPDF2, python-docx, beautifulsoup4
 - Jinja2, Pydantic, httpx
 - passlib + bcrypt (auth), python-jose (JWT)
+- slowapi (rate limiting)
 - NetworkX (optional, for graph analytics)
 
 ## Retrieval / Search Pipeline
@@ -80,3 +95,8 @@ All data lives in a single PostgreSQL database (15 tables):
 - **Batch Processing**: Redesigned with 3-step flow (Instructions → Select Documents to Process → Settings). Reference documents attach to the prompt (Step 1) as AI context. Two-pass schema generation: when no template is selected, Pass 1 generates a JSON schema from the prompt + reference docs, Pass 2 uses that schema as structured output constraint for all target documents.
 - **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering
 - **Settings**: LLM model lists fetched dynamically from provider APIs (OpenAI, Anthropic, Google, OpenRouter, Ollama) with curated fallbacks. Model filter search icon positioned on the right to avoid text overlap.
+
+## Performance
+- **N+1 fix**: `list_conversations` uses a single LEFT JOIN + GROUP BY query instead of N+1 message count queries
+- **Query bounds**: All list endpoints have `.limit()` caps (50-200 depending on endpoint)
+- **Direct uploads**: Large files bypass the server entirely when GCS is active (signed PUT URL)

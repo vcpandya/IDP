@@ -379,6 +379,7 @@ async def list_indexing_jobs(
         select(Job)
         .where(Job.document_id == doc_id, Job.job_type == "index")
         .order_by(Job.created_at.desc())
+        .limit(50)
     )
     return result.scalars().all()
 

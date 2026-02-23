@@ -142,7 +142,7 @@ async def extract_entities_route(
         logger.error("Entity extraction failed for doc %s: %s", body.document_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Entity extraction failed: {exc}",
+            detail="Entity extraction failed",
         )
 
     return ExtractEntitiesResponse(
@@ -175,7 +175,7 @@ async def summarize_route(
         logger.error("Summarization failed for doc %s: %s", body.document_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Summarization failed: {exc}",
+            detail="Summarization failed",
         )
 
     return SummarizeResponse(
@@ -219,7 +219,7 @@ async def compare_route(
         logger.error("Document comparison failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Comparison failed: {exc}",
+            detail="Comparison failed",
         )
 
     return CompareResponse(**result)

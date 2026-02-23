@@ -110,6 +110,7 @@ async def list_tags(
         .where(Tag.owner_id == user.id)
         .group_by(Tag.id)
         .order_by(Tag.name)
+        .limit(200)
     )
     rows = await db.execute(stmt)
     results = []

@@ -43,8 +43,9 @@ EXTENSION_FORMAT_MAP: dict[str, str] = {
     ".tiff": "image",
     ".tif": "image",
     ".webp": "image",
-    ".svg": "image",
 }
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB
 
 # MIME type hints (used for download Content-Type)
 FORMAT_CONTENT_TYPE: dict[str, str] = {
@@ -206,8 +207,13 @@ async def upload_document(
     await db.flush()
     await db.refresh(doc)
 
-    # Read file content and store
+    # Read file content with size check
     content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large ({len(content)} bytes). Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
+        )
     key = _storage_key(user.id, doc.id, ext)
 
     try:
@@ -237,6 +243,159 @@ async def upload_document(
         doc.filename, doc.id, doc.format, doc.file_size, doc.page_count,
     )
     return doc
+
+
+class UploadUrlRequest(BaseModel):
+    filename: str = Field(..., min_length=1)
+    content_type: str = Field(default="application/octet-stream")
+    size: int = Field(..., gt=0)
+
+
+class UploadUrlResponse(BaseModel):
+    upload_url: str
+    doc_id: str
+    storage_key: str
+    uses_signed_url: bool
+
+
+@router.post(
+    "/upload-url",
+    response_model=UploadUrlResponse,
+    summary="Get a signed upload URL for direct-to-storage upload",
+)
+async def get_upload_url(
+    body: UploadUrlRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    if body.size > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
+        )
+
+    fmt, ext = _detect_format(body.filename)
+
+    doc = Document(
+        filename=body.filename,
+        format=fmt,
+        owner_id=user.id,
+        status="uploading",
+    )
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+
+    key = _storage_key(user.id, doc.id, ext)
+    doc.file_path = key
+    doc.file_size = body.size
+    db.add(doc)
+    await db.flush()
+
+    if storage.supports_signed_urls:
+        signed_url = storage.get_signed_upload_url(key, body.content_type)
+        logger.info("Signed upload URL generated for doc %s (%s)", doc.id, body.filename)
+        return UploadUrlResponse(
+            upload_url=signed_url,
+            doc_id=doc.id,
+            storage_key=key,
+            uses_signed_url=True,
+        )
+    else:
+        return UploadUrlResponse(
+            upload_url=f"/api/documents/{doc.id}/upload-content",
+            doc_id=doc.id,
+            storage_key=key,
+            uses_signed_url=False,
+        )
+
+
+@router.post(
+    "/{doc_id}/upload-content",
+    response_model=DocumentResponse,
+    summary="Upload file content for a pre-created document (local storage fallback)",
+)
+async def upload_content(
+    doc_id: str,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.status != "uploading":
+        raise HTTPException(status_code=400, detail="Document is not awaiting upload")
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
+        )
+
+    try:
+        storage.save(doc.file_path, content)
+    except Exception as exc:
+        logger.error("Storage write failed for document %s: %s", doc.id, exc)
+        raise HTTPException(status_code=500, detail="Failed to store uploaded file")
+
+    doc.file_size = len(content)
+    doc.status = "uploaded"
+    page_count = _extract_page_count(content, doc.format)
+    if page_count is not None:
+        doc.page_count = page_count
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+    return doc
+
+
+@router.post(
+    "/{doc_id}/confirm-upload",
+    response_model=DocumentResponse,
+    summary="Confirm a direct-to-storage upload completed",
+)
+async def confirm_upload(
+    doc_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    result = await db.execute(
+        select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.status != "uploading":
+        raise HTTPException(status_code=400, detail="Document is not awaiting upload confirmation")
+
+    if not storage.exists(doc.file_path):
+        raise HTTPException(status_code=400, detail="File not found in storage. Upload may have failed.")
+
+    doc.status = "uploaded"
+    db.add(doc)
+    await db.flush()
+    await db.refresh(doc)
+
+    logger.info("Direct upload confirmed for doc %s (%s)", doc.id, doc.filename)
+    return doc
+
+
+@router.get(
+    "/upload-mode",
+    summary="Check whether direct upload is available",
+)
+async def get_upload_mode(
+    storage: StorageBackend = Depends(get_storage),
+):
+    return {"direct_upload": storage.supports_signed_urls}
 
 
 @router.get(

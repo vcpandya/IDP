@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -282,29 +282,32 @@ async def list_conversations(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    from sqlalchemy import func
     stmt = (
-        select(Conversation)
+        select(
+            Conversation,
+            func.count(ConversationMessage.id).label("msg_count"),
+        )
+        .outerjoin(
+            ConversationMessage,
+            ConversationMessage.conversation_id == Conversation.id,
+        )
         .where(Conversation.owner_id == user.id)
+        .group_by(Conversation.id)
         .order_by(Conversation.updated_at.desc())
         .limit(50)
     )
-    rows = (await db.execute(stmt)).scalars().all()
-    out = []
-    for c in rows:
-        # Count messages efficiently
-        msg_count_stmt = (
-            select(ConversationMessage.id)
-            .where(ConversationMessage.conversation_id == c.id)
-        )
-        msg_count = len((await db.execute(msg_count_stmt)).all())
-        out.append(ConversationInfo(
+    rows = (await db.execute(stmt)).all()
+    return [
+        ConversationInfo(
             id=c.id,
             title=c.title,
             created_at=c.created_at.isoformat(),
             updated_at=c.updated_at.isoformat(),
             message_count=msg_count,
-        ))
-    return out
+        )
+        for c, msg_count in rows
+    ]
 
 
 @router.post(
@@ -419,12 +422,16 @@ async def delete_conversation(
 # Chat Route (updated with conversation persistence)
 # ---------------------------------------------------------------------------
 
+from idpkit.api.deps import limiter
+
 @router.post(
     "/chat",
     response_model=ChatResponse,
     summary="Chat with the IDP Agent",
 )
+@limiter.limit("30/minute")
 async def agent_chat(
+    request: Request,
     body: ChatRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -498,7 +505,7 @@ async def agent_chat(
         logger.error("Agent chat failed for user %s: %s", user.id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Agent processing failed: {exc}",
+            detail="Agent processing failed",
         )
 
     tool_calls_log = result.get("tool_calls", [])
