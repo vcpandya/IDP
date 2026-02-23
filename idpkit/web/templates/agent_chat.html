@@ -4,7 +4,7 @@
 <div class="page-header">
     <h2><i class="fas fa-brain"></i> IDA — Intelligent Document Assistant</h2>
 </div>
-<div class="chat-container" x-data="agentChat()" @click.away="showAttachPopover = false; showTagMention = false">
+<div class="chat-container" x-data="agentChat()" @click.away="showTagMention = false">
     <div class="chat-sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
         <!-- Conversations only -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -119,30 +119,9 @@
             </div>
             <div class="chat-input" style="position:relative">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
-                <!-- Paperclip with attach popover -->
-                <div style="position:relative">
-                    <button class="btn-upload" @click.stop="showAttachPopover = !showAttachPopover" title="Attach files" :disabled="loading">
-                        <i class="fas fa-paperclip"></i>
-                    </button>
-                    <div class="attach-popover" x-show="showAttachPopover" x-cloak @click.stop>
-                        <button class="attach-upload-btn" @click="document.getElementById('chatFileInput').click(); showAttachPopover = false">
-                            <i class="fas fa-upload"></i> Upload new file
-                        </button>
-                        <div class="attach-search" x-show="documents.length > 5">
-                            <input type="text" x-model="docFilter" placeholder="Search documents..." @click.stop>
-                        </div>
-                        <div class="attach-doc-list">
-                            <template x-for="doc in filteredAttachDocs()" :key="doc.id">
-                                <label class="attach-doc-item" @click.stop>
-                                    <input type="checkbox" :value="doc.id" x-model="selectedDocs">
-                                    <span class="attach-doc-name" x-text="doc.filename"></span>
-                                    <span class="badge" x-text="doc.format" style="font-size:0.65rem;padding:1px 5px"></span>
-                                </label>
-                            </template>
-                            <div x-show="filteredAttachDocs().length === 0" style="padding:8px;font-size:0.8rem;color:var(--text-muted);text-align:center">No documents found</div>
-                        </div>
-                    </div>
-                </div>
+                <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
+                    <i class="fas fa-paperclip"></i>
+                </button>
                 <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (type @ for tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
@@ -186,6 +165,82 @@
             </div>
         </template>
     </div>
+
+    <!-- Attach Modal -->
+    <div class="attach-modal-overlay" x-show="showAttachModal" x-cloak @click.self="closeAttachModal()" x-transition.opacity>
+        <div class="attach-modal" @click.stop>
+            <div class="attach-modal-header">
+                <h3><i class="fas fa-paperclip"></i> Attach Documents</h3>
+                <button class="btn-close" @click="closeAttachModal()">&times;</button>
+            </div>
+            <div class="attach-modal-tabs">
+                <button class="attach-tab" :class="attachTab === 'select' && 'active'" @click="attachTab = 'select'">
+                    <i class="fas fa-folder-open"></i> Select Existing
+                </button>
+                <button class="attach-tab" :class="attachTab === 'upload' && 'active'" @click="attachTab = 'upload'">
+                    <i class="fas fa-cloud-upload-alt"></i> Upload New
+                </button>
+            </div>
+            <div class="attach-modal-body">
+                <!-- Select existing tab -->
+                <div x-show="attachTab === 'select'">
+                    <div class="attach-modal-search">
+                        <i class="fas fa-search"></i>
+                        <input type="text" x-model="docFilter" placeholder="Search by filename..." x-ref="attachSearch">
+                    </div>
+                    <div class="attach-modal-select-info">
+                        <span x-text="modalSelectedDocs.length + ' selected'"></span>
+                        <button x-show="modalSelectedDocs.length > 0" class="attach-clear-btn" @click="modalSelectedDocs = []">Clear all</button>
+                    </div>
+                    <div class="attach-modal-list">
+                        <template x-for="doc in filteredAttachDocs()" :key="doc.id">
+                            <label class="attach-modal-item" :class="modalSelectedDocs.includes(doc.id) && 'selected'">
+                                <input type="checkbox" :value="doc.id" x-model="modalSelectedDocs">
+                                <div class="attach-modal-item-info">
+                                    <span class="attach-modal-item-name" x-text="doc.filename"></span>
+                                    <span class="attach-modal-item-meta">
+                                        <span class="badge" x-text="doc.format" style="font-size:0.65rem;padding:1px 5px"></span>
+                                        <span class="badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:0.65rem;padding:1px 5px"></span>
+                                        <span x-show="doc.page_count" x-text="doc.page_count + ' pages'" style="font-size:0.7rem;color:var(--text-muted)"></span>
+                                    </span>
+                                </div>
+                            </label>
+                        </template>
+                        <div x-show="filteredAttachDocs().length === 0" class="attach-modal-empty">
+                            <i class="fas fa-inbox"></i>
+                            <span>No documents found</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Upload tab -->
+                <div x-show="attachTab === 'upload'">
+                    <div class="attach-upload-zone" @click="document.getElementById('chatFileInput').click()"
+                         @dragover.prevent="attachDragOver = true" @dragleave.prevent="attachDragOver = false"
+                         @drop.prevent="attachDragOver = false; handleChatUpload($event)"
+                         :class="attachDragOver && 'drag-over'">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Click to browse or drag files here</p>
+                        <span>PDF, DOCX, PPTX, HTML, TXT</span>
+                    </div>
+                    <div x-show="uploadFiles.length > 0" class="attach-upload-list">
+                        <template x-for="(uf, idx) in uploadFiles" :key="'modal-uf-'+idx">
+                            <div class="attach-upload-item" :class="uf.status">
+                                <i :class="uf.status === 'ready' ? 'fas fa-check-circle' : uf.status === 'failed' ? 'fas fa-times-circle' : 'fas fa-spinner fa-spin'"></i>
+                                <span x-text="uf.filename"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="closeAttachModal()">Cancel</button>
+                <button class="btn btn-primary" @click="confirmAttachModal()">
+                    <i class="fas fa-check"></i>
+                    Attach <span x-show="modalSelectedDocs.length > 0" x-text="'(' + modalSelectedDocs.length + ')'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 <script>
 function agentChat() {
@@ -199,7 +254,10 @@ function agentChat() {
         currentConversationId: null,
         sidebarOpen: true,
         convSearch: '',
-        showAttachPopover: false,
+        showAttachModal: false,
+        attachTab: 'select',
+        attachDragOver: false,
+        modalSelectedDocs: [],
         docFilter: '',
         showTagMention: false,
         tagMentionFilter: '',
@@ -232,6 +290,22 @@ function agentChat() {
         getDocName(docId) {
             const d = this.documents.find(x => x.id === docId);
             return d ? d.filename : docId.substring(0, 8) + '...';
+        },
+        openAttachModal() {
+            this.modalSelectedDocs = [...this.selectedDocs];
+            this.docFilter = '';
+            this.attachTab = 'select';
+            this.showAttachModal = true;
+            this.$nextTick(() => { if (this.$refs.attachSearch) this.$refs.attachSearch.focus(); });
+        },
+        closeAttachModal() {
+            this.showAttachModal = false;
+            this.docFilter = '';
+        },
+        confirmAttachModal() {
+            this.selectedDocs = [...this.modalSelectedDocs];
+            this.showAttachModal = false;
+            this.docFilter = '';
         },
         handleInputChange(event) {
             const val = this.input;
@@ -298,7 +372,7 @@ function agentChat() {
             } catch(e) {}
         },
         async handleChatUpload(event) {
-            const files = event.target.files;
+            const files = event.target?.files || event.dataTransfer?.files;
             if (!files || files.length === 0) return;
             for (const file of files) {
                 const entry = { file, docId: null, status: 'uploading', filename: file.name };
@@ -325,6 +399,9 @@ function agentChat() {
                                 entry.status = 'ready';
                                 if (!this.selectedDocs.includes(doc.id)) {
                                     this.selectedDocs.push(doc.id);
+                                }
+                                if (this.showAttachModal && !this.modalSelectedDocs.includes(doc.id)) {
+                                    this.modalSelectedDocs.push(doc.id);
                                 }
                                 break;
                             } else if (st === 'failed') {

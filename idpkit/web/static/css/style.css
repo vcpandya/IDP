@@ -1893,88 +1893,283 @@ tbody tr:hover { background: var(--border-light); }
     font-weight: 500;
 }
 
-/* ========== Attach Popover ========== */
-.attach-popover {
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    width: 280px;
-    max-height: 340px;
-    background: var(--bg-white);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow-lg);
-    z-index: 60;
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 6px;
-}
-
-.attach-upload-btn {
+/* ========== Attach Modal ========== */
+.attach-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 200;
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 10px 14px;
-    background: none;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    font-size: 0.85rem;
-    color: var(--primary);
-    font-weight: 500;
-    transition: background var(--transition);
+    justify-content: center;
 }
 
-.attach-upload-btn:hover {
-    background: var(--primary-light);
+.attach-modal {
+    background: var(--bg-white);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+    width: 520px;
+    max-width: 92vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    animation: modalSlideIn 0.2s ease-out;
 }
 
-.attach-search {
-    padding: 6px 8px;
+@keyframes modalSlideIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.attach-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 12px;
     border-bottom: 1px solid var(--border-light);
 }
 
-.attach-search input {
+.attach-modal-header h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.attach-modal-header h3 i {
+    color: var(--primary);
+}
+
+.attach-modal-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border-light);
+    padding: 0 20px;
+}
+
+.attach-tab {
+    flex: 1;
+    padding: 10px 0;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all var(--transition);
+}
+
+.attach-tab:hover {
+    color: var(--primary);
+}
+
+.attach-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.attach-modal-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 12px 20px 0;
+    min-height: 280px;
+}
+
+.attach-modal-search {
+    position: relative;
+    margin-bottom: 10px;
+}
+
+.attach-modal-search i {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.attach-modal-search input {
     width: 100%;
-    padding: 6px 10px;
+    padding: 8px 10px 8px 32px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
+    background: var(--bg);
+    box-sizing: border-box;
+}
+
+.attach-modal-search input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.attach-modal-select-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 2px 8px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.attach-clear-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--primary);
+    font-size: 0.78rem;
+    font-weight: 500;
+    padding: 0;
+}
+
+.attach-clear-btn:hover {
+    text-decoration: underline;
+}
+
+.attach-modal-list {
+    overflow-y: auto;
+    max-height: 240px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.attach-modal-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 0.84rem;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all var(--transition);
+}
+
+.attach-modal-item:hover {
     background: var(--bg);
 }
 
-.attach-search input:focus {
-    outline: none;
+.attach-modal-item.selected {
+    background: var(--primary-light);
     border-color: var(--primary);
 }
 
-.attach-doc-list {
-    overflow-y: auto;
-    max-height: 240px;
-    padding: 4px;
+.attach-modal-item input[type="checkbox"] {
+    accent-color: var(--primary);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
 }
 
-.attach-doc-item {
+.attach-modal-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.attach-modal-item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+.attach-modal-item-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.attach-modal-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 40px 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.attach-modal-empty i {
+    font-size: 1.6rem;
+}
+
+.attach-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 40px 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all var(--transition);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.attach-upload-zone i {
+    font-size: 2rem;
+    color: var(--primary);
+}
+
+.attach-upload-zone p {
+    margin: 0;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
+.attach-upload-zone span {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.attach-upload-zone:hover,
+.attach-upload-zone.drag-over {
+    border-color: var(--primary);
+    background: var(--primary-light);
+}
+
+.attach-upload-list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.attach-upload-item {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border-radius: 4px;
     font-size: 0.82rem;
-    cursor: pointer;
+    border-radius: 4px;
+    background: var(--bg);
 }
 
-.attach-doc-item:hover {
-    background: var(--border-light);
-}
+.attach-upload-item.ready i { color: var(--success); }
+.attach-upload-item.failed i { color: var(--danger); }
+.attach-upload-item.uploading i { color: var(--primary); }
 
-.attach-doc-name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
+.attach-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-light);
 }
 
 /* ========== @Mention Tag Dropdown ========== */
