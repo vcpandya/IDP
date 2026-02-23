@@ -7,15 +7,19 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import re
+
 from idpkit.core.llm import LLMClient
 from .models import Entity, EntityMention, GraphEdge
 from .prompts import (
+    DEFAULT_ENTITY_TYPES,
     ENTITY_EXTRACTION_PROMPT,
-    VALID_ENTITY_TYPES,
     VALID_RELATION_TYPES,
     _sanitize_for_prompt,
 )
 from .schemas import ExtractedEntity, ExtractedRelation, NodeExtractionResult
+
+_ENTITY_TYPE_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,48}[A-Z0-9]$")
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +78,11 @@ def _parse_extraction_response(content: str) -> NodeExtractionResult:
     for e in data.get("entities", [])[:_MAX_ENTITIES_PER_BATCH]:
         try:
             extracted = ExtractedEntity(**e)
-            # Validate entity type — normalize or skip invalid ones
-            normalized_type = extracted.entity_type.upper().strip()
-            if normalized_type not in VALID_ENTITY_TYPES:
-                logger.debug("Skipping entity with invalid type: %s", normalized_type)
+            normalized_type = extracted.entity_type.upper().strip().replace(" ", "_")
+            if not normalized_type or not _ENTITY_TYPE_RE.match(normalized_type):
+                logger.debug("Skipping entity with invalid type format: %s", normalized_type)
                 continue
             extracted.entity_type = normalized_type
-            # Truncate fields to prevent oversized storage
             extracted.name = extracted.name[:500]
             extracted.description = extracted.description[:2000]
             extracted.aliases = [a[:200] for a in extracted.aliases[:20]]
@@ -103,17 +105,29 @@ def _parse_extraction_response(content: str) -> NodeExtractionResult:
     return NodeExtractionResult(entities=entities, relations=relations)
 
 
+async def _get_existing_entity_types(db: AsyncSession) -> set[str]:
+    """Query distinct entity types already in the database."""
+    from sqlalchemy import distinct
+    stmt = select(distinct(Entity.entity_type))
+    result = await db.execute(stmt)
+    return {row[0] for row in result.all() if row[0]}
+
+
 async def _extract_from_batch(
     nodes: list[dict],
     llm: LLMClient,
     model: str | None = None,
+    entity_types: str = "",
 ) -> NodeExtractionResult:
     """Run entity extraction on a batch of tree nodes via LLM."""
     sections_text = _format_sections_for_extraction(nodes)
     if not sections_text.strip():
         return NodeExtractionResult()
 
-    prompt = ENTITY_EXTRACTION_PROMPT.format(sections_text=sections_text)
+    prompt = ENTITY_EXTRACTION_PROMPT.format(
+        sections_text=sections_text,
+        entity_types=entity_types,
+    )
 
     try:
         response = await llm.acomplete(prompt, model=model)
@@ -197,13 +211,18 @@ async def build_document_graph(
         )
         content_nodes = content_nodes[:_MAX_CONTENT_NODES]
 
+    # --- Step 0: Build cumulative entity type bank ---
+    existing_types = await _get_existing_entity_types(db)
+    all_types = sorted(existing_types | DEFAULT_ENTITY_TYPES)
+    entity_types_str = ", ".join(all_types)
+
     # --- Step 1: Extract entities in batches ---
     all_extracted: list[tuple[ExtractedEntity, str, dict]] = []
     all_relations: list[ExtractedRelation] = []
 
     for i in range(0, len(content_nodes), _BATCH_SIZE):
         batch = content_nodes[i : i + _BATCH_SIZE]
-        result = await _extract_from_batch(batch, llm, model)
+        result = await _extract_from_batch(batch, llm, model, entity_types=entity_types_str)
 
         # Associate each entity with the first node in the batch
         # (a simplification — the LLM saw all batch nodes together)

@@ -31,6 +31,19 @@ router = APIRouter(prefix="/api/graph", tags=["graph"])
 # -------------------------------------------------------------------------
 
 
+@router.get("/entity-types", response_model=list[str], summary="List entity types")
+async def list_entity_types(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all distinct entity types currently in the database."""
+    from sqlalchemy import distinct, select as sa_select
+    from idpkit.graph.models import Entity as EntityModel
+    stmt = sa_select(distinct(EntityModel.entity_type)).order_by(EntityModel.entity_type)
+    result = await db.execute(stmt)
+    return [row[0] for row in result.all() if row[0]]
+
+
 @router.get("/entities", response_model=list[EntitySchema], summary="Search entities")
 async def search_entities(
     name: str | None = Query(None, description="Filter by name (partial match)"),
