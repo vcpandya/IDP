@@ -1,12 +1,13 @@
 """IDP Kit YouTube API routes — ingest videos, playlists, and channels."""
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.session import get_db, async_session
@@ -26,6 +27,7 @@ class YouTubeIngestRequest(BaseModel):
     auto_index: bool = Field(True, description="Auto-trigger indexing after transcript extraction")
     auto_tag: bool = Field(False, description="Run AI auto-tagging after processing")
     tag_id: Optional[str] = Field(None, description="Assign to existing tag")
+    default_tag_name: Optional[str] = Field(None, description="Auto-create or reuse a tag with this name (for channel/playlist grouping)")
 
 
 class YouTubeIngestResponse(BaseModel):
@@ -40,6 +42,7 @@ class YouTubePreviewResponse(BaseModel):
     url_type: str
     video_count: int
     videos: list[dict]
+    source_name: str = ""
 
 
 @router.post(
@@ -85,6 +88,7 @@ async def preview_url(
         url_type=resolved["type"],
         video_count=resolved["total"],
         videos=preview_videos,
+        source_name=resolved.get("source_name", ""),
     )
 
 
@@ -116,9 +120,28 @@ async def ingest_youtube(
         if not resolved["videos"]:
             raise HTTPException(status_code=400, detail="None of the selected video IDs were found in the resolved URL")
 
-    if body.tag_id:
+    tag_id = body.tag_id
+    if not tag_id and body.default_tag_name:
+        clean_name = re.sub(r'[^\w\s-]', '', body.default_tag_name).strip()
+        if clean_name:
+            existing = await db.execute(
+                select(Tag).where(
+                    func.lower(Tag.name) == clean_name.lower(),
+                    Tag.owner_id == user.id,
+                )
+            )
+            tag = existing.scalar_one_or_none()
+            if tag:
+                tag_id = tag.id
+            else:
+                tag = Tag(name=clean_name, owner_id=user.id, color="#ff0000")
+                db.add(tag)
+                await db.flush()
+                tag_id = tag.id
+
+    if tag_id:
         tag_result = await db.execute(
-            select(Tag).where(Tag.id == body.tag_id, Tag.owner_id == user.id)
+            select(Tag).where(Tag.id == tag_id, Tag.owner_id == user.id)
         )
         if not tag_result.scalar_one_or_none():
             raise HTTPException(status_code=404, detail="Tag not found")
@@ -132,7 +155,7 @@ async def ingest_youtube(
             "video_count": resolved["total"],
             "auto_index": body.auto_index,
             "auto_tag": body.auto_tag,
-            "tag_id": body.tag_id,
+            "tag_id": tag_id,
         },
     )
     db.add(job)
@@ -146,7 +169,7 @@ async def ingest_youtube(
         resolved=resolved,
         auto_index=body.auto_index,
         auto_tag=body.auto_tag,
-        tag_id=body.tag_id,
+        tag_id=tag_id,
     )
 
     return YouTubeIngestResponse(

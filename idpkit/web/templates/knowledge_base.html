@@ -228,11 +228,20 @@
             </div>
             <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px">
                 <span class="badge" x-text="ytPreviewType === 'playlist' ? 'Playlist' : 'Channel'" style="text-transform:capitalize"></span>
+                <span x-show="ytSourceName" style="font-size:0.85rem;font-weight:500" x-text="ytSourceName"></span>
                 <span class="text-muted" style="font-size:0.85rem" x-text="ytFilteredVideos.length + ' of ' + ytPreviewVideos.length + ' videos'"></span>
                 <div style="margin-left:auto;display:flex;gap:6px">
                     <button class="btn btn-sm" @click="ytSelectFiltered(true)">Select Shown</button>
                     <button class="btn btn-sm" @click="ytSelectFiltered(false)">Deselect Shown</button>
                 </div>
+            </div>
+            <div x-show="ytDefaultTagName && !ytPendingTagId" style="padding:8px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg-secondary,#f9fafb)">
+                <i class="fas fa-tag" style="color:#ff0000;font-size:0.8rem"></i>
+                <span style="font-size:0.8rem">Tag:</span>
+                <span style="font-size:0.8rem;font-weight:500;background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:10px" x-text="ytDefaultTagName"></span>
+                <label class="checkbox-label" style="font-size:0.75rem;margin-left:auto">
+                    <input type="checkbox" x-model="ytApplyDefaultTag"> Apply tag
+                </label>
             </div>
             <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--bg-secondary,#f9fafb)">
                 <input type="text" x-model="ytFilterSearch" placeholder="Search titles..."
@@ -361,6 +370,9 @@ function knowledgeBase() {
         ytFilterDateFrom: '',
         ytFilterDateTo: '',
         ytFilterLatestN: 0,
+        ytSourceName: '',
+        ytDefaultTagName: '',
+        ytApplyDefaultTag: true,
 
         async init() { await this.loadData(); },
 
@@ -515,6 +527,9 @@ function knowledgeBase() {
                     this.ytPreviewVideos = preview.videos.map(v => ({ ...v, selected: true }));
                     this.ytPreviewType = preview.url_type;
                     this.ytPendingTagId = tagId || null;
+                    this.ytSourceName = preview.source_name || '';
+                    this.ytDefaultTagName = (preview.source_name || '').replace(/[^\w\s-]/g, '').trim();
+                    this.ytApplyDefaultTag = true;
                     this.ytClearFilters();
                     this.showYtSelectModal = true;
                     this.ytStatus = '';
@@ -531,16 +546,18 @@ function knowledgeBase() {
             const selected = this.ytPreviewVideos.filter(v => v.selected).map(v => v.video_id);
             if (!selected.length) return;
             this.showYtSelectModal = false;
-            await this._runYouTubeIngest(this.youtubeUrl.trim(), selected, this.ytPendingTagId);
+            const defaultTag = (this.ytApplyDefaultTag && this.ytDefaultTagName) ? this.ytDefaultTagName : null;
+            await this._runYouTubeIngest(this.youtubeUrl.trim(), selected, this.ytPendingTagId, defaultTag);
         },
 
-        async _runYouTubeIngest(url, videoIds, tagId) {
+        async _runYouTubeIngest(url, videoIds, tagId, defaultTagName) {
             this.ytIngesting = true;
             this.ytStatus = `Importing ${videoIds ? videoIds.length : 1} video(s)...`;
             this.ytStatusClass = 'text-info';
             try {
                 const payload = { url, auto_index: true, auto_tag: this.ytAutoTag, tag_id: tagId || null };
                 if (videoIds) payload.video_ids = videoIds;
+                if (defaultTagName && !tagId) payload.default_tag_name = defaultTagName;
 
                 const res = await fetch('/api/youtube/ingest', {
                     method: 'POST',
