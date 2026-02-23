@@ -59,6 +59,12 @@ content from documents using a comprehensive toolkit.
   - **smart_merge** — merge content from multiple documents
   - **smart_audit** — audit documents for compliance, completeness, or quality
 
+### Web Search & URL Fetching (Jina AI)
+- **web_search**: Search the web for real-time information — news, facts, current events,
+  external data not in the user's documents. Optionally restrict to a specific domain.
+- **fetch_url**: Fetch and read the full content of a web page URL as clean text.
+  Use after web_search to get detailed content from a specific result.
+
 ### Multi-Document Composition
 - **compose_with_context**: Compose a document or response using multiple documents
   in different roles (primary, context, reference). Use for drafting responses,
@@ -112,6 +118,10 @@ Never silently skip searching an in-scope document.
 8. When asked to generate a report, use generate_report.
 9. When asked to process multiple documents at once, use run_batch.
 10. For complex multi-document tasks, follow the Guided Workflow above.
+11. When the user asks about current events, real-time data, or information not in their
+    documents, use web_search to find it. Use fetch_url to read full page content.
+12. Always distinguish between information from the user's documents vs. web search results.
+    Clearly label web-sourced information with the source URL.
 """
 
 

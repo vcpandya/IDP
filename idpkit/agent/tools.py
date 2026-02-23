@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -320,6 +321,54 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["task", "primary_doc_ids"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the web for real-time information using Jina Search API. "
+                "Returns top search results with titles, URLs, and content snippets. "
+                "Use this to find current facts, recent events, or external data "
+                "that is not in the user's uploaded documents."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query describing what to find on the web.",
+                    },
+                    "site": {
+                        "type": "string",
+                        "description": "Optional: restrict search to a specific domain (e.g. 'wikipedia.org').",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": (
+                "Fetch and read the content of a web page URL. Returns the page "
+                "content as clean, readable text (Markdown). Use this after "
+                "web_search to get the full content of a specific search result, "
+                "or to read any publicly accessible URL the user provides."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to fetch (e.g. 'https://example.com/page').",
+                    },
+                },
+                "required": ["url"],
             },
         },
     },
@@ -1172,6 +1221,131 @@ async def _execute_compose_with_context(
 
 
 # ======================================================================
+# Jina web search / fetch tools
+# ======================================================================
+
+_JINA_SEARCH_URL = "https://s.jina.ai/"
+_JINA_READER_URL = "https://r.jina.ai/"
+_JINA_TIMEOUT = 30
+_JINA_MAX_CONTENT_LEN = 8000
+
+
+def _get_jina_api_key() -> str | None:
+    return os.getenv("JINA_API_KEY")
+
+
+async def _execute_web_search(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    import httpx
+
+    query = args.get("query", "").strip()
+    if not query:
+        return {"error": "Search query is required."}
+
+    api_key = _get_jina_api_key()
+    if not api_key:
+        return {"error": "Web search is not configured. JINA_API_KEY is not set."}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-No-Cache": "true",
+    }
+
+    site = args.get("site")
+    if site:
+        headers["X-Site"] = site
+
+    try:
+        async with httpx.AsyncClient(timeout=_JINA_TIMEOUT) as client:
+            resp = await client.post(
+                _JINA_SEARCH_URL,
+                headers=headers,
+                json={"q": query},
+            )
+
+        if resp.status_code != 200:
+            logger.warning("Jina search returned %d: %s", resp.status_code, resp.text[:200])
+            return {"error": f"Web search failed (status {resp.status_code})."}
+
+        data = resp.json()
+        results = []
+        for item in (data.get("data") or [])[:5]:
+            content = (item.get("content") or "")[:_JINA_MAX_CONTENT_LEN]
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "description": item.get("description", ""),
+                "content": content,
+            })
+
+        return {
+            "query": query,
+            "result_count": len(results),
+            "results": results,
+        }
+
+    except Exception as exc:
+        logger.error("web_search failed: %s", exc)
+        return {"error": "Web search request failed. Please try again."}
+
+
+async def _execute_fetch_url(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    import httpx
+
+    url = args.get("url", "").strip()
+    if not url:
+        return {"error": "URL is required."}
+
+    if not url.startswith(("http://", "https://")):
+        return {"error": "URL must start with http:// or https://"}
+
+    api_key = _get_jina_api_key()
+    if not api_key:
+        return {"error": "URL fetching is not configured. JINA_API_KEY is not set."}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+        "X-No-Cache": "true",
+    }
+
+    try:
+        reader_url = f"{_JINA_READER_URL}{url}"
+        async with httpx.AsyncClient(timeout=_JINA_TIMEOUT) as client:
+            resp = await client.get(reader_url, headers=headers)
+
+        if resp.status_code != 200:
+            logger.warning("Jina reader returned %d for %s", resp.status_code, url)
+            return {"error": f"Failed to fetch URL (status {resp.status_code})."}
+
+        content_type = resp.headers.get("content-type", "")
+        if "application/json" in content_type:
+            data = resp.json()
+            page_data = data.get("data", {})
+            content = (page_data.get("content") or "")[:_JINA_MAX_CONTENT_LEN * 2]
+            title = page_data.get("title", "")
+        else:
+            content = resp.text[:_JINA_MAX_CONTENT_LEN * 2]
+            title = ""
+
+        return {
+            "url": url,
+            "title": title,
+            "content": content,
+            "content_length": len(content),
+        }
+
+    except Exception as exc:
+        logger.error("fetch_url failed for %s: %s", url, exc)
+        return {"error": "Failed to fetch URL. Please try again."}
+
+
+# ======================================================================
 # Dispatcher
 # ======================================================================
 
@@ -1186,6 +1360,8 @@ _EXECUTORS: dict[str, Any] = {
     "generate_report": _execute_generate_report,
     "run_batch": _execute_run_batch,
     "compose_with_context": _execute_compose_with_context,
+    "web_search": _execute_web_search,
+    "fetch_url": _execute_fetch_url,
 }
 
 

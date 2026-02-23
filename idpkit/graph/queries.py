@@ -416,3 +416,61 @@ async def get_visualization_data(
             })
 
     return {"nodes": vis_nodes, "edges": vis_edges}
+
+
+async def get_multi_doc_visualization_data(
+    db: AsyncSession,
+    document_ids: list[str],
+    limit: int = 300,
+) -> dict:
+    """Generate nodes+edges JSON for D3 visualization across multiple documents."""
+    if not document_ids:
+        return {"nodes": [], "edges": []}
+
+    capped_ids = document_ids[:20]
+
+    stmt_entities = (
+        select(Entity)
+        .join(EntityMention, Entity.id == EntityMention.entity_id)
+        .where(EntityMention.document_id.in_(capped_ids))
+        .distinct()
+        .limit(min(limit, 500))
+    )
+    entities = list((await db.execute(stmt_entities)).scalars().all())
+
+    entity_ids = {e.id for e in entities}
+    if not entity_ids:
+        return {"nodes": [], "edges": []}
+
+    stmt_edges = (
+        select(GraphEdge)
+        .where(
+            or_(
+                GraphEdge.source_document_id.in_(capped_ids),
+                GraphEdge.target_document_id.in_(capped_ids),
+            )
+        )
+        .limit(min(limit * 2, 1000))
+    )
+    edges = list((await db.execute(stmt_edges)).scalars().all())
+
+    vis_nodes = []
+    for e in entities:
+        vis_nodes.append({
+            "id": e.id,
+            "label": e.canonical_name,
+            "type": e.entity_type,
+            "document_id": e.first_document_id,
+        })
+
+    vis_edges = []
+    for edge in edges:
+        if edge.source_entity_id in entity_ids and edge.target_entity_id in entity_ids:
+            vis_edges.append({
+                "source": edge.source_entity_id,
+                "target": edge.target_entity_id,
+                "relation_type": edge.relation_type,
+                "weight": edge.weight or 1,
+            })
+
+    return {"nodes": vis_nodes, "edges": vis_edges}

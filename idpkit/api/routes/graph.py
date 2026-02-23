@@ -2,6 +2,7 @@
 
 import logging
 
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -243,6 +244,59 @@ async def get_doc_visualization(
     from idpkit.graph.queries import get_visualization_data
 
     data = await get_visualization_data(db, doc_id)
+    return VisualizationData(
+        nodes=[VisualizationNode(**n) for n in data["nodes"]],
+        edges=[VisualizationEdge(**e) for e in data["edges"]],
+    )
+
+
+@router.get(
+    "/visualization",
+    response_model=VisualizationData,
+    summary="Multi-document graph visualization",
+)
+async def get_multi_doc_visualization(
+    doc_ids: Optional[str] = Query(None, description="Comma-separated document IDs"),
+    tag_id: Optional[str] = Query(None, description="Tag ID to load all tagged documents"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get visualization data across multiple documents or a tag group."""
+    from sqlalchemy import select as sa_select
+    from idpkit.db.models import Tag
+    from idpkit.graph.queries import get_multi_doc_visualization_data
+
+    resolved_ids: list[str] = []
+
+    if tag_id:
+        from sqlalchemy.orm import selectinload
+        tag = (await db.execute(
+            sa_select(Tag)
+            .options(selectinload(Tag.documents))
+            .where(Tag.id == tag_id, Tag.owner_id == user.id)
+        )).scalar_one_or_none()
+        if tag:
+            resolved_ids = [d.id for d in tag.documents if d.status == "indexed"]
+
+    if doc_ids:
+        extra_ids = [did.strip() for did in doc_ids.split(",") if did.strip()]
+        if extra_ids:
+            owned_docs = (await db.execute(
+                sa_select(Document.id).where(
+                    Document.id.in_(extra_ids),
+                    Document.owner_id == user.id,
+                    Document.status == "indexed",
+                )
+            )).scalars().all()
+            owned_set = set(owned_docs)
+            for did in extra_ids:
+                if did in owned_set and did not in resolved_ids:
+                    resolved_ids.append(did)
+
+    if not resolved_ids:
+        return VisualizationData(nodes=[], edges=[])
+
+    data = await get_multi_doc_visualization_data(db, resolved_ids)
     return VisualizationData(
         nodes=[VisualizationNode(**n) for n in data["nodes"]],
         edges=[VisualizationEdge(**e) for e in data["edges"]],
