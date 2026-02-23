@@ -13,3 +13,9 @@ log/*
 logs/
 parts/*
 json_results/*
+.claude/
+*.db
+*.egg-info/
+*.tmp.*
+dist/
+build/

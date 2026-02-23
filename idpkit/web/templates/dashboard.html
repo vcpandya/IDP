@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-th-large"></i> Dashboard</h2>
+    <a href="/upload" class="btn btn-primary"><i class="fas fa-plus"></i> Upload Document</a>
+</div>
+
+<div class="stats-grid" id="stats" hx-get="/api/documents?limit=1" hx-trigger="load" hx-swap="none"
+     x-data="dashboard()" x-init="loadDocuments()">
+
+    <div class="stat-card">
+        <div class="stat-icon"><i class="fas fa-file-alt"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" x-text="documents.length"></span>
+            <span class="stat-label">Documents</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon indexed"><i class="fas fa-tree"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" x-text="documents.filter(d => d.status === 'indexed').length"></span>
+            <span class="stat-label">Indexed</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon processing"><i class="fas fa-spinner"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" x-text="documents.filter(d => d.status === 'indexing').length"></span>
+            <span class="stat-label">Processing</span>
+        </div>
+    </div>
+
+    <div class="documents-table">
+        <h3>Recent Documents</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Format</th>
+                    <th>Status</th>
+                    <th>Uploaded</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="doc in documents" :key="doc.id">
+                    <tr>
+                        <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
+                        <td><span class="badge" x-text="doc.format"></span></td>
+                        <td>
+                            <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
+                        </td>
+                        <td x-text="new Date(doc.created_at).toLocaleDateString()"></td>
+                        <td class="actions">
+                            <a :href="'/documents/' + doc.id" class="btn btn-sm" title="View">
+                                <i class="fas fa-eye"></i>
+                            </a>
+                            <button @click="indexDoc(doc.id)" class="btn btn-sm btn-primary"
+                                    x-show="doc.status === 'uploaded' || doc.status === 'failed'" title="Index">
+                                <i class="fas fa-tree"></i>
+                            </button>
+                            <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger" title="Delete">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                </template>
+                <tr x-show="documents.length === 0">
+                    <td colspan="5" class="empty-state">
+                        No documents yet. <a href="/upload">Upload your first document</a>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function dashboard() {
+    return {
+        documents: [],
+        async loadDocuments() {
+            const res = await fetch('/api/documents/?limit=50');
+            if (res.ok) {
+                const data = await res.json();
+                this.documents = data.documents || [];
+            }
+        },
+        async indexDoc(docId) {
+            await fetch(`/api/indexing/documents/${docId}/index`, { method: 'POST' });
+            this.loadDocuments();
+        },
+        async deleteDoc(docId) {
+            if (!confirm('Delete this document?')) return;
+            await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+            this.loadDocuments();
+        }
+    }
+}
+</script>
+{% endblock %}

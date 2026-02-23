@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Register - IDP Kit{% endblock %}
+{% block auth_content %}
+<div class="auth-container" x-data="registerForm()">
+    <div class="auth-card">
+        <div class="auth-header">
+            <h1><i class="fas fa-file-alt"></i> IDP Kit</h1>
+            <p>Create your account</p>
+        </div>
+        <form @submit.prevent="submit">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" x-model="username" required autofocus placeholder="Choose username">
+            </div>
+            <div class="form-group">
+                <label>Email (optional)</label>
+                <input type="email" x-model="email" placeholder="you@example.com">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" x-model="password" required minlength="6" placeholder="Min 6 characters">
+            </div>
+            <div x-show="error" class="alert alert-error" x-text="error"></div>
+            <div x-show="success" class="alert alert-success" x-text="success"></div>
+            <button type="submit" class="btn btn-primary btn-full" :disabled="loading">
+                <span x-show="!loading">Create Account</span>
+                <span x-show="loading"><i class="fas fa-spinner fa-spin"></i></span>
+            </button>
+        </form>
+        <p class="auth-link">Already have an account? <a href="/login">Sign in</a></p>
+    </div>
+</div>
+<script>
+function registerForm() {
+    return {
+        username: '', email: '', password: '', error: '', success: '', loading: false,
+        async submit() {
+            this.loading = true; this.error = ''; this.success = '';
+            try {
+                const body = {username: this.username, password: this.password};
+                if (this.email) body.email = this.email;
+                const res = await fetch('/api/auth/register', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok) { this.error = data.detail || 'Registration failed'; return; }
+                this.success = 'Account created! Redirecting...';
+                setTimeout(() => window.location.href = '/login', 1000);
+            } catch(e) { this.error = 'Network error'; }
+            finally { this.loading = false; }
+        }
+    }
+}
+</script>
+{% endblock %}

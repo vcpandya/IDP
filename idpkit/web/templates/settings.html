@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Settings - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-cog"></i> Settings</h2>
+</div>
+<div x-data="settingsPage()" x-init="loadSettings()">
+    <div class="settings-grid">
+        <div class="settings-card">
+            <h3><i class="fas fa-user"></i> Profile</h3>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" :value="user.username" disabled>
+            </div>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="text" :value="user.email || 'Not set'" disabled>
+            </div>
+            <div class="form-group">
+                <label>Role</label>
+                <span class="badge" x-text="user.role"></span>
+            </div>
+        </div>
+        <div class="settings-card">
+            <h3><i class="fas fa-key"></i> API Key</h3>
+            <p>Use this key to access IDP Kit API programmatically.</p>
+            <div class="api-key-display" x-show="apiKey">
+                <code x-text="apiKey"></code>
+                <button @click="navigator.clipboard.writeText(apiKey)" class="btn btn-sm"><i class="fas fa-copy"></i></button>
+            </div>
+            <button @click="generateKey()" class="btn btn-primary">
+                <i class="fas fa-sync"></i> Generate New API Key
+            </button>
+        </div>
+        <div class="settings-card">
+            <h3><i class="fas fa-brain"></i> LLM Settings</h3>
+            <div class="form-group">
+                <label>Default Model</label>
+                <select x-model="defaultModel">
+                    <option value="gpt-4o">GPT-4o (OpenAI)</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini (OpenAI)</option>
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet (Anthropic)</option>
+                    <option value="claude-haiku-4-5-20251001">Claude Haiku (Anthropic)</option>
+                    <option value="gemini/gemini-2.0-flash">Gemini Flash (Google)</option>
+                    <option value="ollama/llama3">Llama 3 (Ollama Local)</option>
+                </select>
+            </div>
+            <p class="hint">Model can also be set per-request via API.</p>
+        </div>
+        <div class="settings-card">
+            <h3><i class="fas fa-info-circle"></i> About</h3>
+            <p><strong>IDP Kit</strong> v<span x-text="version"></span></p>
+            <p>Intelligent Document Processing Toolkit & AI Agent</p>
+            <p>Powered by PageIndex vectorless RAG engine + LiteLLM</p>
+        </div>
+    </div>
+</div>
+<script>
+function settingsPage() {
+    return {
+        user: {}, apiKey: '', defaultModel: 'gpt-4o', version: '2.0.0',
+        async loadSettings() {
+            const res = await fetch('/api/auth/me');
+            if (res.ok) this.user = await res.json();
+        },
+        async generateKey() {
+            const res = await fetch('/api/auth/apikey', { method: 'POST' });
+            if (res.ok) { const data = await res.json(); this.apiKey = data.api_key; }
+        }
+    }
+}
+</script>
+{% endblock %}

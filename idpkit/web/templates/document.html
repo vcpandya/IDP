@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Document - IDP Kit{% endblock %}
+{% block head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+{% endblock %}
+{% block content %}
+<div x-data="documentView('{{ doc_id }}')" x-init="load()">
+    <div class="page-header">
+        <h2><i class="fas fa-file-alt"></i> <span x-text="doc.filename || 'Loading...'"></span></h2>
+        <div class="header-actions">
+            <span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span>
+            <button @click="triggerIndex()" class="btn btn-primary" x-show="doc.status === 'uploaded' || doc.status === 'failed'">
+                <i class="fas fa-tree"></i> Index Document
+            </button>
+            <a :href="'/api/documents/' + doc.id + '/download'" class="btn"><i class="fas fa-download"></i> Download</a>
+        </div>
+    </div>
+
+    <!-- Document Info -->
+    <div class="info-grid">
+        <div class="info-card"><label>Format</label><span x-text="doc.format" class="badge"></span></div>
+        <div class="info-card"><label>Size</label><span x-text="formatSize(doc.file_size)"></span></div>
+        <div class="info-card"><label>Pages</label><span x-text="doc.page_count || '-'"></span></div>
+        <div class="info-card"><label>Uploaded</label><span x-text="doc.created_at ? new Date(doc.created_at).toLocaleString() : '-'"></span></div>
+    </div>
+
+    <!-- Description -->
+    <div x-show="doc.description" class="description-card">
+        <h3>Description</h3>
+        <p x-text="doc.description"></p>
+    </div>
+
+    <!-- Tree Visualization -->
+    <div x-show="doc.tree_index" class="tree-section">
+        <div class="section-header">
+            <h3><i class="fas fa-sitemap"></i> Document Structure</h3>
+            <div>
+                <button @click="viewMode = 'tree'" class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'tree' }">Tree</button>
+                <button @click="viewMode = 'json'" class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'json' }">JSON</button>
+                <button @click="viewMode = 'outline'" class="btn btn-sm" :class="{ 'btn-primary': viewMode === 'outline' }">Outline</button>
+            </div>
+        </div>
+        <!-- Outline View -->
+        <div x-show="viewMode === 'outline'" class="tree-outline">
+            <template x-if="doc.tree_index && doc.tree_index.structure">
+                <div x-html="renderOutline(doc.tree_index.structure, 0)"></div>
+            </template>
+        </div>
+        <!-- JSON View -->
+        <div x-show="viewMode === 'json'" class="json-view">
+            <pre x-text="JSON.stringify(doc.tree_index, null, 2)"></pre>
+        </div>
+        <!-- D3 Tree View -->
+        <div x-show="viewMode === 'tree'" id="tree-container" class="tree-viz"></div>
+    </div>
+
+    <!-- Query Section -->
+    <div x-show="doc.status === 'indexed'" class="query-section">
+        <h3><i class="fas fa-search"></i> Query Document</h3>
+        <div class="query-input">
+            <input type="text" x-model="query" @keyup.enter="runQuery()" placeholder="Ask a question about this document...">
+            <button @click="runQuery()" class="btn btn-primary" :disabled="querying">
+                <span x-show="!querying"><i class="fas fa-paper-plane"></i></span>
+                <span x-show="querying"><i class="fas fa-spinner fa-spin"></i></span>
+            </button>
+        </div>
+        <div x-show="answer" class="answer-card">
+            <h4>Answer</h4>
+            <div x-html="answer"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+function documentView(docId) {
+    return {
+        doc: {}, viewMode: 'outline', query: '', answer: '', querying: false,
+        async load() {
+            const res = await fetch(`/api/documents/${docId}`);
+            if (res.ok) this.doc = await res.json();
+            if (this.doc.tree_index && this.viewMode === 'tree') this.$nextTick(() => this.renderD3Tree());
+        },
+        formatSize(bytes) {
+            if (!bytes) return '-';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        },
+        async triggerIndex() {
+            await fetch(`/api/indexing/documents/${this.doc.id}/index`, { method: 'POST' });
+            this.doc.status = 'indexing';
+            this.pollStatus();
+        },
+        async pollStatus() {
+            const interval = setInterval(async () => {
+                const res = await fetch(`/api/indexing/documents/${this.doc.id}/index/status`);
+                if (res.ok) {
+                    const job = await res.json();
+                    if (job.status === 'completed' || job.status === 'failed') {
+                        clearInterval(interval);
+                        this.load();
+                    }
+                }
+            }, 2000);
+        },
+        renderOutline(nodes, depth) {
+            if (!nodes) return '';
+            return nodes.map(n => {
+                let html = `<div class="outline-node" style="padding-left:${depth * 20}px">`;
+                html += `<span class="node-id">${n.node_id || ''}</span> `;
+                html += `<strong>${n.title}</strong>`;
+                if (n.start_index) html += ` <span class="page-ref">pp. ${n.start_index}-${n.end_index}</span>`;
+                if (n.summary) html += `<p class="node-summary">${n.summary}</p>`;
+                html += '</div>';
+                if (n.nodes && n.nodes.length) html += this.renderOutline(n.nodes, depth + 1);
+                return html;
+            }).join('');
+        },
+        renderD3Tree() {
+            const container = document.getElementById('tree-container');
+            if (!container || !this.doc.tree_index) return;
+            container.innerHTML = '';
+            const data = { name: this.doc.filename, children: this.convertToD3(this.doc.tree_index.structure) };
+            const width = container.clientWidth, height = Math.max(400, data.children?.length * 30 || 400);
+            const svg = d3.select(container).append('svg').attr('width', width).attr('height', height);
+            const root = d3.hierarchy(data);
+            const treeLayout = d3.tree().size([height - 40, width - 200]);
+            treeLayout(root);
+            const g = svg.append('g').attr('transform', 'translate(100,20)');
+            g.selectAll('.link').data(root.links()).enter().append('path').attr('class', 'tree-link')
+                .attr('d', d3.linkHorizontal().x(d => d.y).y(d => d.x))
+                .attr('fill', 'none').attr('stroke', '#ccc');
+            const nodes = g.selectAll('.node').data(root.descendants()).enter().append('g')
+                .attr('transform', d => `translate(${d.y},${d.x})`);
+            nodes.append('circle').attr('r', 5).attr('fill', d => d.children ? '#4f46e5' : '#10b981');
+            nodes.append('text').attr('dx', 10).attr('dy', 4).text(d => d.data.name).attr('font-size', '12px');
+        },
+        convertToD3(nodes) {
+            if (!nodes) return [];
+            return nodes.map(n => ({
+                name: n.title, children: n.nodes ? this.convertToD3(n.nodes) : undefined
+            }));
+        },
+        async runQuery() {
+            if (!this.query.trim()) return;
+            this.querying = true; this.answer = '';
+            try {
+                const res = await fetch(`/api/retrieval/documents/${this.doc.id}/query`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ query: this.query })
+                });
+                if (res.ok) { const data = await res.json(); this.answer = data.answer || data.detail || 'No answer'; }
+                else this.answer = 'Query failed';
+            } catch(e) { this.answer = 'Error: ' + e.message; }
+            finally { this.querying = false; }
+        }
+    }
+}
+</script>
+{% endblock %}

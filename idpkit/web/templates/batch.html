@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Batch Processing - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-layer-group"></i> Batch Processing</h2>
+</div>
+<div x-data="batchPage()" x-init="loadDocuments()">
+    <div class="batch-controls">
+        <div class="form-group">
+            <label>Select Documents</label>
+            <div class="doc-checklist">
+                <label class="doc-check">
+                    <input type="checkbox" @change="toggleAll($event)"> <strong>Select All</strong>
+                </label>
+                <template x-for="doc in documents" :key="doc.id">
+                    <label class="doc-check">
+                        <input type="checkbox" :value="doc.id" x-model="selectedDocs">
+                        <span x-text="doc.filename"></span>
+                        <span class="badge" x-text="doc.status"></span>
+                    </label>
+                </template>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Operation</label>
+            <select x-model="operation">
+                <option value="index">Index All</option>
+                <option value="smart_summary">Smart Summary</option>
+                <option value="smart_classify">Smart Classify</option>
+                <option value="smart_extract">Smart Extract</option>
+                <option value="smart_redaction">Smart Redaction</option>
+            </select>
+        </div>
+        <button @click="runBatch()" class="btn btn-primary" :disabled="selectedDocs.length === 0 || running">
+            <span x-show="!running"><i class="fas fa-play"></i> Run Batch (<span x-text="selectedDocs.length"></span> docs)</span>
+            <span x-show="running"><i class="fas fa-spinner fa-spin"></i> Processing...</span>
+        </button>
+    </div>
+    <div x-show="results.length > 0" class="batch-results">
+        <h3>Results</h3>
+        <template x-for="(r, i) in results" :key="i">
+            <div class="result-item" :class="r.status">
+                <span x-text="r.filename"></span>
+                <span class="status-badge" :class="'status-' + r.status" x-text="r.status"></span>
+                <span x-show="r.error" class="text-danger" x-text="r.error"></span>
+            </div>
+        </template>
+    </div>
+</div>
+<script>
+function batchPage() {
+    return {
+        documents: [], selectedDocs: [], operation: 'index', running: false, results: [],
+        async loadDocuments() {
+            const res = await fetch('/api/documents/?limit=200');
+            if (res.ok) { const data = await res.json(); this.documents = data.documents || []; }
+        },
+        toggleAll(e) {
+            this.selectedDocs = e.target.checked ? this.documents.map(d => d.id) : [];
+        },
+        async runBatch() {
+            this.running = true; this.results = [];
+            for (const docId of this.selectedDocs) {
+                const doc = this.documents.find(d => d.id === docId);
+                const r = { filename: doc?.filename || docId, status: 'running', error: null };
+                this.results.push(r);
+                try {
+                    let res;
+                    if (this.operation === 'index') {
+                        res = await fetch(`/api/indexing/documents/${docId}/index`, { method: 'POST' });
+                    } else {
+                        res = await fetch(`/api/tools/${this.operation}`, {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ document_id: docId })
+                        });
+                    }
+                    r.status = res.ok ? 'completed' : 'failed';
+                    if (!res.ok) r.error = (await res.json()).detail;
+                } catch(e) { r.status = 'failed'; r.error = e.message; }
+            }
+            this.running = false;
+        }
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}AI Agent - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-robot"></i> AI Agent</h2>
+</div>
+<div class="chat-container" x-data="agentChat()">
+    <div class="chat-sidebar">
+        <h4>Documents</h4>
+        <div class="doc-selector">
+            <template x-for="doc in documents" :key="doc.id">
+                <label class="doc-check">
+                    <input type="checkbox" :value="doc.id" x-model="selectedDocs">
+                    <span x-text="doc.filename"></span>
+                    <span class="badge" x-text="doc.format"></span>
+                </label>
+            </template>
+        </div>
+    </div>
+    <div class="chat-main">
+        <div class="chat-messages" id="chatMessages">
+            <div class="welcome-msg" x-show="messages.length === 0">
+                <i class="fas fa-robot"></i>
+                <h3>IDP Kit Agent</h3>
+                <p>Ask me to analyze, summarize, compare, or extract data from your documents.</p>
+                <div class="suggestions">
+                    <button @click="sendMessage('Summarize the main findings')" class="suggestion-btn">Summarize findings</button>
+                    <button @click="sendMessage('Extract key financial data')" class="suggestion-btn">Extract financial data</button>
+                    <button @click="sendMessage('What are the main topics covered?')" class="suggestion-btn">List main topics</button>
+                </div>
+            </div>
+            <template x-for="(msg, i) in messages" :key="i">
+                <div class="chat-msg" :class="'msg-' + msg.role">
+                    <div class="msg-avatar">
+                        <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-robot'"></i>
+                    </div>
+                    <div class="msg-content">
+                        <div class="msg-header" x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'Agent'"></div>
+                        <div class="msg-body" x-html="msg.content"></div>
+                    </div>
+                </div>
+            </template>
+            <div x-show="loading" class="chat-msg msg-assistant">
+                <div class="msg-avatar"><i class="fas fa-robot"></i></div>
+                <div class="msg-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+            </div>
+        </div>
+        <div class="chat-input">
+            <input type="text" x-model="input" @keyup.enter="sendMessage()" placeholder="Ask the agent..." :disabled="loading">
+            <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+</div>
+<script>
+function agentChat() {
+    return {
+        messages: [], input: '', loading: false, documents: [], selectedDocs: [],
+        async init() {
+            const res = await fetch('/api/documents/?limit=100');
+            if (res.ok) { const data = await res.json(); this.documents = data.documents || []; }
+        },
+        async sendMessage(text) {
+            const msg = text || this.input.trim();
+            if (!msg) return;
+            this.input = '';
+            this.messages.push({ role: 'user', content: msg });
+            this.loading = true;
+            this.scrollToBottom();
+            try {
+                const res = await fetch('/api/agent/chat', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ message: msg, document_ids: this.selectedDocs })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.tool_calls) {
+                        for (const tc of data.tool_calls) {
+                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name });
+                        }
+                    }
+                    this.messages.push({ role: 'assistant', content: data.response || data.detail || 'No response' });
+                } else {
+                    this.messages.push({ role: 'assistant', content: 'Error: request failed' });
+                }
+            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message }); }
+            finally { this.loading = false; this.scrollToBottom(); }
+        },
+        scrollToBottom() {
+            this.$nextTick(() => {
+                const el = document.getElementById('chatMessages');
+                if (el) el.scrollTop = el.scrollHeight;
+            });
+        }
+    }
+}
+</script>
+{% endblock %}

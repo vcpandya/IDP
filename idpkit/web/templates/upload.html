@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Upload - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-cloud-upload-alt"></i> Upload Document</h2>
+</div>
+
+<div class="upload-container" x-data="uploadForm()">
+    <div class="upload-zone" :class="{ 'dragover': isDragging }"
+         @dragover.prevent="isDragging = true"
+         @dragleave.prevent="isDragging = false"
+         @drop.prevent="handleDrop($event)">
+        <input type="file" id="fileInput" @change="handleFileSelect($event)" multiple
+               accept=".pdf,.docx,.doc,.md,.markdown,.html,.htm,.xlsx,.xls,.csv,.pptx,.ppt,.png,.jpg,.jpeg,.gif,.bmp,.tiff,.tif,.webp" hidden>
+        <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+        <h3>Drag & Drop files here</h3>
+        <p>or <label for="fileInput" class="file-label">browse files</label></p>
+        <p class="upload-hint">PDF, DOCX, Markdown, HTML, Excel, CSV, PowerPoint, Images</p>
+    </div>
+
+    <div x-show="files.length > 0" class="file-list">
+        <h3>Selected Files</h3>
+        <template x-for="(file, index) in files" :key="index">
+            <div class="file-item" :class="file.status">
+                <div class="file-info">
+                    <i class="fas fa-file"></i>
+                    <span x-text="file.name"></span>
+                    <span class="file-size" x-text="formatSize(file.size)"></span>
+                </div>
+                <div class="file-progress" x-show="file.status === 'uploading'">
+                    <div class="progress-bar"><div class="progress-fill" style="width: 100%"></div></div>
+                </div>
+                <div class="file-status">
+                    <span x-show="file.status === 'pending'" class="text-muted">Pending</span>
+                    <span x-show="file.status === 'uploading'" class="text-info"><i class="fas fa-spinner fa-spin"></i></span>
+                    <span x-show="file.status === 'done'" class="text-success"><i class="fas fa-check"></i> Uploaded</span>
+                    <span x-show="file.status === 'error'" class="text-danger"><i class="fas fa-times"></i> Failed</span>
+                </div>
+            </div>
+        </template>
+
+        <div class="upload-actions">
+            <label class="checkbox-label">
+                <input type="checkbox" x-model="autoIndex"> Auto-index after upload
+            </label>
+            <button @click="uploadAll()" class="btn btn-primary" :disabled="uploading">
+                <span x-show="!uploading"><i class="fas fa-upload"></i> Upload All</span>
+                <span x-show="uploading"><i class="fas fa-spinner fa-spin"></i> Uploading...</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function uploadForm() {
+    return {
+        files: [], isDragging: false, uploading: false, autoIndex: true,
+        handleDrop(e) {
+            this.isDragging = false;
+            this.addFiles(e.dataTransfer.files);
+        },
+        handleFileSelect(e) { this.addFiles(e.target.files); },
+        addFiles(fileList) {
+            for (const f of fileList) {
+                this.files.push({ file: f, name: f.name, size: f.size, status: 'pending', docId: null });
+            }
+        },
+        formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1048576).toFixed(1) + ' MB';
+        },
+        async uploadAll() {
+            this.uploading = true;
+            for (const item of this.files) {
+                if (item.status !== 'pending') continue;
+                item.status = 'uploading';
+                try {
+                    const formData = new FormData();
+                    formData.append('file', item.file);
+                    const res = await fetch('/api/documents/', { method: 'POST', body: formData });
+                    if (res.ok) {
+                        const data = await res.json();
+                        item.docId = data.id;
+                        item.status = 'done';
+                        if (this.autoIndex) {
+                            fetch(`/api/indexing/documents/${data.id}/index`, { method: 'POST' });
+                        }
+                    } else { item.status = 'error'; }
+                } catch(e) { item.status = 'error'; }
+            }
+            this.uploading = false;
+        }
+    }
+}
+</script>
+{% endblock %}

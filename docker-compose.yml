@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - IDP_DATABASE_URL=sqlite+aiosqlite:///./data/idpkit.db
+      - IDP_STORAGE_PATH=/app/data/storage
+      - IDP_SECRET_KEY=${IDP_SECRET_KEY:-change-me-in-production}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+    volumes:
+      - idpkit-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  idpkit-data:

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Smart Tools - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-tools"></i> Smart Tools</h2>
+</div>
+<div x-data="toolsPage()" x-init="loadDocuments()">
+    <div class="tools-grid">
+        <template x-for="tool in tools" :key="tool.name">
+            <div class="tool-card" @click="selectTool(tool)">
+                <div class="tool-icon" :style="'background:' + tool.color"><i :class="tool.icon"></i></div>
+                <h3 x-text="tool.display_name"></h3>
+                <p x-text="tool.description"></p>
+                <span class="tool-phase" x-text="tool.phase"></span>
+            </div>
+        </template>
+    </div>
+
+    <!-- Tool execution modal -->
+    <div x-show="selectedTool" class="modal-overlay" @click.self="selectedTool = null">
+        <div class="modal" x-show="selectedTool">
+            <div class="modal-header">
+                <h3 x-text="selectedTool?.display_name"></h3>
+                <button @click="selectedTool = null" class="btn-close"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Select Document</label>
+                    <select x-model="selectedDocId">
+                        <option value="">Choose document...</option>
+                        <template x-for="doc in documents" :key="doc.id">
+                            <option :value="doc.id" x-text="doc.filename + ' (' + doc.format + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+                <div x-show="toolResult" class="tool-result">
+                    <h4>Result</h4>
+                    <pre x-text="JSON.stringify(toolResult, null, 2)"></pre>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button @click="runTool()" class="btn btn-primary" :disabled="!selectedDocId || toolRunning">
+                    <span x-show="!toolRunning"><i class="fas fa-play"></i> Run</span>
+                    <span x-show="toolRunning"><i class="fas fa-spinner fa-spin"></i> Running...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function toolsPage() {
+    return {
+        documents: [], selectedTool: null, selectedDocId: '', toolResult: null, toolRunning: false,
+        tools: [
+            { name: 'smart_summary', display_name: 'Smart Summary', description: 'Hierarchical summarization with key message highlighting', icon: 'fas fa-align-left', color: '#4f46e5', phase: 'Available' },
+            { name: 'smart_classify', display_name: 'Smart Classify', description: 'Auto-categorize by type, topic, and sentiment', icon: 'fas fa-tags', color: '#0891b2', phase: 'Available' },
+            { name: 'smart_extract', display_name: 'Smart Extract', description: 'Extract tables, key-value pairs, and entities', icon: 'fas fa-table', color: '#059669', phase: 'Available' },
+            { name: 'smart_compare', display_name: 'Smart Compare', description: 'Intelligent document comparison and diff', icon: 'fas fa-columns', color: '#d97706', phase: 'Available' },
+            { name: 'smart_qa', display_name: 'Smart Q&A', description: 'Auto-generate FAQ and exam questions', icon: 'fas fa-question-circle', color: '#7c3aed', phase: 'Available' },
+            { name: 'smart_split', display_name: 'Smart Split', description: 'Structure-aware document splitting', icon: 'fas fa-cut', color: '#dc2626', phase: 'Available' },
+            { name: 'smart_redaction', display_name: 'Smart Redaction', description: 'PII detection and redaction', icon: 'fas fa-eraser', color: '#be123c', phase: 'Available' },
+            { name: 'smart_anonymize', display_name: 'Smart Anonymize', description: 'Pseudonymization with consistency', icon: 'fas fa-user-secret', color: '#6d28d9', phase: 'Available' },
+            { name: 'smart_fill', display_name: 'Smart Fill', description: 'Auto-fill forms and templates', icon: 'fas fa-fill-drip', color: '#0d9488', phase: 'Available' },
+            { name: 'smart_rewrite', display_name: 'Smart Rewrite', description: 'Rewrite and enrich with external sources', icon: 'fas fa-pen-fancy', color: '#ea580c', phase: 'Available' },
+            { name: 'smart_translate', display_name: 'Smart Translate', description: 'Section-aware translation', icon: 'fas fa-language', color: '#2563eb', phase: 'Available' },
+            { name: 'smart_merge', display_name: 'Smart Merge', description: 'Multi-document merge and synthesis', icon: 'fas fa-object-group', color: '#65a30d', phase: 'Available' },
+            { name: 'smart_audit', display_name: 'Smart Audit', description: 'Compliance and style auditing', icon: 'fas fa-clipboard-check', color: '#c026d3', phase: 'Available' },
+        ],
+        async loadDocuments() {
+            const res = await fetch('/api/documents/?limit=100');
+            if (res.ok) { const data = await res.json(); this.documents = (data.documents || []).filter(d => d.status === 'indexed'); }
+        },
+        selectTool(tool) { this.selectedTool = tool; this.toolResult = null; },
+        async runTool() {
+            this.toolRunning = true; this.toolResult = null;
+            try {
+                const res = await fetch(`/api/tools/${this.selectedTool.name}`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ document_id: this.selectedDocId })
+                });
+                this.toolResult = await res.json();
+            } catch(e) { this.toolResult = { error: e.message }; }
+            finally { this.toolRunning = false; }
+        }
+    }
+}
+</script>
+{% endblock %}

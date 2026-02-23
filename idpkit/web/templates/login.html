@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Login - IDP Kit{% endblock %}
+{% block auth_content %}
+<div class="auth-container" x-data="loginForm()">
+    <div class="auth-card">
+        <div class="auth-header">
+            <h1><i class="fas fa-file-alt"></i> IDP Kit</h1>
+            <p>Intelligent Document Processing Toolkit</p>
+        </div>
+        <form @submit.prevent="submit">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" x-model="username" required autofocus placeholder="Enter username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" x-model="password" required placeholder="Enter password">
+            </div>
+            <div x-show="error" class="alert alert-error" x-text="error"></div>
+            <button type="submit" class="btn btn-primary btn-full" :disabled="loading">
+                <span x-show="!loading">Sign In</span>
+                <span x-show="loading"><i class="fas fa-spinner fa-spin"></i> Signing in...</span>
+            </button>
+        </form>
+        <p class="auth-link">Don't have an account? <a href="/register">Register</a></p>
+    </div>
+</div>
+<script>
+function loginForm() {
+    return {
+        username: '', password: '', error: '', loading: false,
+        async submit() {
+            this.loading = true; this.error = '';
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username: this.username, password: this.password})
+                });
+                const data = await res.json();
+                if (!res.ok) { this.error = data.detail || 'Login failed'; return; }
+                window.location.href = '/dashboard';
+            } catch(e) { this.error = 'Network error'; }
+            finally { this.loading = false; }
+        }
+    }
+}
+</script>
+{% endblock %}

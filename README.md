@@ -1,270 +1,282 @@
-<div align="center">
-  
-<a href="https://vectify.ai/pageindex" target="_blank">
-  <img src="https://github.com/user-attachments/assets/46201e72-675b-43bc-bfbd-081cc6b65a1d" alt="PageIndex Banner" />
-</a>
+# IDP Kit — Intelligent Document Processing Toolkit & AI Agent
 
-<br/>
-<br/>
+**IDP Kit** is a full-stack Python toolkit for intelligent document processing. It combines tree-based document indexing, a knowledge graph, an AI agent with tool-calling, 13 smart document tools, and a web UI — all in one package.
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/14736" target="_blank"><img src="https://trendshift.io/api/badge/repositories/14736" alt="VectifyAI%2FPageIndex | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-</p>
+Upload PDFs, DOCX, HTML, spreadsheets, presentations, or images. IDP Kit indexes them into a hierarchical tree structure, extracts a knowledge graph of entities and relationships, and lets you query everything through an AI agent or REST API.
 
-# PageIndex: Vectorless, Reasoning-based RAG
+## Features
 
-<p align="center"><b>Reasoning-based RAG&nbsp; ◦ &nbsp;No Vector DB&nbsp; ◦ &nbsp;No Chunking&nbsp; ◦ &nbsp;Human-like Retrieval</b></p>
-
-<h4 align="center">
-  <a href="https://vectify.ai">🏠 Homepage</a>&nbsp; • &nbsp;
-  <a href="https://chat.pageindex.ai">🖥️ Chat Platform</a>&nbsp; • &nbsp;
-  <a href="https://pageindex.ai/mcp">🔌 MCP</a>&nbsp; • &nbsp;
-  <a href="https://docs.pageindex.ai">📚 Docs</a>&nbsp; • &nbsp;
-  <a href="https://discord.com/invite/VuXuf29EUj">💬 Discord</a>&nbsp; • &nbsp;
-  <a href="https://ii2abc2jejf.typeform.com/to/tK3AXl8T">✉️ Contact</a>&nbsp;
-</h4>
-  
-</div>
-
-
-<details open>
-<summary><h3>📢 Latest Updates</h3></summary>
-
- **🔥 Releases:**
-- [**PageIndex Chat**](https://chat.pageindex.ai): The first human-like document-analysis agent [platform](https://chat.pageindex.ai) built for professional long documents. Can also be integrated via [MCP](https://pageindex.ai/mcp) or [API](https://docs.pageindex.ai/quickstart) (beta).
-<!-- - [**PageIndex Chat API**](https://docs.pageindex.ai/quickstart): An API that brings PageIndex's advanced long-document intelligence directly into your applications and workflows. -->
-<!-- - [PageIndex MCP](https://pageindex.ai/mcp): Bring PageIndex into Claude, Cursor, or any MCP-enabled agent. Chat with long PDFs in a reasoning-based, human-like way. -->
- 
- **📝 Articles:**
-- [**PageIndex Framework**](https://pageindex.ai/blog/pageindex-intro): Introduces the PageIndex framework — an *agentic, in-context* *tree index* that enables LLMs to perform *reasoning-based*, *human-like retrieval* over long documents, without vector DB or chunking.
-<!-- - [Do We Still Need OCR?](https://pageindex.ai/blog/do-we-need-ocr): Explores how vision-based, reasoning-native RAG challenges the traditional OCR pipeline, and why the future of document AI might be *vectorless* and *vision-based*. -->
-
- **🧪 Cookbooks:**
-- [Vectorless RAG](https://docs.pageindex.ai/cookbook/vectorless-rag-pageindex): A minimal, hands-on example of reasoning-based RAG using PageIndex. No vectors, no chunking, and human-like retrieval.
-- [Vision-based Vectorless RAG](https://docs.pageindex.ai/cookbook/vision-rag-pageindex): OCR-free, vision-only RAG with PageIndex's reasoning-native retrieval workflow that works directly over PDF page images.
-</details>
+| Category | What you get |
+|----------|-------------|
+| **Document Indexing** | Hierarchical tree index (powered by [PageIndex](https://github.com/VectifyAI/PageIndex)) — no vector DB, no chunking |
+| **Knowledge Graph** | Automatic entity extraction, cross-document linking, relationship discovery |
+| **AI Agent** | Tool-calling agent (6 tools) — search, summarize, extract, graph queries, cross-references |
+| **Smart Tools** | 13 tools: Summary, Classify, Extract, Compare, Q&A, Split, Redaction, Anonymize, Fill, Rewrite, Translate, Merge, Audit |
+| **Multi-Format** | PDF, DOCX, HTML, XLSX/CSV, PPTX, Images (OCR) |
+| **Multi-Provider LLM** | OpenAI, Anthropic, Gemini, Ollama, OpenRouter — all via [LiteLLM](https://github.com/BerriAI/litellm) |
+| **Web UI** | FastAPI + Jinja2 + HTMX + Alpine.js |
+| **REST API** | 54 endpoints across 11 routers |
+| **Plugin System** | Entry-point + directory-based plugin discovery |
+| **Database** | SQLAlchemy 2.0 async — SQLite (dev) / PostgreSQL (prod) |
 
 ---
 
-# 📑 Introduction to PageIndex
+## Quick Start
 
-Are you frustrated with vector database retrieval accuracy for long professional documents? Traditional vector-based RAG relies on semantic *similarity* rather than true *relevance*. But **similarity ≠ relevance** — what we truly need in retrieval is **relevance**, and that requires **reasoning**. When working with professional documents that demand domain expertise and multi-step reasoning, similarity search often falls short.
+### 1. Install
 
-Inspired by AlphaGo, we propose **[PageIndex](https://vectify.ai/pageindex)** — a **vectorless**, **reasoning-based RAG** system that builds a **hierarchical tree index** from long documents and uses LLMs to **reason** *over that index* for **agentic, context-aware retrieval**.
-It simulates how *human experts* navigate and extract knowledge from complex documents through *tree search*, enabling LLMs to *think* and *reason* their way to the most relevant document sections. PageIndex performs retrieval in two steps:
+```bash
+git clone <repo-url>
+cd IDP
+pip install -e .
+```
 
-1. Generate a “Table-of-Contents” **tree structure index** of documents
-2. Perform reasoning-based retrieval through **tree search**
+### 2. Configure
 
-<div align="center">
-  <a href="https://pageindex.ai/blog/pageindex-intro" target="_blank" title="The PageIndex Framework">
-    <img src="https://docs.pageindex.ai/images/cookbook/vectorless-rag.png" width="70%">
-  </a>
-</div>
+Create a `.env` file:
 
-### 🎯 Core Features 
+```bash
+# At least one LLM provider key is required
+OPENAI_API_KEY=sk-...
 
-Compared to traditional vector-based RAG, **PageIndex** features:
-- **No Vector DB**: Uses document structure and LLM reasoning for retrieval, instead of vector similarity search.
-- **No Chunking**: Documents are organized into natural sections, not artificial chunks.
-- **Human-like Retrieval**: Simulates how human experts navigate and extract knowledge from complex documents.
-- **Better Explainability and Traceability**: Retrieval is based on reasoning — traceable and interpretable, with page and section references. No more opaque, approximate vector search (“vibe retrieval”).
+# Or use other providers:
+# ANTHROPIC_API_KEY=sk-ant-...
+# GOOGLE_API_KEY=...
+# OPENROUTER_API_KEY=...
 
-PageIndex powers a reasoning-based RAG system that achieved **state-of-the-art** [98.7% accuracy](https://github.com/VectifyAI/Mafin2.5-FinanceBench) on FinanceBench, demonstrating superior performance over vector-based RAG solutions in professional document analysis (see our [blog post](https://vectify.ai/blog/Mafin2.5) for details).
+# Optional
+# IDP_DEFAULT_MODEL=gpt-4o-2024-11-20
+# IDP_DATABASE_URL=sqlite+aiosqlite:///./idpkit.db
+# IDP_SECRET_KEY=change-me-in-production
+# IDP_STORAGE_PATH=./storage
+```
 
-### 📍 Explore PageIndex
+### 3. Run
 
-To learn more, please see a detailed introduction of the [PageIndex framework](https://pageindex.ai/blog/pageindex-intro). Check out this GitHub repo for open-source code, and the [cookbooks](https://docs.pageindex.ai/cookbook), [tutorials](https://docs.pageindex.ai/tutorials), and [blog](https://pageindex.ai/blog) for additional usage guides and examples. 
+```bash
+python run_server.py
+```
 
-The PageIndex service is available as a ChatGPT-style [chat platform](https://chat.pageindex.ai), or can be integrated via [MCP](https://pageindex.ai/mcp) or [API](https://docs.pageindex.ai/quickstart).
+- Web UI: http://localhost:8000
+- Swagger docs: http://localhost:8000/docs
 
-### 🛠️ Deployment Options
-- Self-host — run locally with this open-source repo.
-- Cloud Service — try instantly with our [Chat Platform](https://chat.pageindex.ai/), or integrate with [MCP](https://pageindex.ai/mcp) or [API](https://docs.pageindex.ai/quickstart).
-- _Enterprise_ — private or on-prem deployment. [Contact us](https://ii2abc2jejf.typeform.com/to/tK3AXl8T) or [book a demo](https://calendly.com/pageindex/meet) for more details.
+### Docker
 
-### 🧪 Quick Hands-on
-
-- Try the [**Vectorless RAG**](https://github.com/VectifyAI/PageIndex/blob/main/cookbook/pageindex_RAG_simple.ipynb) notebook — a *minimal*, hands-on example of reasoning-based RAG using PageIndex.
-- Experiment with [*Vision-based Vectorless RAG*](https://github.com/VectifyAI/PageIndex/blob/main/cookbook/vision_RAG_pageindex.ipynb) — no OCR; a minimal, reasoning-native RAG pipeline that works directly over page images.
-  
-<div align="center">
-  <a href="https://colab.research.google.com/github/VectifyAI/PageIndex/blob/main/cookbook/pageindex_RAG_simple.ipynb" target="_blank" rel="noopener">
-    <img src="https://img.shields.io/badge/Open_In_Colab-Vectorless_RAG-orange?style=for-the-badge&logo=googlecolab" alt="Open in Colab: Vectorless RAG" />
-  </a>
-  &nbsp;&nbsp;
-  <a href="https://colab.research.google.com/github/VectifyAI/PageIndex/blob/main/cookbook/vision_RAG_pageindex.ipynb" target="_blank" rel="noopener">
-    <img src="https://img.shields.io/badge/Open_In_Colab-Vision_RAG-orange?style=for-the-badge&logo=googlecolab" alt="Open in Colab: Vision RAG" />
-  </a>
-</div>
+```bash
+docker compose up --build
+```
 
 ---
 
-# 🌲 PageIndex Tree Structure
-PageIndex can transform lengthy PDF documents into a semantic **tree structure**, similar to a _"table of contents"_ but optimized for use with Large Language Models (LLMs). It's ideal for: financial reports, regulatory filings, academic textbooks, legal or technical manuals, and any document that exceeds LLM context limits.
+## Optional Dependencies
 
-Below is an example PageIndex tree structure. Also see more example [documents](https://github.com/VectifyAI/PageIndex/tree/main/tests/pdfs) and generated [tree structures](https://github.com/VectifyAI/PageIndex/tree/main/tests/results).
-
-```jsonc
-...
-{
-  "title": "Financial Stability",
-  "node_id": "0006",
-  "start_index": 21,
-  "end_index": 22,
-  "summary": "The Federal Reserve ...",
-  "nodes": [
-    {
-      "title": "Monitoring Financial Vulnerabilities",
-      "node_id": "0007",
-      "start_index": 22,
-      "end_index": 28,
-      "summary": "The Federal Reserve's monitoring ..."
-    },
-    {
-      "title": "Domestic and International Cooperation and Coordination",
-      "node_id": "0008",
-      "start_index": 28,
-      "end_index": 31,
-      "summary": "In 2023, the Federal Reserve collaborated ..."
-    }
-  ]
-}
-...
+```bash
+pip install -e ".[postgres]"   # PostgreSQL support
+pip install -e ".[ocr]"       # Image/OCR processing
+pip install -e ".[graph]"     # NetworkX graph analytics
+pip install -e ".[all]"       # Everything above
+pip install -e ".[dev]"       # pytest, ruff, coverage
 ```
-
-You can generate the PageIndex tree structure with this open-source repo, or use our [API](https://docs.pageindex.ai/quickstart) 
 
 ---
 
-# ⚙️ Package Usage
+## How It Works
 
-You can follow these steps to generate a PageIndex tree from a PDF document.
+### Document Indexing
 
-### 1. Install dependencies
+When you upload a document, IDP Kit:
+
+1. **Parses** it (PDF, DOCX, HTML, XLSX, PPTX, or image)
+2. **Builds a tree index** — a hierarchical structure of sections, summaries, and page ranges (using LLM reasoning, not vector similarity)
+3. **Extracts a knowledge graph** — entities, relationships, and cross-document links
+4. **Stores everything** in the database for fast retrieval
+
+### Retrieval
+
+Queries go through **LLM-guided tree search**: the model reasons about which sections are relevant at each level of the hierarchy, drilling deeper into promising subtrees. This is fundamentally different from vector similarity search — it uses **reasoning** instead of **similarity**.
+
+When the knowledge graph is available, search results are **augmented** with graph-linked sections — finding related content that shares entities even if the wording is different.
+
+### AI Agent
+
+The agent has access to 6 tools:
+
+| Tool | What it does |
+|------|-------------|
+| `search_document` | LLM-guided tree search for relevant sections |
+| `list_documents` | List available documents |
+| `summarize_section` | Summarize a specific section |
+| `extract_data` | Extract structured data (tables, entities, key facts, etc.) |
+| `query_graph` | Query the knowledge graph (find entities, mentions, relationships, cross-doc links) |
+| `find_cross_references` | Find all sections across all documents mentioning a topic |
+
+The agent decides which tools to call, executes them, processes results, and responds in natural language.
+
+---
+
+## Knowledge Graph
+
+IDP Kit automatically builds a knowledge graph when documents are indexed.
+
+### What gets extracted
+
+- **Entities**: People, organizations, locations, concepts, terms, regulations, products, events, dates, metrics
+- **Relationships**: Co-occurrence, references, defines, extends, contrasts
+- **Cross-document links**: Same entities across different documents are automatically linked
+
+### What it enables
+
+- **"Where is X mentioned?"** — find every section across every document that mentions an entity
+- **Related sections** — discover sections discussing the same entities, even with different wording
+- **Document connections** — see which documents share entities and are related
+- **Graph-augmented search** — tree search results expanded with graph-linked sections
+- **Agent intelligence** — the AI agent answers relationship and cross-reference questions
+
+### Graph API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/graph/entities` | Search entities by name/type |
+| `GET` | `/api/graph/entities/{id}` | Entity details with mentions and edges |
+| `GET` | `/api/graph/entities/{id}/mentions` | All sections where entity appears |
+| `GET` | `/api/graph/entities/{id}/neighbors` | Connected entities |
+| `GET` | `/api/graph/documents/{doc_id}/entities` | All entities in a document |
+| `GET` | `/api/graph/documents/{doc_id}/links` | Cross-document links |
+| `GET` | `/api/graph/documents/{doc_id}/summary` | Graph statistics |
+| `POST` | `/api/graph/documents/{doc_id}/build` | Build graph retroactively |
+| `GET` | `/api/graph/documents/{doc_id}/visualization` | Nodes + edges JSON for visualization |
+
+### Retroactive building
+
+For documents indexed before the graph feature existed:
 
 ```bash
-pip3 install --upgrade -r requirements.txt
+curl -X POST http://localhost:8000/api/graph/documents/{doc_id}/build \
+  -H "Authorization: Bearer TOKEN"
 ```
 
-### 2. Set your OpenAI API key
+---
 
-Create a `.env` file in the root directory and add your API key:
+## API Overview
+
+IDP Kit exposes 54 REST endpoints across 11 routers:
+
+| Router | Prefix | Endpoints |
+|--------|--------|-----------|
+| Auth | `/api/auth` | Register, login, token refresh, API keys |
+| Documents | `/api/documents` | Upload, list, get, delete documents |
+| Indexing | `/api/indexing` | Trigger and monitor indexing jobs |
+| Jobs | `/api/jobs` | Job status and history |
+| Retrieval | `/api/retrieval` | Tree search, context building, multi-doc search |
+| Agent | `/api/agent` | Chat with the AI agent |
+| Tools | `/api/tools` | Run any of the 13 smart tools |
+| Generation | `/api/generation` | Generate DOCX/Markdown from templates |
+| Processing | `/api/processing` | Pipelines, entity extraction, conversion |
+| Plugins | `/api/plugins` | List and manage plugins |
+| Graph | `/api/graph` | Knowledge graph queries and visualization |
+
+Full interactive docs at `/docs` (Swagger) or `/redoc`.
+
+### Example: Upload, index, and query
 
 ```bash
-CHATGPT_API_KEY=your_openai_key_here
+# 1. Upload
+curl -X POST http://localhost:8000/api/documents/upload \
+  -H "Authorization: Bearer TOKEN" \
+  -F "file=@report.pdf"
+
+# 2. Index (returns a job ID)
+curl -X POST http://localhost:8000/api/indexing/index \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID"}'
+
+# 3. Search
+curl -X POST http://localhost:8000/api/retrieval/search \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "query": "What are the key findings?"}'
+
+# 4. Chat with agent
+curl -X POST http://localhost:8000/api/agent/chat \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Compare the conclusions across all documents", "document_ids": ["DOC1", "DOC2"]}'
 ```
 
-### 3. Run PageIndex on your PDF
+---
+
+## CLI: PageIndex Tree Generation
+
+You can also use the PageIndex engine directly from the command line to generate tree indices:
 
 ```bash
-python3 run_pageindex.py --pdf_path /path/to/your/document.pdf
+# PDF
+python run_pageindex.py --pdf_path /path/to/document.pdf
+
+# Markdown
+python run_pageindex.py --md_path /path/to/document.md
 ```
 
 <details>
-<summary><strong>Optional parameters</strong></summary>
-<br>
-You can customize the processing with additional optional arguments:
+<summary>Optional parameters</summary>
 
 ```
---model                 OpenAI model to use (default: gpt-4o-2024-11-20)
---toc-check-pages       Pages to check for table of contents (default: 20)
+--model                 LLM model (default: gpt-4o-2024-11-20)
+--toc-check-pages       Pages to check for TOC (default: 20)
 --max-pages-per-node    Max pages per node (default: 10)
 --max-tokens-per-node   Max tokens per node (default: 20000)
---if-add-node-id        Add node ID (yes/no, default: yes)
---if-add-node-summary   Add node summary (yes/no, default: yes)
---if-add-doc-description Add doc description (yes/no, default: yes)
+--if-add-node-id        Add node IDs (yes/no, default: yes)
+--if-add-node-summary   Add summaries (yes/no, default: yes)
+--if-add-doc-description Add description (yes/no, default: yes)
 ```
 </details>
 
-<details>
-<summary><strong>Markdown support</strong></summary>
-<br>
-We also provide markdown support for PageIndex. You can use the `-md_path` flag to generate a tree structure for a markdown file.
+---
 
-```bash
-python3 run_pageindex.py --md_path /path/to/your/document.md
+## Project Structure
+
+```
+idpkit/
+  engine/          PageIndex core — PDF/Markdown tree indexing
+  core/            LLMClient (LiteLLM), schemas, storage, exceptions
+  db/              SQLAlchemy 2.0 async models + session management
+  graph/           Knowledge Graph — entities, edges, builder, linker, queries
+  indexing/        Multi-format indexers (PDF, DOCX, HTML, XLSX, PPTX, Image)
+  parsing/         Document parsers (6 formats)
+  retrieval/       Tree search, context builder, multi-doc search
+  agent/           AI agent with tool-calling loop
+  tools/           13 Smart Tools
+  generation/      DOCX/Markdown generators, templates
+  processing/      Pipelines, entity extraction, summarization, comparison
+  plugins/         Plugin system (entry-point + directory discovery)
+  api/             FastAPI routes (11 routers, 54 endpoints)
+  web/             Jinja2 + HTMX + Alpine.js frontend
+pageindex/         Backward-compatible shim for PageIndex imports
 ```
 
-> Note: in this function, we use "#" to determine node heading and their levels. For example, "##" is level 2, "###" is level 3, etc. Make sure your markdown file is formatted correctly. If your Markdown file was converted from a PDF or HTML, we don't recommend using this function, since most existing conversion tools cannot preserve the original hierarchy. Instead, use our [PageIndex OCR](https://pageindex.ai/blog/ocr), which is designed to preserve the original hierarchy, to convert the PDF to a markdown file and then use this function.
-</details>
+### Database schema
 
-<!-- 
-# ☁️ Improved Tree Generation with PageIndex OCR
-
-This repo is designed for generating PageIndex tree structure for simple PDFs, but many real-world use cases involve complex PDFs that are hard to parse by classic Python tools. However, extracting high-quality text from PDF documents remains a non-trivial challenge. Most OCR tools only extract page-level content, losing the broader document context and hierarchy.
-
-To address this, we introduced PageIndex OCR — the first long-context OCR model designed to preserve the global structure of documents. PageIndex OCR significantly outperforms other leading OCR tools, such as those from Mistral and Contextual AI, in recognizing true hierarchy and semantic relationships across document pages.
-
-- Experience next-level OCR quality with PageIndex OCR at our [Dashboard](https://dash.pageindex.ai/).
-- Integrate PageIndex OCR seamlessly into your stack via our [API](https://docs.pageindex.ai/quickstart).
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/eb35d8ae-865c-4e60-a33b-ebbd00c41732" width="80%">
-</p>
--->
+| Table | Purpose |
+|-------|---------|
+| `users` | Authentication and authorization |
+| `documents` | Uploaded documents with tree index and metadata |
+| `jobs` | Background job tracking |
+| `prompts` | User-saved prompt templates |
+| `templates` | Document generation templates |
+| `conversation_messages` | Agent conversation history |
+| `entities` | Knowledge graph entity registry |
+| `entity_mentions` | Entity-to-section links |
+| `graph_edges` | Entity relationships and cross-document links |
 
 ---
 
-# 📈 Case Study: PageIndex Leads Finance QA Benchmark
+## Acknowledgements
 
-[Mafin 2.5](https://vectify.ai/mafin) is a reasoning-based RAG system for financial document analysis, powered by **PageIndex**. It achieved a state-of-the-art [**98.7% accuracy**](https://vectify.ai/blog/Mafin2.5) on the [FinanceBench](https://arxiv.org/abs/2311.11944) benchmark, significantly outperforming traditional vector-based RAG systems.
-
-PageIndex's hierarchical indexing and reasoning-driven retrieval enable precise navigation and extraction of relevant context from complex financial reports, such as SEC filings and earnings disclosures.
-
-Explore the full [benchmark results](https://github.com/VectifyAI/Mafin2.5-FinanceBench) and our [blog post](https://vectify.ai/blog/Mafin2.5) for detailed comparisons and performance metrics.
-
-<div align="center">
-  <a href="https://github.com/VectifyAI/Mafin2.5-FinanceBench">
-    <img src="https://github.com/user-attachments/assets/571aa074-d803-43c7-80c4-a04254b782a3" width="70%">
-  </a>
-</div>
+IDP Kit's document indexing and retrieval engine is built on [PageIndex](https://github.com/VectifyAI/PageIndex) by [Vectify AI](https://vectify.ai) — a vectorless, reasoning-based RAG system that uses hierarchical tree indexing and LLM-guided tree search instead of vector similarity. PageIndex achieved 98.7% accuracy on [FinanceBench](https://arxiv.org/abs/2311.11944), demonstrating the power of reasoning-based retrieval over traditional vector approaches.
 
 ---
 
-# 🧭 Resources
+## License
 
-* 🧪 [Cookbooks](https://docs.pageindex.ai/cookbook/vectorless-rag-pageindex): hands-on, runnable examples and advanced use cases.
-* 📖 [Tutorials](https://docs.pageindex.ai/doc-search): practical guides and strategies, including *Document Search* and *Tree Search*.
-* 📝 [Blog](https://pageindex.ai/blog): technical articles, research insights, and product updates.
-* 🔌 [MCP setup](https://pageindex.ai/mcp#quick-setup) & [API docs](https://docs.pageindex.ai/quickstart): integration details and configuration options.
-
----
-
-# ⭐ Support Us
-Please cite this work as:
-```
-Mingtian Zhang, Yu Tang and PageIndex Team,
-"PageIndex: Next-Generation Vectorless, Reasoning-based RAG",
-PageIndex Blog, Sep 2025.
-```
-
-Or use the BibTeX citation:
-
-```
-@article{zhang2025pageindex,
-  author = {Mingtian Zhang and Yu Tang and PageIndex Team},
-  title = {PageIndex: Next-Generation Vectorless, Reasoning-based RAG},
-  journal = {PageIndex Blog},
-  year = {2025},
-  month = {September},
-  note = {https://pageindex.ai/blog/pageindex-intro},
-}
-```
-
-Leave us a star 🌟 if you like our project. Thank you!  
-
-<p>
-  <img src="https://github.com/user-attachments/assets/eae4ff38-48ae-4a7c-b19f-eab81201d794" width="80%">
-</p>
-
-### Connect with Us
-
-[![Twitter](https://img.shields.io/badge/Twitter-000000?style=for-the-badge&logo=x&logoColor=white)](https://x.com/PageIndexAI)&nbsp;
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/company/vectify-ai/)&nbsp;
-[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.com/invite/VuXuf29EUj)&nbsp;
-[![Contact Us](https://img.shields.io/badge/Contact_Us-3B82F6?style=for-the-badge&logo=envelope&logoColor=white)](https://ii2abc2jejf.typeform.com/to/tK3AXl8T)
-
----
-
-© 2025 [Vectify AI](https://vectify.ai)
+MIT

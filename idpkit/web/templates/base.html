@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}IDP Kit{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js" defer></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body x-data="{ sidebarOpen: true }">
+    {% if user %}
+    <div class="app-layout">
+        <nav class="sidebar" :class="{ 'collapsed': !sidebarOpen }">
+            <div class="sidebar-header">
+                <h1 class="logo"><i class="fas fa-file-alt"></i> <span>IDP Kit</span></h1>
+                <button @click="sidebarOpen = !sidebarOpen" class="toggle-btn">
+                    <i class="fas fa-bars"></i>
+                </button>
+            </div>
+            <ul class="nav-links">
+                <li><a href="/dashboard" class="{% if request.url.path == '/dashboard' %}active{% endif %}">
+                    <i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
+                <li><a href="/upload" class="{% if request.url.path == '/upload' %}active{% endif %}">
+                    <i class="fas fa-cloud-upload-alt"></i> <span>Upload</span></a></li>
+                <li><a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">
+                    <i class="fas fa-robot"></i> <span>AI Agent</span></a></li>
+                <li><a href="/tools" class="{% if request.url.path == '/tools' %}active{% endif %}">
+                    <i class="fas fa-tools"></i> <span>Smart Tools</span></a></li>
+                <li><a href="/batch" class="{% if request.url.path == '/batch' %}active{% endif %}">
+                    <i class="fas fa-layer-group"></i> <span>Batch</span></a></li>
+                <li><a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">
+                    <i class="fas fa-cog"></i> <span>Settings</span></a></li>
+            </ul>
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <i class="fas fa-user-circle"></i>
+                    <span>{{ user.username }}</span>
+                </div>
+                <button onclick="logout()" class="logout-btn">
+                    <i class="fas fa-sign-out-alt"></i> <span>Logout</span>
+                </button>
+            </div>
+        </nav>
+        <main class="content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    {% else %}
+    <main class="auth-layout">
+        {% block auth_content %}{% endblock %}
+    </main>
+    {% endif %}
+
+    <script>
+    async function logout() {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        window.location.href = '/login';
+    }
+
+    function apiHeaders() {
+        return { 'Content-Type': 'application/json' };
+    }
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
