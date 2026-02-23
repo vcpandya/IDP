@@ -411,94 +411,106 @@ class ConvertOptionsRequest(BaseModel):
 
 class ConvertOptionsResponse(BaseModel):
     options: dict
+    schema_used: dict
     raw_text: str
 
 
 @router.post(
     "/convert-options",
     response_model=ConvertOptionsResponse,
-    summary="Convert plain-text options to structured JSON via AI",
+    summary="Convert plain-text options to structured JSON via AI (two-pass)",
 )
 async def convert_options(
     body: ConvertOptionsRequest,
     user: User = Depends(get_current_user),
     llm: LLMClient = Depends(get_llm),
 ):
-    """Use the LLM with structured output to convert free-text processing
-    preferences into a well-formed JSON options object."""
+    """Two-pass conversion of free-text processing preferences into structured JSON.
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "length": {
-                "type": "string",
-                "enum": ["brief", "standard", "detailed", "comprehensive"],
-                "description": "Output length preference"
-            },
-            "output_format": {
-                "type": "string",
-                "enum": ["json", "markdown", "text", "html", "csv", "bullet_points"],
-                "description": "Desired output format"
-            },
-            "focus_areas": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Specific topics or areas to focus on"
-            },
-            "language": {
-                "type": "string",
-                "description": "Output language (e.g. English, Spanish)"
-            },
-            "tone": {
-                "type": "string",
-                "enum": ["formal", "casual", "technical", "executive", "academic"],
-                "description": "Writing tone/style"
-            },
-            "include_examples": {
-                "type": "boolean",
-                "description": "Whether to include examples in the output"
-            },
-            "max_items": {
-                "type": "integer",
-                "description": "Maximum number of items/points to extract"
-            },
-            "preserve_formatting": {
-                "type": "boolean",
-                "description": "Whether to preserve original document formatting"
-            },
-            "additional_instructions": {
-                "type": "string",
-                "description": "Any other preferences that don't fit the above fields"
-            }
-        },
-        "required": []
-    }
+    Pass 1: Analyze the user's text and generate a JSON Schema that captures
+    all the preferences they expressed — no predefined fields.
 
+    Pass 2: Use that generated schema with structured output to produce the
+    final options JSON object.
+    """
     import json as _json
-    schema_str = _json.dumps(schema, indent=2)
 
-    system_msg = (
-        "You convert plain-text processing preferences into a structured JSON object. "
-        "Map the user's natural language preferences to the appropriate fields in the schema. "
-        "Only include fields that the user actually mentioned or implied. "
+    # ------------------------------------------------------------------
+    # Pass 1: Generate a JSON Schema from the user's text
+    # ------------------------------------------------------------------
+    pass1_system = (
+        "You are a schema architect. The user has described processing preferences "
+        "in plain text. Analyze what they want and generate a JSON Schema that "
+        "captures every preference they expressed as typed fields.\n\n"
+        "Rules:\n"
+        "- Output ONLY valid JSON Schema (no markdown, no explanation)\n"
+        "- Create field names that are descriptive snake_case keys\n"
+        "- Use appropriate types: string, number, integer, boolean, array, object\n"
+        "- Add 'description' to each property explaining what it captures\n"
+        "- Use 'enum' where the preference implies a fixed set of choices\n"
+        "- Include 'type': 'object' at the root with 'properties'\n"
+        "- Only create fields for things the user actually mentioned"
+    )
+
+    generated_schema = None
+    try:
+        pass1_response = await llm.acomplete(
+            f"Generate a JSON Schema for these processing preferences:\n\n{body.text}",
+            chat_history=[{"role": "system", "content": pass1_system}],
+        )
+        raw = pass1_response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+        schema = _json.loads(raw)
+        if isinstance(schema, dict) and "properties" in schema:
+            generated_schema = schema
+            logger.info(
+                "Options Pass 1: Generated schema with %d properties",
+                len(schema.get("properties", {})),
+            )
+    except Exception as exc:
+        logger.warning("Options Pass 1 (schema generation) failed: %s", exc)
+
+    if not generated_schema:
+        return ConvertOptionsResponse(
+            options={"instructions": body.text},
+            schema_used={},
+            raw_text=body.text,
+        )
+
+    # ------------------------------------------------------------------
+    # Pass 2: Use the generated schema to produce structured options
+    # ------------------------------------------------------------------
+    schema_str = _json.dumps(generated_schema, indent=2)
+    pass2_system = (
+        "You convert plain-text processing preferences into a structured JSON object "
+        "that conforms to the provided JSON Schema. Map each preference the user "
+        "expressed to the appropriate field.\n"
         "Return ONLY valid JSON — no markdown, no explanation.\n\n"
         f"JSON Schema:\n{schema_str}"
     )
 
     try:
-        response = await llm.acomplete(
+        pass2_response = await llm.acomplete(
             body.text,
-            chat_history=[{"role": "system", "content": system_msg}],
+            chat_history=[{"role": "system", "content": pass2_system}],
             response_format={"type": "json_object"},
         )
-        options = _json.loads(response.content)
+        options = _json.loads(pass2_response.content)
         if not isinstance(options, dict):
-            options = {}
+            options = {"instructions": body.text}
     except Exception as exc:
-        logger.warning("Options conversion failed: %s", exc)
-        options = {"additional_instructions": body.text}
+        logger.warning("Options Pass 2 (structured extraction) failed: %s", exc)
+        options = {"instructions": body.text}
 
-    return ConvertOptionsResponse(options=options, raw_text=body.text)
+    return ConvertOptionsResponse(
+        options=options,
+        schema_used=generated_schema,
+        raw_text=body.text,
+    )
 
 
 # ---------------------------------------------------------------------------
