@@ -557,36 +557,43 @@ function knowledgeBase() {
             const eligibleDocs = this.tagDocuments.filter(d => d.status !== 'failed');
             if (eligibleDocs.length === 0) { alert('No documents available to process.'); return; }
             this.bulkBuildingGraphs = true;
-            this.bulkBuildGraphStatus = `Processing ${eligibleDocs.length} documents (indexing & building graphs)...`;
-            try {
-                const res = await fetch('/api/graph/build-bulk', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ document_ids: eligibleDocs.map(d => d.id) })
-                });
-                if (res.ok) {
-                    const data = await res.json();
-                    const parts = [];
-                    if (data.indexed > 0) parts.push(`${data.indexed} indexed`);
-                    if (data.built > 0) parts.push(`${data.built} graphs built`);
-                    if (data.skipped > 0) parts.push(`${data.skipped} already done`);
-                    if (data.failed > 0) parts.push(`${data.failed} failed`);
-                    this.bulkBuildGraphStatus = `Done: ${parts.join(', ')}`;
-                    for (const r of (data.results || [])) {
-                        if (r.status === 'built' || r.status === 'already_built') {
-                            const td = this.tagDocuments.find(d => d.id === r.document_id);
-                            if (td) td.status = 'indexed';
+            const total = eligibleDocs.length;
+            let indexed = 0, built = 0, skipped = 0, failed = 0;
+            for (let i = 0; i < total; i++) {
+                const doc = eligibleDocs[i];
+                this.bulkBuildGraphStatus = `Processing ${i + 1}/${total}: ${doc.filename || doc.id.slice(0,8)}...`;
+                try {
+                    const res = await fetch('/api/graph/build-bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_ids: [doc.id] })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        indexed += data.indexed || 0;
+                        built += data.built || 0;
+                        skipped += data.skipped || 0;
+                        failed += data.failed || 0;
+                        for (const r of (data.results || [])) {
+                            if (r.status === 'built' || r.status === 'already_built') {
+                                const td = this.tagDocuments.find(d => d.id === r.document_id);
+                                if (td) td.status = 'indexed';
+                            }
                         }
+                    } else {
+                        failed++;
                     }
-                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 8000);
-                } else {
-                    this.bulkBuildGraphStatus = 'Processing failed';
-                    setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
+                } catch(e) {
+                    failed++;
                 }
-            } catch(e) {
-                this.bulkBuildGraphStatus = 'Processing failed';
-                setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 3000);
             }
+            const parts = [];
+            if (indexed > 0) parts.push(`${indexed} indexed`);
+            if (built > 0) parts.push(`${built} graphs built`);
+            if (skipped > 0) parts.push(`${skipped} already done`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            this.bulkBuildGraphStatus = `Done: ${parts.join(', ')}`;
+            setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 8000);
             this.bulkBuildingGraphs = false;
         },
 
@@ -764,7 +771,9 @@ function knowledgeBase() {
                             }
                             break;
                         } else {
-                            this.ytStatus = `Processing... ${job.progress || 0}%`;
+                            const pct = job.progress || 0;
+                            const done = Math.round(pct / 100 * data.video_count);
+                            this.ytStatus = `Processing... ${done}/${data.video_count} videos (${pct}%)`;
                         }
                     }
                     attempts++;
@@ -830,6 +839,11 @@ function knowledgeBase() {
         },
 
         async bulkTagSelected(tagId) {
+            const count = this.selectedDocIds.length;
+            const tagObj = this.tags.find(t => t.id === tagId);
+            const tagName = tagObj ? tagObj.name : 'tag';
+            this.ytStatus = `Tagging ${count} document(s) with "${tagName}"...`;
+            this.ytStatusClass = 'text-info';
             try {
                 const res = await fetch('/api/tags/' + tagId + '/documents', {
                     method: 'POST',
@@ -838,27 +852,49 @@ function knowledgeBase() {
                 });
                 if (!res.ok) {
                     const err = await res.text();
-                    alert('Failed to tag documents: ' + err);
+                    this.ytStatus = 'Failed to tag documents: ' + err;
+                    this.ytStatusClass = 'text-danger';
+                } else {
+                    this.ytStatus = `Tagged ${count} document(s) with "${tagName}"`;
+                    this.ytStatusClass = 'text-success';
                 }
             } catch (e) {
-                alert('Failed to tag documents: ' + e.message);
+                this.ytStatus = 'Failed to tag documents: ' + e.message;
+                this.ytStatusClass = 'text-danger';
             }
             this.selectedDocIds = [];
             await this.loadData();
+            setTimeout(() => { this.ytStatus = ''; }, 4000);
         },
 
         async bulkDeleteSelected() {
-            const count = this.selectedDocIds.length;
+            const ids = [...this.selectedDocIds];
+            const count = ids.length;
             if (!confirm('Delete ' + count + ' selected document(s)? This cannot be undone.')) return;
-            try {
-                await Promise.all(this.selectedDocIds.map(id =>
-                    fetch('/api/documents/' + id, { method: 'DELETE' })
-                ));
-            } catch (e) {
-                alert('Failed to delete some documents: ' + e.message);
+            let deleted = 0;
+            let failed = 0;
+            this.ytStatus = `Deleting 0/${count}...`;
+            this.ytStatusClass = 'text-info';
+            for (const id of ids) {
+                try {
+                    const res = await fetch('/api/documents/' + id, { method: 'DELETE' });
+                    if (res.ok) {
+                        deleted++;
+                        this.documents = this.documents.filter(d => d.id !== id);
+                        this.selectedDocIds = this.selectedDocIds.filter(sid => sid !== id);
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    failed++;
+                }
+                this.ytStatus = `Deleting ${deleted + failed}/${count}...`;
             }
             this.selectedDocIds = [];
+            this.ytStatus = `Deleted ${deleted} document(s)` + (failed > 0 ? `, ${failed} failed` : '');
+            this.ytStatusClass = failed > 0 ? 'text-warning' : 'text-success';
             await this.loadData();
+            setTimeout(() => { this.ytStatus = ''; }, 4000);
         },
 
         async _uploadFiles(files, tagId) {
