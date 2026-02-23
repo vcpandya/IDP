@@ -1142,3 +1142,87 @@ def validate_and_truncate_physical_indices(toc_with_page_number, page_list_lengt
         print(f"Truncated {len(truncated_items)} TOC items that exceeded document length")
      
     return toc_with_page_number
+
+
+async def build_tree_index(
+    file_key: str,
+    storage,
+    llm=None,
+    model: str = None,
+    toc_check_pages: int = None,
+    max_pages_per_node: int = None,
+    progress_callback=None,
+):
+    """Async bridge for the web API to call the PageIndex engine.
+
+    Loads the PDF from storage, runs the tree-building pipeline, and
+    returns the tree dict.  ``progress_callback`` is awaited with an
+    int percentage (0-100) at key milestones.
+    """
+
+    async def _report(pct):
+        if progress_callback:
+            cb = progress_callback(pct)
+            if asyncio.iscoroutine(cb) or asyncio.isfuture(cb):
+                await cb
+
+    await _report(5)
+
+    pdf_bytes = storage.load(file_key)
+    pdf_stream = BytesIO(pdf_bytes)
+
+    await _report(10)
+
+    page_list = get_page_tokens(pdf_stream, pdf_parser="PyMuPDF")
+    total_pages = len(page_list)
+    logging.getLogger(__name__).info(
+        "build_tree_index: %d pages, %d tokens",
+        total_pages,
+        sum(t for _, t in page_list),
+    )
+
+    await _report(15)
+
+    user_opt = {}
+    if model:
+        user_opt["model"] = model
+    if toc_check_pages:
+        user_opt["toc_check_page_num"] = toc_check_pages
+    if max_pages_per_node:
+        user_opt["max_page_num_each_node"] = max_pages_per_node
+
+    opt = ConfigLoader().load(user_opt)
+    logger = JsonLogger(pdf_stream)
+
+    await _report(20)
+
+    structure = await tree_parser(page_list, opt, doc=pdf_stream, logger=logger)
+
+    await _report(70)
+
+    if opt.if_add_node_id == "yes":
+        write_node_id(structure)
+    if opt.if_add_node_text == "yes":
+        add_node_text(structure, page_list)
+    if opt.if_add_node_summary == "yes":
+        if opt.if_add_node_text == "no":
+            add_node_text(structure, page_list)
+        await generate_summaries_for_structure(structure, model=opt.model)
+        if opt.if_add_node_text == "no":
+            remove_structure_text(structure)
+
+    await _report(90)
+
+    doc_name = get_pdf_name(pdf_stream)
+    result = {
+        "doc_name": doc_name,
+        "doc_description": None,
+        "structure": structure,
+    }
+
+    if getattr(opt, "if_add_doc_description", "no") == "yes":
+        clean = create_clean_structure_for_description(structure)
+        result["doc_description"] = generate_doc_description(clean, model=opt.model)
+
+    await _report(100)
+    return result
