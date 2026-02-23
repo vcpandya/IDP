@@ -1,10 +1,10 @@
-modules = ["python-3.10", "web"]
+modules = ["python-3.10", "web", "postgresql-16"]
 [agent]
 expertMode = true
 
 [nix]
 channel = "stable-25_05"
-packages = ["cargo", "freetype", "gumbo", "harfbuzz", "jbig2dec", "libiconv", "libjpeg_turbo", "libxcrypt", "libyaml", "mupdf", "openjpeg", "rustc", "swig", "xcbuild"]
+packages = ["cargo", "freetype", "gumbo", "harfbuzz", "jbig2dec", "libiconv", "libjpeg_turbo", "libxcrypt", "libyaml", "mupdf", "openjpeg", "postgresql", "rustc", "swig", "xcbuild"]
 
 [workflows]
 runButton = "Project"
