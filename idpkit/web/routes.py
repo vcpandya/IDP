@@ -36,11 +36,16 @@ async def dashboard_page(request: Request, user=Depends(get_current_user_optiona
     return templates.TemplateResponse("dashboard.html", {"request": request, "user": user})
 
 
-@router.get("/upload", response_class=HTMLResponse)
-async def upload_page(request: Request, user=Depends(get_current_user_optional)):
+@router.get("/knowledge-base", response_class=HTMLResponse)
+async def knowledge_base_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
-    return templates.TemplateResponse("upload.html", {"request": request, "user": user})
+    return templates.TemplateResponse("knowledge_base.html", {"request": request, "user": user})
+
+
+@router.get("/upload", response_class=HTMLResponse)
+async def upload_page(request: Request, user=Depends(get_current_user_optional)):
+    return RedirectResponse(url="/knowledge-base", status_code=302)
 
 
 @router.get("/documents/{doc_id}", response_class=HTMLResponse)

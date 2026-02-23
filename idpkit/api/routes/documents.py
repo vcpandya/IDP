@@ -9,6 +9,7 @@ from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from idpkit.db.session import get_db
 from idpkit.db.models import Document, User
@@ -74,6 +75,15 @@ IMAGE_CONTENT_TYPES: dict[str, str] = {
 # Response schemas
 # ---------------------------------------------------------------------------
 
+class TagBrief(BaseModel):
+    id: str
+    name: str
+    color: str
+
+    class Config:
+        from_attributes = True
+
+
 class DocumentResponse(BaseModel):
     id: str
     filename: str
@@ -88,6 +98,7 @@ class DocumentResponse(BaseModel):
     owner_id: str
     created_at: datetime
     updated_at: Optional[datetime] = None
+    tags: list[TagBrief] = []
 
     class Config:
         from_attributes = True
@@ -218,8 +229,13 @@ async def list_documents(
     count_stmt = select(func.count()).select_from(base.subquery())
     total = (await db.execute(count_stmt)).scalar() or 0
 
-    # Paginated rows
-    stmt = base.order_by(Document.created_at.desc()).offset(skip).limit(limit)
+    # Paginated rows (eagerly load tags for response serialization)
+    stmt = (
+        base.options(selectinload(Document.tags))
+        .order_by(Document.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     result = await db.execute(stmt)
     docs = result.scalars().all()
 
@@ -238,7 +254,9 @@ async def get_document(
 ):
     """Return full document details including ``tree_index`` if available."""
     result = await db.execute(
-        select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+        select(Document)
+        .options(selectinload(Document.tags))
+        .where(Document.id == doc_id, Document.owner_id == user.id)
     )
     doc = result.scalar_one_or_none()
     if not doc:
