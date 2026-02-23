@@ -56,6 +56,85 @@ def _extract_text_from_tree(tree_index: dict | list | None) -> str:
     return "\n\n".join(parts)
 
 
+async def _generate_output_schema(
+    *,
+    prompt: str,
+    reference_texts: list[str],
+    llm: LLMClient,
+) -> dict | None:
+    """Pass 1: Ask the LLM to generate a JSON schema based on the prompt and reference documents.
+
+    Returns a JSON schema dict, or None if generation fails.
+    """
+    system_msg = (
+        "You are a schema architect. Based on the user's processing instructions and any "
+        "reference documents provided, generate a JSON Schema that defines the ideal structured "
+        "output format. The schema should capture all the fields, types, and structure that the "
+        "instructions imply.\n\n"
+        "Rules:\n"
+        "- Output ONLY valid JSON Schema (no markdown, no explanation)\n"
+        "- Use descriptive field names\n"
+        "- Include 'type', 'properties', and 'required' at minimum\n"
+        "- Use appropriate types: string, number, integer, boolean, array, object\n"
+        "- Add 'description' to each property to clarify what it captures\n"
+        "- The schema should be reusable across multiple similar documents"
+    )
+
+    user_content = f"Processing Instructions:\n{prompt}\n"
+    if reference_texts:
+        user_content += "\nReference Documents (for context on expected data):\n"
+        for i, text in enumerate(reference_texts, 1):
+            preview = text[:3000]
+            user_content += f"\n--- Reference {i} ---\n{preview}\n"
+
+    user_content += (
+        "\nBased on these instructions and reference materials, generate the JSON Schema "
+        "for the structured output format."
+    )
+
+    try:
+        response = await llm.acomplete(
+            user_content,
+            chat_history=[{"role": "system", "content": system_msg}],
+        )
+        import json as _json
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+        schema = _json.loads(raw)
+        if isinstance(schema, dict) and "properties" in schema:
+            logger.info("Generated output schema with %d properties", len(schema.get("properties", {})))
+            return schema
+        logger.warning("Generated schema missing 'properties' key, discarding")
+        return None
+    except Exception as exc:
+        logger.warning("Failed to generate output schema: %s", exc)
+        return None
+
+
+async def _load_reference_doc_texts(
+    reference_doc_ids: list[str],
+    session_factory,
+) -> list[str]:
+    """Load text content from reference documents."""
+    from sqlalchemy import select
+    from idpkit.db.models import Document
+
+    texts = []
+    async with session_factory() as session:
+        result = await session.execute(
+            select(Document).where(Document.id.in_(reference_doc_ids))
+        )
+        for doc in result.scalars().all():
+            text = _extract_text_from_tree(doc.tree_index)
+            if text:
+                texts.append(f"[{doc.filename}]\n{text}")
+    return texts
+
+
 async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
     """Execute a batch processing job.
 
@@ -98,6 +177,7 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
         batch_model = batch.model
         concurrency = batch.concurrency or 3
         owner_id = batch.owner_id
+        reference_doc_ids = batch.reference_doc_ids or []
 
     # ------------------------------------------------------------------
     # 2. Load template if referenced
@@ -126,6 +206,44 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
     # Merge: template values as defaults, batch body overrides
     merged_prompt = batch_prompt or template_prompt or ""
     merged_options = {**template_options, **batch_options}
+
+    # ------------------------------------------------------------------
+    # 2b. Load reference documents and generate schema (two-pass)
+    # ------------------------------------------------------------------
+    generated_schema = None
+    reference_doc_texts: list[str] = []
+
+    if reference_doc_ids:
+        reference_doc_texts = await _load_reference_doc_texts(reference_doc_ids, session_factory)
+
+    if tool_name == "custom" and not template_output_template and merged_prompt:
+        if reference_doc_texts or merged_prompt:
+            temp_llm = get_default_client()
+            if batch_model:
+                temp_llm = LLMClient(
+                    default_model=batch_model,
+                    api_key=temp_llm.api_key,
+                    api_base=temp_llm.api_base,
+                )
+            logger.info(
+                "Batch %s: Running Pass 1 — generating output schema from prompt + %d reference docs",
+                batch_id, len(reference_doc_texts),
+            )
+            generated_schema = await _generate_output_schema(
+                prompt=merged_prompt,
+                reference_texts=reference_doc_texts,
+                llm=temp_llm,
+            )
+            if generated_schema:
+                async with session_factory() as session:
+                    result = await session.execute(select(BatchJob).where(BatchJob.id == batch_id))
+                    batch_row = result.scalar_one_or_none()
+                    if batch_row:
+                        batch_row.generated_schema = generated_schema
+                        await session.commit()
+                logger.info("Batch %s: Schema generated successfully, proceeding to Pass 2", batch_id)
+            else:
+                logger.info("Batch %s: Schema generation returned None, proceeding without structured output", batch_id)
 
     # ------------------------------------------------------------------
     # 3. Get tool instance (or None for "custom" mode)
@@ -234,12 +352,16 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
 
                 # Execute tool or custom LLM
                 if tool_name == "custom":
+                    ref_content = template_reference_content
+                    if not ref_content and reference_doc_texts:
+                        ref_content = "\n\n---\n\n".join(reference_doc_texts)
                     item_result = await _run_custom_llm(
                         doc_tree_index=doc_tree_index,
                         doc_filename=doc_filename,
                         prompt=merged_prompt,
-                        reference_content=template_reference_content,
+                        reference_content=ref_content,
                         llm=llm,
+                        output_schema=generated_schema,
                     )
                 else:
                     # Inject prompt into options if provided
@@ -366,23 +488,54 @@ async def _run_custom_llm(
     prompt: str,
     reference_content: str | None,
     llm: LLMClient,
+    output_schema: dict | None = None,
 ) -> dict:
-    """Run raw LLM processing (custom mode) — ports V1's generate_evaluation."""
+    """Run raw LLM processing (custom mode).
+
+    If ``output_schema`` is provided (from Pass 1), instructs the LLM to
+    produce structured JSON matching the schema.
+    """
     doc_text = _extract_text_from_tree(doc_tree_index)
     if not doc_text:
         doc_text = "(No indexed content available for this document)"
 
     messages = []
-    if prompt:
-        messages.append({"role": "system", "content": prompt})
+    system_content = prompt or ""
+    if output_schema:
+        import json as _json
+        schema_str = _json.dumps(output_schema, indent=2)
+        system_content += (
+            "\n\nIMPORTANT: You MUST return your response as valid JSON that conforms "
+            "to the following JSON Schema. Do NOT include any text outside the JSON object.\n\n"
+            f"JSON Schema:\n{schema_str}"
+        )
+    if system_content:
+        messages.append({"role": "system", "content": system_content})
 
     user_content = f"Document: {doc_filename}\n\n"
     if reference_content:
         user_content += f"Reference/Instructions:\n{reference_content}\n\n"
     user_content += f"Document Content:\n{doc_text}"
 
-    response = await llm.acomplete(user_content, chat_history=messages if messages else None)
-    return {"status": "success", "data": {"response": response.content}}
+    llm_kwargs = {}
+    if output_schema:
+        llm_kwargs["response_format"] = {"type": "json_object"}
+
+    response = await llm.acomplete(
+        user_content,
+        chat_history=messages if messages else None,
+        **llm_kwargs,
+    )
+
+    result_data: dict | str = response.content
+    if output_schema:
+        try:
+            import json as _json
+            result_data = _json.loads(response.content)
+        except Exception:
+            result_data = response.content
+
+    return {"status": "success", "data": {"response": result_data}}
 
 
 async def _auto_index_document(doc, session_factory):

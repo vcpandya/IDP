@@ -96,6 +96,7 @@ class BatchCreateRequest(BaseModel):
     options: Optional[dict] = None
     model: Optional[str] = None
     concurrency: int = Field(3, ge=1, le=10)
+    reference_doc_ids: Optional[list[str]] = None
 
 
 class BatchItemResponse(BaseModel):
@@ -462,6 +463,7 @@ async def create_batch(
         options=body.options,
         model=body.model,
         concurrency=body.concurrency,
+        reference_doc_ids=body.reference_doc_ids,
     )
     db.add(batch)
     await db.flush()

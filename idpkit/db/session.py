@@ -35,7 +35,17 @@ async def init_db():
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversation_messages"))
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversations"))
 
+        def _migrate_batch_jobs(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "batch_jobs" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("batch_jobs")}
+                if "reference_doc_ids" not in cols:
+                    sync_conn.execute(text("ALTER TABLE batch_jobs ADD COLUMN reference_doc_ids JSON"))
+                if "generated_schema" not in cols:
+                    sync_conn.execute(text("ALTER TABLE batch_jobs ADD COLUMN generated_schema JSON"))
+
         await conn.run_sync(_migrate_conversations)
+        await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(Base.metadata.create_all)
 
 
