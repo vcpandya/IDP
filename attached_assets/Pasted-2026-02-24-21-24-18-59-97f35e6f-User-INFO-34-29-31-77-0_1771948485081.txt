@@ -1,0 +1,72 @@
+2026-02-24 21:24:18.59
+97f35e6f
+User
+INFO: 34.29.31.77:0 - "POST /api/auth/login HTTP/1.1" 500 Internal Server Error
+2026-02-24 21:24:18.67
+97f35e6f
+User
+self._check_open()
+2026-02-24 21:24:18.67
+97f35e6f
+User
+self.dialect.do_execute(
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+2026-02-24 21:24:18.67
+97f35e6f
+User
+Traceback (most recent call last):
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/asyncpg/connection.py", line 302, in transaction
+2026-02-24 21:24:18.67
+97f35e6f
+User
+self._transaction = self._connection.transaction(
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+2026-02-24 21:24:18.67
+97f35e6f
+User
+ERROR: Exception in ASGI application
+2026-02-24 21:24:18.67
+97f35e6f
+User
+cursor.execute(statement, parameters)
+2026-02-24 21:24:18.67
+97f35e6f
+User
+self._adapt_connection.await_(
+2026-02-24 21:24:18.67
+97f35e6f
+User
+Traceback (most recent call last):
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/asyncpg/connection.py", line 1605, in _check_open
+2026-02-24 21:24:18.67
+97f35e6f
+User
+The above exception was the direct cause of the following exception:
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 843, in _start_transaction
+2026-02-24 21:24:18.67
+97f35e6f
+User
+raise exceptions.InterfaceError('connection is closed')
+2026-02-24 21:24:18.67
+97f35e6f
+User
+File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+2026-02-24 21:24:18.67
+97f35e6f
+User
+asyncpg.exceptions._base.InterfaceError: connection is closed
