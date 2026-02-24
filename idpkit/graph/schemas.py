@@ -16,6 +16,7 @@ class EntitySchema(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     first_document_id: Optional[str] = None
     document_count: int = 1
+    mention_count: int = 0
 
     model_config = {"from_attributes": True}
 

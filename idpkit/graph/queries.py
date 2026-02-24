@@ -21,20 +21,27 @@ async def search_entities(
     name: str | None = None,
     entity_type: str | None = None,
     limit: int = _DEFAULT_LIMIT,
-) -> list[Entity]:
-    """Search entities by name (partial match) and/or type."""
-    stmt = select(Entity)
+) -> list[dict]:
+    """Search entities by name (partial match) and/or type, with mention counts."""
+    stmt = (
+        select(Entity, func.count(EntityMention.id).label("mention_count"))
+        .outerjoin(EntityMention, Entity.id == EntityMention.entity_id)
+        .group_by(Entity.id)
+    )
 
     if name:
-        # Truncate search term to prevent oversized queries
         search_term = name[:200].lower()
         stmt = stmt.where(func.lower(Entity.canonical_name).contains(search_term))
     if entity_type:
         stmt = stmt.where(Entity.entity_type == entity_type.upper()[:50])
 
     stmt = stmt.order_by(Entity.document_count.desc()).limit(limit)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    results = []
+    for entity, mc in rows:
+        entity.mention_count = mc
+        results.append(entity)
+    return results
 
 
 async def get_entity_detail(
@@ -168,17 +175,21 @@ async def get_document_entities(
     document_id: str,
     limit: int = 1000,
 ) -> list[Entity]:
-    """Get all entities found in a specific document."""
+    """Get all entities found in a specific document, with mention counts."""
     stmt = (
-        select(Entity)
+        select(Entity, func.count(EntityMention.id).label("mention_count"))
         .join(EntityMention, Entity.id == EntityMention.entity_id)
         .where(EntityMention.document_id == document_id)
-        .distinct()
+        .group_by(Entity.id)
         .order_by(Entity.canonical_name)
         .limit(limit)
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    results = []
+    for entity, mc in rows:
+        entity.mention_count = mc
+        results.append(entity)
+    return results
 
 
 async def get_document_edges(

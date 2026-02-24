@@ -238,7 +238,7 @@
                 <template x-for="ent in entities" :key="ent.id">
                     <div class="entity-item" :class="{ selected: selectedEntity?.id === ent.id }" @click="selectEntity(ent)">
                         <span class="entity-type-badge" :style="'background:' + typeColor(ent.entity_type) + '22; color:' + typeColor(ent.entity_type)"><i class="fas" :class="typeIcon(ent.entity_type)" style="margin-right:3px"></i><span x-text="ent.entity_type"></span></span>
-                        <span class="entity-name" x-text="ent.name"></span>
+                        <span class="entity-name" x-text="ent.canonical_name || ent.name"></span>
                         <span class="entity-count" x-text="(ent.mention_count || 0) + ' mentions'"></span>
                     </div>
                 </template>
