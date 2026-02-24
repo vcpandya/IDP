@@ -4,6 +4,7 @@ import logging
 
 from sqlalchemy import select, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from idpkit.db.models import Document
 from .models import Entity, EntityMention, GraphEdge
@@ -62,8 +63,18 @@ async def get_entity_detail(
         mention.source_url = doc_source_url
         enriched_mentions.append(mention)
 
-    edges = (await db.execute(
-        select(GraphEdge)
+    SourceEntity = aliased(Entity)
+    TargetEntity = aliased(Entity)
+    edge_rows = (await db.execute(
+        select(
+            GraphEdge,
+            SourceEntity.canonical_name.label("source_entity_name"),
+            SourceEntity.entity_type.label("source_entity_type"),
+            TargetEntity.canonical_name.label("target_entity_name"),
+            TargetEntity.entity_type.label("target_entity_type"),
+        )
+        .outerjoin(SourceEntity, GraphEdge.source_entity_id == SourceEntity.id)
+        .outerjoin(TargetEntity, GraphEdge.target_entity_id == TargetEntity.id)
         .where(
             or_(
                 GraphEdge.source_entity_id == entity_id,
@@ -71,9 +82,17 @@ async def get_entity_detail(
             )
         )
         .limit(_DEFAULT_LIMIT)
-    )).scalars().all()
+    )).all()
 
-    return {"entity": entity, "mentions": enriched_mentions, "edges": list(edges)}
+    enriched_edges = []
+    for edge, src_name, src_type, tgt_name, tgt_type in edge_rows:
+        edge.source_entity_name = src_name
+        edge.source_entity_type = src_type
+        edge.target_entity_name = tgt_name
+        edge.target_entity_type = tgt_type
+        enriched_edges.append(edge)
+
+    return {"entity": entity, "mentions": enriched_mentions, "edges": enriched_edges}
 
 
 async def get_entity_mentions(

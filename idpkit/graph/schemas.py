@@ -49,6 +49,10 @@ class EdgeSchema(BaseModel):
     weight: int = 1
     confidence: int = 80
     context_snippet: Optional[str] = None
+    source_entity_name: Optional[str] = None
+    source_entity_type: Optional[str] = None
+    target_entity_name: Optional[str] = None
+    target_entity_type: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
