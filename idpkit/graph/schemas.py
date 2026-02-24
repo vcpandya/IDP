@@ -29,6 +29,8 @@ class MentionSchema(BaseModel):
     mention_text: Optional[str] = None
     start_page: Optional[int] = None
     end_page: Optional[int] = None
+    document_filename: Optional[str] = None
+    document_format: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

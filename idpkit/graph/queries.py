@@ -48,11 +48,18 @@ async def get_entity_detail(
     if not entity:
         return None
 
-    mentions = (await db.execute(
-        select(EntityMention)
+    mention_rows = (await db.execute(
+        select(EntityMention, Document.filename, Document.format)
+        .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(_DEFAULT_LIMIT)
-    )).scalars().all()
+    )).all()
+
+    enriched_mentions = []
+    for mention, doc_filename, doc_format in mention_rows:
+        mention.document_filename = doc_filename
+        mention.document_format = doc_format
+        enriched_mentions.append(mention)
 
     edges = (await db.execute(
         select(GraphEdge)
@@ -65,7 +72,7 @@ async def get_entity_detail(
         .limit(_DEFAULT_LIMIT)
     )).scalars().all()
 
-    return {"entity": entity, "mentions": list(mentions), "edges": list(edges)}
+    return {"entity": entity, "mentions": enriched_mentions, "edges": list(edges)}
 
 
 async def get_entity_mentions(
@@ -74,12 +81,19 @@ async def get_entity_mentions(
     limit: int = _DEFAULT_LIMIT,
 ) -> list[EntityMention]:
     """Get all tree nodes where an entity is mentioned."""
-    result = await db.execute(
-        select(EntityMention)
+    rows = (await db.execute(
+        select(EntityMention, Document.filename, Document.format)
+        .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(min(limit, 200))
-    )
-    return list(result.scalars().all())
+    )).all()
+
+    enriched = []
+    for mention, doc_filename, doc_format in rows:
+        mention.document_filename = doc_filename
+        mention.document_format = doc_format
+        enriched.append(mention)
+    return enriched
 
 
 async def get_entity_neighbors(
