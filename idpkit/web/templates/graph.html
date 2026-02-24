@@ -197,7 +197,13 @@
                         <div x-show="m.node_title" style="font-size:0.75rem;color:var(--text-secondary, #4b5563)" x-text="m.node_title"></div>
                         <div style="font-size:0.7rem;color:var(--text-muted)">
                             <template x-if="m.document_format === 'youtube' && m.start_page != null">
-                                <span x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                                <span>
+                                    <a x-show="m.source_url" :href="youtubeTimestampUrl(m.source_url, m.start_page)" target="_blank" rel="noopener" style="color:#e74c3c;text-decoration:none" @mouseover="$el.style.textDecoration='underline'" @mouseout="$el.style.textDecoration='none'">
+                                        <i class="fab fa-youtube" style="margin-right:2px"></i>
+                                        <span x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                                    </a>
+                                    <span x-show="!m.source_url" x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                                </span>
                             </template>
                             <template x-if="m.document_format !== 'youtube' && m.start_page != null">
                                 <span x-text="'Pages ' + m.start_page + (m.end_page != null && m.end_page !== m.start_page ? '-' + m.end_page : '')"></span>
@@ -363,6 +369,27 @@ function graphExplorer() {
             const sec = s % 60;
             if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
             return m + ':' + String(sec).padStart(2, '0');
+        },
+
+        youtubeTimestampUrl(sourceUrl, startSeconds) {
+            if (!sourceUrl) return '#';
+            try {
+                const url = new URL(sourceUrl);
+                let videoId = url.searchParams.get('v');
+                if (!videoId) {
+                    const path = url.pathname.replace(/^\//, '');
+                    const segments = path.split('/');
+                    const last = segments[segments.length - 1];
+                    if (last && last.length >= 5 && !['watch', 'embed', 'shorts', 'channel', 'playlist'].includes(last)) {
+                        videoId = last;
+                    }
+                }
+                if (!videoId) return sourceUrl;
+                const t = Math.round(Number(startSeconds) || 0);
+                return 'https://www.youtube.com/watch?v=' + videoId + '&t=' + t + 's';
+            } catch(e) {
+                return sourceUrl;
+            }
         },
 
         addDocument(docId) {

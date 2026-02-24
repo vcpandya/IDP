@@ -31,6 +31,7 @@ class MentionSchema(BaseModel):
     end_page: Optional[int] = None
     document_filename: Optional[str] = None
     document_format: Optional[str] = None
+    source_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
