@@ -397,8 +397,13 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
                         from idpkit.api.deps import get_storage as _get_storage
                         from idpkit.batch.formatter import format_result_to_docx
                         storage = _get_storage()
+                        original_text = _extract_text_from_tree(doc_tree_index)
                         output_file_key = f"batch_outputs/{batch_id}/{item_id}.docx"
-                        docx_bytes = format_result_to_docx(tool_name, result_data, filename=doc_filename)
+                        docx_bytes = format_result_to_docx(
+                            tool_name, result_data,
+                            filename=doc_filename,
+                            original_text=original_text if original_text else None,
+                        )
                         storage.save(output_file_key, docx_bytes)
                         json_key = f"batch_outputs/{batch_id}/{item_id}.json"
                         storage.save(json_key, json.dumps(result_data, indent=2, default=str).encode("utf-8"))
