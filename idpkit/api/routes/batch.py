@@ -905,6 +905,178 @@ async def get_batch_results(
     }
 
 
+@router.get(
+    "/{batch_id}/items/{item_id}/download",
+    summary="Download a single batch item result",
+)
+async def download_batch_item(
+    batch_id: str,
+    item_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi.responses import Response
+
+    result = await db.execute(
+        select(BatchJob).where(BatchJob.id == batch_id, BatchJob.owner_id == user.id)
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+
+    item_result = await db.execute(
+        select(BatchItem).where(BatchItem.id == item_id, BatchItem.batch_job_id == batch_id)
+    )
+    item = item_result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Batch item not found")
+
+    if item.status != "completed":
+        raise HTTPException(status_code=400, detail="No result available for this item")
+
+    doc_result = await db.execute(
+        select(Document.filename).where(Document.id == item.document_id)
+    )
+    filename = doc_result.scalar_one_or_none() or item.document_id
+    safe_name = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+    content = None
+    if item.output_file:
+        try:
+            storage = get_storage()
+            content = storage.load(item.output_file)
+        except Exception:
+            pass
+    if content is None and item.result is not None:
+        content = json.dumps(item.result, indent=2, default=str).encode("utf-8")
+    if content is None:
+        raise HTTPException(status_code=400, detail="No result available for this item")
+
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}_result.json"'
+        },
+    )
+
+
+@router.get(
+    "/{batch_id}/download",
+    summary="Download all batch results as ZIP",
+)
+async def download_batch_zip(
+    batch_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import io
+    import zipfile
+    from fastapi.responses import Response
+
+    result = await db.execute(
+        select(BatchJob).where(BatchJob.id == batch_id, BatchJob.owner_id == user.id)
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+
+    items_result = await db.execute(
+        select(BatchItem)
+        .where(BatchItem.batch_job_id == batch_id, BatchItem.status == "completed")
+        .order_by(BatchItem.position)
+    )
+    items = items_result.scalars().all()
+    if not items:
+        raise HTTPException(status_code=400, detail="No completed results to download")
+
+    doc_ids = [item.document_id for item in items]
+    docs_result = await db.execute(
+        select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+    )
+    doc_names = {row[0]: row[1] for row in docs_result.all()}
+
+    storage = get_storage()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        seen_names = {}
+        for item in items:
+            item_content = None
+            if item.output_file:
+                try:
+                    item_content = storage.load(item.output_file).decode("utf-8")
+                except Exception:
+                    pass
+            if item_content is None and item.result is not None:
+                item_content = json.dumps(item.result, indent=2, default=str)
+            if item_content is None:
+                continue
+            filename = doc_names.get(item.document_id, item.document_id)
+            safe_name = filename.rsplit(".", 1)[0] if "." in filename else filename
+            if safe_name in seen_names:
+                seen_names[safe_name] += 1
+                safe_name = f"{safe_name}_{seen_names[safe_name]}"
+            else:
+                seen_names[safe_name] = 1
+            zf.writestr(
+                f"{safe_name}_result.json",
+                item_content,
+            )
+    buf.seek(0)
+
+    zip_filename = f"batch_{batch_id[:8]}_results.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"'
+        },
+    )
+
+
+@router.delete(
+    "/{batch_id}",
+    response_model=MessageResponse,
+    summary="Delete a batch job and its output files",
+)
+async def delete_batch(
+    batch_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(BatchJob).where(BatchJob.id == batch_id, BatchJob.owner_id == user.id)
+    )
+    batch = result.scalar_one_or_none()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch job not found")
+
+    if batch.status == "running":
+        raise HTTPException(status_code=400, detail="Cannot delete a running batch job. Cancel it first.")
+
+    try:
+        storage = get_storage()
+        output_keys = storage.list_keys(f"batch_outputs/{batch_id}/")
+        for key in output_keys:
+            try:
+                storage.delete(key)
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.warning("Failed to clean up storage for batch %s: %s", batch_id, exc)
+
+    items_result = await db.execute(
+        select(BatchItem).where(BatchItem.batch_job_id == batch_id)
+    )
+    for item in items_result.scalars().all():
+        await db.delete(item)
+
+    await db.delete(batch)
+    await db.flush()
+
+    return MessageResponse(detail="Batch job deleted")
+
+
 @router.post(
     "/{batch_id}/cancel",
     response_model=MessageResponse,

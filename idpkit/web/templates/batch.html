@@ -427,7 +427,13 @@
                             </td>
                             <td x-text="job.completed_items + '/' + job.total_items"></td>
                             <td class="bp-date" x-text="new Date(job.created_at).toLocaleString()"></td>
-                            <td><button @click.stop="viewJob(job.id)" class="btn btn-sm"><i class="fas fa-eye"></i></button></td>
+                            <td style="display:flex;gap:4px;">
+                                <button @click.stop="viewJob(job.id)" class="btn btn-sm" title="View details"><i class="fas fa-eye"></i></button>
+                                <button @click.stop="downloadAllResults(job.id)" class="btn btn-sm" title="Download results"
+                                    :disabled="job.completed_items === 0"><i class="fas fa-download"></i></button>
+                                <button @click.stop="deleteJob(job.id)" class="btn btn-sm btn-danger" title="Delete job"
+                                    :disabled="job.status === 'running'"><i class="fas fa-trash"></i></button>
+                            </td>
                         </tr>
                     </template>
                     <tr x-show="historyJobs.length === 0">
@@ -443,7 +449,18 @@
         <div class="modal" style="max-width:800px;" @click.stop>
             <div class="modal-header">
                 <h3>Batch Job Details</h3>
-                <button @click="viewingJob=null" class="btn-close">&times;</button>
+                <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+                    <button class="btn btn-sm btn-primary" @click="downloadAllResults(viewingJob.id)"
+                        :disabled="!viewingJob?.items?.some(i => i.status === 'completed')"
+                        title="Download all results as ZIP">
+                        <i class="fas fa-file-archive"></i> Download All (ZIP)
+                    </button>
+                    <button class="btn btn-sm btn-danger" @click="deleteJob(viewingJob.id)"
+                        title="Delete this batch job">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                    <button @click="viewingJob=null" class="btn-close">&times;</button>
+                </div>
             </div>
             <div class="modal-body">
                 <template x-if="viewingJob">
@@ -463,7 +480,14 @@
                             <div class="bp-job-result">
                                 <div style="display:flex;justify-content:space-between;align-items:center;">
                                     <span style="font-weight:600;font-size:.9rem;" x-text="item.filename || item.document_id"></span>
-                                    <span class="status-badge" :class="'status-' + item.status" x-text="item.status"></span>
+                                    <div style="display:flex;align-items:center;gap:6px;">
+                                        <button x-show="item.status === 'completed' && item.result"
+                                            class="btn btn-sm" title="Download result"
+                                            @click.stop="downloadItemResult(viewingJob.id, item.id, item.filename || item.document_id)">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                        <span class="status-badge" :class="'status-' + item.status" x-text="item.status"></span>
+                                    </div>
                                 </div>
                                 <div x-show="item.error" style="color:var(--danger);margin-top:4px;font-size:.82rem;" x-text="item.error"></div>
                                 <div x-show="item.result" style="margin-top:8px;">
@@ -845,6 +869,38 @@ function batchPage() {
         async viewJob(jobId) {
             const res = await fetch(`/api/batch/${jobId}`);
             if (res.ok) { this.viewingJob = await res.json(); }
+        },
+
+        downloadItemResult(batchId, itemId, filename) {
+            const a = document.createElement('a');
+            a.href = `/api/batch/${batchId}/items/${itemId}/download`;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        },
+
+        downloadAllResults(batchId) {
+            const a = document.createElement('a');
+            a.href = `/api/batch/${batchId}/download`;
+            a.download = '';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        },
+
+        async deleteJob(jobId) {
+            if (!confirm('Are you sure you want to delete this batch job and all its results? This cannot be undone.')) return;
+            const res = await fetch(`/api/batch/${jobId}`, { method: 'DELETE' });
+            if (res.ok) {
+                if (this.viewingJob && this.viewingJob.id === jobId) {
+                    this.viewingJob = null;
+                }
+                this.historyJobs = this.historyJobs.filter(j => j.id !== jobId);
+            } else {
+                const err = await res.json().catch(() => ({}));
+                alert('Delete failed: ' + (err.detail || 'Unknown error'));
+            }
         },
     }
 }

@@ -390,6 +390,18 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
                     item_status = "failed"
                     item_error = getattr(item_result, "error", "Tool returned error status")
 
+                # Persist result to storage as a JSON file
+                output_file_key = None
+                if item_status == "completed" and result_data is not None:
+                    try:
+                        from idpkit.api.deps import get_storage as _get_storage
+                        storage = _get_storage()
+                        output_file_key = f"batch_outputs/{batch_id}/{item_id}.json"
+                        storage.save(output_file_key, json.dumps(result_data, indent=2, default=str).encode("utf-8"))
+                    except Exception as exc:
+                        logger.warning("Failed to persist batch item %s output to storage: %s", item_id, exc)
+                        output_file_key = None
+
                 # Update item
                 async with session_factory() as session:
                     result = await session.execute(
@@ -400,7 +412,7 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
                         item.status = item_status
                         item.result = result_data
                         item.error = item_error
-                        item.output_file = getattr(item_result, "output_file", None)
+                        item.output_file = output_file_key or getattr(item_result, "output_file", None)
                         item.completed_at = _utcnow()
                         await session.commit()
 
