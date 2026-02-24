@@ -226,14 +226,27 @@
             <button class="btn btn-sm" :class="focusMode ? 'btn-primary' : ''" @click="toggleFocusMode()" :disabled="graphNodes.length === 0" title="Focus mode: click nodes to highlight their connections">
                 <i class="fas fa-crosshairs"></i> Focus
             </button>
+            <div style="display:flex;align-items:center;gap:4px;margin-left:4px" x-show="graphNodes.length > 0">
+                <input type="text" class="search-input" style="width:200px;padding:4px 10px;font-size:0.8rem" placeholder="AI Smart Focus..." x-model="smartFocusPrompt" @keydown.enter="runSmartFocus()">
+                <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#059669);color:#fff;border:none;white-space:nowrap" @click="runSmartFocus()" :disabled="smartFocusLoading || !smartFocusPrompt.trim()">
+                    <i class="fas" :class="smartFocusLoading ? 'fa-spinner fa-spin' : 'fa-magic'"></i> Focus
+                </button>
+            </div>
             <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
         </div>
-        <div class="focus-bar" x-show="focusMode" x-cloak>
+        <div class="focus-bar" x-show="focusMode && !smartFocusSummary" x-cloak>
             <i class="fas fa-crosshairs"></i>
             <span>Focus Mode</span>
             <span x-show="focusedNodeIds.length > 0" class="focus-badge" x-text="focusedNodeIds.length + ' node' + (focusedNodeIds.length !== 1 ? 's' : '') + ' selected'"></span>
             <span x-show="focusedNodeIds.length === 0" style="opacity:0.7">Click nodes to focus on their connections</span>
             <button class="btn btn-sm" x-show="focusedNodeIds.length > 0" @click="clearFocus()" style="margin-left:auto">Clear Selection</button>
+        </div>
+        <div class="focus-bar" x-show="smartFocusSummary" x-cloak style="background:linear-gradient(135deg,#faf5ff,#ecfdf5);border-color:#c4b5fd">
+            <i class="fas fa-magic" style="color:#7c3aed"></i>
+            <span style="font-weight:500">Smart Focus</span>
+            <span class="focus-badge" x-text="focusedNodeIds.length + ' relevant node' + (focusedNodeIds.length !== 1 ? 's' : '')"></span>
+            <span style="opacity:0.85;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="smartFocusSummary"></span>
+            <button class="btn btn-sm" @click="clearSmartFocus()" style="margin-left:auto;white-space:nowrap">Clear</button>
         </div>
         <div class="graph-canvas" id="graphCanvas">
             <div class="empty-graph" x-show="graphNodes.length === 0 && !loadingGraph">
@@ -419,6 +432,9 @@ function graphExplorer() {
         insightsData: null,
         focusMode: false,
         focusedNodeIds: [],
+        smartFocusPrompt: '',
+        smartFocusLoading: false,
+        smartFocusSummary: '',
 
         get availableDocs() {
             return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
@@ -944,6 +960,48 @@ function graphExplorer() {
 
         clearFocus() {
             this.focusedNodeIds = [];
+            this.applyFocusHighlight();
+        },
+
+        async runSmartFocus() {
+            const prompt = this.smartFocusPrompt.trim();
+            if (!prompt) return;
+            this.smartFocusLoading = true;
+            this.smartFocusSummary = '';
+            try {
+                const res = await fetch('/api/graph/smart-focus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        document_ids: this.selectedDocIds,
+                        tag_id: this.selectedTagId || undefined
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const focusIds = data.focus_entity_ids || [];
+                    if (focusIds.length > 0) {
+                        this.focusMode = true;
+                        this.focusedNodeIds = focusIds;
+                        this.smartFocusSummary = data.summary || `${focusIds.length} relevant entities found`;
+                        this.applyFocusHighlight();
+                    } else {
+                        this.smartFocusSummary = data.summary || 'No matching entities found.';
+                        setTimeout(() => { this.smartFocusSummary = ''; }, 4000);
+                    }
+                }
+            } catch(e) {
+                console.error('Smart Focus error:', e);
+            }
+            this.smartFocusLoading = false;
+        },
+
+        clearSmartFocus() {
+            this.smartFocusSummary = '';
+            this.smartFocusPrompt = '';
+            this.focusedNodeIds = [];
+            this.focusMode = false;
             this.applyFocusHighlight();
         },
 

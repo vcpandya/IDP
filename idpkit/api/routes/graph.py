@@ -1,15 +1,20 @@
 """Graph API routes — entity queries, document graphs, visualization."""
 
+import json
 import logging
-
 from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from idpkit.api.deps import get_current_user, get_db, get_llm
 from idpkit.core.llm import LLMClient
-from idpkit.db.models import Document, User
+from idpkit.db.models import Document, Tag, User
+from idpkit.graph.models import Entity as EntityModel, EntityMention, GraphEdge
 from idpkit.graph.schemas import (
     CrossDocLink,
     DocumentGraphSummary,
@@ -28,6 +33,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
 
+async def _verify_doc_ownership(
+    db: AsyncSession, doc_id: str, user: User
+) -> Document:
+    doc = (
+        await db.execute(
+            select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
 # -------------------------------------------------------------------------
 # Entity endpoints
 # -------------------------------------------------------------------------
@@ -39,9 +57,7 @@ async def list_entity_types(
     db: AsyncSession = Depends(get_db),
 ):
     """Return all distinct entity types currently in the database."""
-    from sqlalchemy import distinct, select as sa_select
-    from idpkit.graph.models import Entity as EntityModel
-    stmt = sa_select(distinct(EntityModel.entity_type)).order_by(EntityModel.entity_type)
+    stmt = select(distinct(EntityModel.entity_type)).order_by(EntityModel.entity_type)
     result = await db.execute(stmt)
     return [row[0] for row in result.all() if row[0]]
 
@@ -56,7 +72,6 @@ async def search_entities(
 ):
     """Search entities by name and/or type."""
     from idpkit.graph.queries import search_entities as _search
-
     entities = await _search(db, name=name, entity_type=entity_type, limit=limit)
     return [EntitySchema.model_validate(e) for e in entities]
 
@@ -141,8 +156,8 @@ async def get_doc_entities(
     db: AsyncSession = Depends(get_db),
 ):
     """List all entities found in a document."""
+    await _verify_doc_ownership(db, doc_id, user)
     from idpkit.graph.queries import get_document_entities
-
     entities = await get_document_entities(db, doc_id)
     return [EntitySchema.model_validate(e) for e in entities]
 
@@ -158,8 +173,8 @@ async def get_doc_links(
     db: AsyncSession = Depends(get_db),
 ):
     """Find other documents linked via shared entities."""
+    await _verify_doc_ownership(db, doc_id, user)
     from idpkit.graph.queries import get_cross_document_links
-
     links = await get_cross_document_links(db, doc_id)
     return [
         CrossDocLink(
@@ -183,8 +198,8 @@ async def get_doc_graph_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """Get graph statistics for a document."""
+    await _verify_doc_ownership(db, doc_id, user)
     from idpkit.graph.queries import get_document_graph_summary
-
     summary = await get_document_graph_summary(db, doc_id)
     return DocumentGraphSummary(
         document_id=doc_id,
@@ -206,14 +221,7 @@ async def build_doc_graph(
     llm: LLMClient = Depends(get_llm),
 ):
     """Trigger graph building on an already-indexed document."""
-    from sqlalchemy import select
-
-    doc = (await db.execute(
-        select(Document).where(Document.id == doc_id)
-    )).scalar_one_or_none()
-
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = await _verify_doc_ownership(db, doc_id, user)
     if not doc.tree_index:
         raise HTTPException(status_code=400, detail="Document has no tree index")
 
@@ -247,8 +255,8 @@ async def get_doc_visualization(
     db: AsyncSession = Depends(get_db),
 ):
     """Get nodes+edges JSON for D3 visualization."""
+    await _verify_doc_ownership(db, doc_id, user)
     from idpkit.graph.queries import get_visualization_data
-
     data = await get_visualization_data(db, doc_id, limit=limit)
     return VisualizationData(
         nodes=[VisualizationNode(**n) for n in data["nodes"]],
@@ -269,16 +277,13 @@ async def get_multi_doc_visualization(
     db: AsyncSession = Depends(get_db),
 ):
     """Get visualization data across multiple documents or a tag group."""
-    from sqlalchemy import select as sa_select
-    from idpkit.db.models import Tag
     from idpkit.graph.queries import get_multi_doc_visualization_data
 
     resolved_ids: list[str] = []
 
     if tag_id:
-        from sqlalchemy.orm import selectinload
         tag = (await db.execute(
-            sa_select(Tag)
+            select(Tag)
             .options(selectinload(Tag.documents))
             .where(Tag.id == tag_id, Tag.owner_id == user.id)
         )).scalar_one_or_none()
@@ -289,7 +294,7 @@ async def get_multi_doc_visualization(
         extra_ids = [did.strip() for did in doc_ids.split(",") if did.strip()]
         if extra_ids:
             owned_docs = (await db.execute(
-                sa_select(Document.id).where(
+                select(Document.id).where(
                     Document.id.in_(extra_ids),
                     Document.owner_id == user.id,
                     Document.status == "indexed",
@@ -322,18 +327,13 @@ async def export_full_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Export the complete knowledge graph for selected documents without view limits."""
-    import json
-    from fastapi.responses import Response
-    from sqlalchemy import select as sa_select
-    from idpkit.db.models import Tag
     from idpkit.graph.queries import get_multi_doc_visualization_data
 
     resolved_ids: list[str] = []
 
     if tag_id:
-        from sqlalchemy.orm import selectinload
         tag = (await db.execute(
-            sa_select(Tag)
+            select(Tag)
             .options(selectinload(Tag.documents))
             .where(Tag.id == tag_id, Tag.owner_id == user.id)
         )).scalar_one_or_none()
@@ -343,7 +343,7 @@ async def export_full_graph(
     if doc_ids:
         extra_ids = [did.strip() for did in doc_ids.split(",") if did.strip()]
         owned_docs = (await db.execute(
-            sa_select(Document.id).where(
+            select(Document.id).where(
                 Document.id.in_(extra_ids),
                 Document.owner_id == user.id,
                 Document.status == "indexed",
@@ -418,6 +418,12 @@ class InsightsRequest(BaseModel):
     document_ids: List[str] = []
 
 
+class SmartFocusRequest(BaseModel):
+    prompt: str
+    document_ids: List[str] = []
+    tag_id: Optional[str] = None
+
+
 class BulkBuildRequest(BaseModel):
     document_ids: List[str]
 
@@ -432,10 +438,8 @@ async def build_bulk_graphs(
     db: AsyncSession = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ):
-    from sqlalchemy import select, func
     from idpkit.graph.builder import build_document_graph
     from idpkit.graph.linker import link_entities_across_documents
-    from idpkit.graph.models import EntityMention
 
     unique_ids = list(dict.fromkeys(body.document_ids))
 
@@ -448,7 +452,7 @@ async def build_bulk_graphs(
 
     doc_map = {d.id: d for d in docs}
 
-    mention_counts = {}
+    mention_counts: dict[str, int] = {}
     if docs:
         rows = (await db.execute(
             select(EntityMention.document_id, func.count(EntityMention.id))
@@ -549,14 +553,11 @@ async def generate_insights(
     llm: LLMClient = Depends(get_llm),
 ):
     """Analyze the knowledge graph and generate hidden insights using LLM."""
-    from sqlalchemy import select as sa_select, func, distinct
-    from idpkit.graph.models import Entity as EntityModel, EntityMention, GraphEdge
-
     doc_ids = body.document_ids
 
     if doc_ids:
         owned = (await db.execute(
-            sa_select(Document.id).where(
+            select(Document.id).where(
                 Document.id.in_(doc_ids),
                 Document.owner_id == user.id,
             )
@@ -565,20 +566,19 @@ async def generate_insights(
 
     if doc_ids:
         entity_ids_subq = (
-            sa_select(EntityMention.entity_id)
+            select(EntityMention.entity_id)
             .where(EntityMention.document_id.in_(doc_ids))
             .distinct()
             .subquery()
         )
         entities = list((await db.execute(
-            sa_select(EntityModel)
-            .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
+            select(EntityModel)
+            .where(EntityModel.id.in_(select(entity_ids_subq)))
             .order_by(EntityModel.document_count.desc())
         )).scalars().all())
 
-        from sqlalchemy import or_
         edges = list((await db.execute(
-            sa_select(GraphEdge)
+            select(GraphEdge)
             .where(or_(
                 GraphEdge.source_document_id.in_(doc_ids),
                 GraphEdge.target_document_id.in_(doc_ids),
@@ -586,32 +586,31 @@ async def generate_insights(
         )).scalars().all())
 
         doc_rows = (await db.execute(
-            sa_select(Document.id, Document.filename)
+            select(Document.id, Document.filename)
             .where(Document.id.in_(doc_ids))
         )).all()
         doc_names = {r[0]: r[1] for r in doc_rows}
     else:
-        user_doc_ids_q = sa_select(Document.id).where(Document.owner_id == user.id)
+        user_doc_ids_q = select(Document.id).where(Document.owner_id == user.id)
         user_doc_ids = list((await db.execute(user_doc_ids_q)).scalars().all())
 
         if not user_doc_ids:
             return {"insights": "No documents found. Upload and index documents, then build their knowledge graphs to generate insights."}
 
         entity_ids_subq = (
-            sa_select(EntityMention.entity_id)
+            select(EntityMention.entity_id)
             .where(EntityMention.document_id.in_(user_doc_ids))
             .distinct()
             .subquery()
         )
         entities = list((await db.execute(
-            sa_select(EntityModel)
-            .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
+            select(EntityModel)
+            .where(EntityModel.id.in_(select(entity_ids_subq)))
             .order_by(EntityModel.document_count.desc())
         )).scalars().all())
 
-        from sqlalchemy import or_
         edges = list((await db.execute(
-            sa_select(GraphEdge)
+            select(GraphEdge)
             .where(or_(
                 GraphEdge.source_document_id.in_(user_doc_ids),
                 GraphEdge.target_document_id.in_(user_doc_ids),
@@ -619,7 +618,7 @@ async def generate_insights(
         )).scalars().all())
 
         doc_rows = (await db.execute(
-            sa_select(Document.id, Document.filename)
+            select(Document.id, Document.filename)
             .where(Document.id.in_(user_doc_ids))
         )).all()
         doc_names = {r[0]: r[1] for r in doc_rows}
@@ -739,3 +738,106 @@ Be specific — reference actual entity names and relationships from the data. A
             "cross_doc_entities": len(multi_doc_entities),
         },
     }
+
+
+@router.post(
+    "/smart-focus",
+    summary="AI-powered Smart Focus for knowledge graph exploration",
+)
+async def smart_focus(
+    body: SmartFocusRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+):
+    """Use AI to identify which entities are most relevant to a natural language prompt."""
+    doc_ids = list(body.document_ids)
+
+    if body.tag_id:
+        tag = (await db.execute(
+            select(Tag)
+            .options(selectinload(Tag.documents))
+            .where(Tag.id == body.tag_id, Tag.owner_id == user.id)
+        )).scalar_one_or_none()
+        if tag:
+            for d in tag.documents:
+                if d.status == "indexed" and d.id not in doc_ids:
+                    doc_ids.append(d.id)
+
+    if doc_ids:
+        owned = (await db.execute(
+            select(Document.id).where(
+                Document.id.in_(doc_ids),
+                Document.owner_id == user.id,
+            )
+        )).scalars().all()
+        doc_ids = list(owned)
+
+    if doc_ids:
+        entity_ids_subq = (
+            select(EntityMention.entity_id)
+            .where(EntityMention.document_id.in_(doc_ids))
+            .distinct()
+            .subquery()
+        )
+        entities = list((await db.execute(
+            select(EntityModel)
+            .where(EntityModel.id.in_(select(entity_ids_subq)))
+            .order_by(EntityModel.document_count.desc())
+        )).scalars().all())
+    else:
+        user_doc_ids = list((await db.execute(
+            select(Document.id).where(Document.owner_id == user.id)
+        )).scalars().all())
+        if not user_doc_ids:
+            return {"focus_entity_ids": [], "summary": "No documents found."}
+        entity_ids_subq = (
+            select(EntityMention.entity_id)
+            .where(EntityMention.document_id.in_(user_doc_ids))
+            .distinct()
+            .subquery()
+        )
+        entities = list((await db.execute(
+            select(EntityModel)
+            .where(EntityModel.id.in_(select(entity_ids_subq)))
+            .order_by(EntityModel.document_count.desc())
+        )).scalars().all())
+
+    if not entities:
+        return {"focus_entity_ids": [], "summary": "No entities found in the knowledge graph."}
+
+    entity_list_parts = []
+    for e in entities[:200]:
+        desc = f" — {e.description[:80]}" if e.description else ""
+        entity_list_parts.append(f"- ID:{e.id} | {e.canonical_name} ({e.entity_type}){desc}")
+    entity_list_text = "\n".join(entity_list_parts)
+
+    prompt = f"""You are a knowledge graph analyst. The user wants to focus on specific aspects of their knowledge graph.
+
+User's focus prompt: "{body.prompt}"
+
+Here are the entities in the graph:
+{entity_list_text}
+
+Your task:
+1. Identify which entities are most relevant to the user's focus prompt.
+2. Return ONLY a JSON object with exactly two keys:
+   - "ids": an array of entity ID strings that are relevant (include at least the top matches, up to 30)
+   - "summary": a brief 1-2 sentence description of what you found
+
+Return ONLY valid JSON, no markdown fences, no explanation outside the JSON."""
+
+    try:
+        response = await llm.acomplete(prompt)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+        focus_ids = result.get("ids", [])
+        summary = result.get("summary", "")
+        valid_ids = {e.id for e in entities}
+        focus_ids = [fid for fid in focus_ids if fid in valid_ids]
+        return {"focus_entity_ids": focus_ids, "summary": summary}
+    except Exception as exc:
+        logger.error("Smart Focus LLM call failed: %s", exc)
+        return {"focus_entity_ids": [], "summary": f"Failed to analyze: {exc}"}

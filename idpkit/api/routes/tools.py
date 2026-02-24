@@ -5,10 +5,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.session import get_db
-from idpkit.db.models import User
+from idpkit.db.models import User, Document
 from idpkit.api.deps import get_current_user, get_llm
 from idpkit.core.llm import LLMClient
 
@@ -94,6 +95,19 @@ async def execute_tool(
     Tool-specific options are passed in the request body.
     """
     from idpkit.tools import TOOL_REGISTRY
+
+    # Verify document ownership before executing tool
+    result = await db.execute(
+        select(Document).where(
+            (Document.id == body.document_id) & (Document.owner_id == user.id)
+        )
+    )
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found or does not belong to this user",
+        )
 
     tool_instance = TOOL_REGISTRY.get(tool_name)
     if not tool_instance:
