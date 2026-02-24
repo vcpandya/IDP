@@ -310,6 +310,111 @@ async def get_multi_doc_visualization(
     )
 
 
+@router.get(
+    "/export",
+    summary="Export full knowledge graph data (no view limit)",
+)
+async def export_full_graph(
+    doc_ids: Optional[str] = Query(None, description="Comma-separated document IDs"),
+    tag_id: Optional[str] = Query(None, description="Tag ID"),
+    format: str = Query("json", description="Export format: json, csv_entities, csv_relationships"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export the complete knowledge graph for selected documents without view limits."""
+    import io
+    import json
+    from fastapi.responses import Response
+    from sqlalchemy import select as sa_select
+    from idpkit.db.models import Tag
+    from idpkit.graph.queries import get_multi_doc_visualization_data
+
+    resolved_ids: list[str] = []
+
+    if tag_id:
+        from sqlalchemy.orm import selectinload
+        tag = (await db.execute(
+            sa_select(Tag)
+            .options(selectinload(Tag.documents))
+            .where(Tag.id == tag_id, Tag.owner_id == user.id)
+        )).scalar_one_or_none()
+        if tag:
+            resolved_ids = [d.id for d in tag.documents if d.status == "indexed"]
+
+    if doc_ids:
+        extra_ids = [did.strip() for did in doc_ids.split(",") if did.strip()]
+        owned_docs = (await db.execute(
+            sa_select(Document.id).where(
+                Document.id.in_(extra_ids),
+                Document.owner_id == user.id,
+                Document.status == "indexed",
+            )
+        )).scalars().all()
+        owned_set = set(owned_docs)
+        for did in extra_ids:
+            if did in owned_set and did not in resolved_ids:
+                resolved_ids.append(did)
+
+    if not resolved_ids:
+        if format == "json":
+            return Response(
+                content=json.dumps({"nodes": [], "edges": [], "total_nodes": 0, "total_edges": 0}, indent=2),
+                media_type="application/json",
+                headers={"Content-Disposition": 'attachment; filename="knowledge-graph-full.json"'},
+            )
+        return Response(content="", media_type="text/csv")
+
+    data = await get_multi_doc_visualization_data(db, resolved_ids, limit=100000)
+    nodes = data["nodes"]
+    edges = data["edges"]
+
+    if format == "csv_entities":
+        rows = ["name,type,mention_count,document_ids"]
+        for n in nodes:
+            doc_ids_str = ";".join(n.get("document_ids", []) if isinstance(n.get("document_ids"), list) else [])
+            name = _csv_escape(n.get("label") or n.get("name", ""))
+            ntype = _csv_escape(n.get("type") or n.get("entity_type", ""))
+            rows.append(f"{name},{ntype},{n.get('mention_count', 0)},{_csv_escape(doc_ids_str)}")
+        return Response(
+            content="\n".join(rows),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="knowledge-graph-entities.csv"'},
+        )
+    elif format == "csv_relationships":
+        node_map = {n["id"]: n.get("label") or n.get("name", n["id"]) for n in nodes}
+        rows = ["source_name,relation,target_name,weight"]
+        for e in edges:
+            src = _csv_escape(node_map.get(e.get("source", ""), e.get("source", "")))
+            rel = _csv_escape(e.get("relation_type", ""))
+            tgt = _csv_escape(node_map.get(e.get("target", ""), e.get("target", "")))
+            w = e.get("weight", 1)
+            rows.append(f"{src},{rel},{tgt},{w}")
+        return Response(
+            content="\n".join(rows),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="knowledge-graph-relationships.csv"'},
+        )
+    else:
+        export = {
+            "nodes": nodes,
+            "edges": edges,
+            "total_nodes": len(nodes),
+            "total_edges": len(edges),
+        }
+        return Response(
+            content=json.dumps(export, indent=2, default=str),
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="knowledge-graph-full.json"'},
+        )
+
+
+def _csv_escape(val) -> str:
+    s = str(val) if val is not None else ""
+    if "," in s or '"' in s or "\n" in s:
+        return '"' + s.replace('"', '""') + '"'
+    return s
+
+
 class InsightsRequest(BaseModel):
     document_ids: List[str] = []
 

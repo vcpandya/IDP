@@ -63,6 +63,16 @@
 .insights-loading i { font-size: 2rem; color: #7c3aed; }
 .node-label { font-size: 11px; pointer-events: none; }
 .link-label { font-size: 9px; fill: #999; pointer-events: none; }
+.node-ghosted circle { opacity: 0.08 !important; }
+.node-ghosted text { opacity: 0.08 !important; }
+.link-ghosted { opacity: 0.04 !important; }
+.node-focused circle { stroke: #7c3aed !important; stroke-width: 4px !important; filter: drop-shadow(0 0 6px rgba(124,58,237,0.5)); }
+.node-connected circle { opacity: 1 !important; }
+.node-connected text { opacity: 1 !important; }
+.link-connected { opacity: 0.8 !important; stroke: #a78bfa !important; }
+.focus-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.focus-bar { display: flex; align-items: center; gap: 8px; padding: 6px 16px; background: #faf5ff; border-bottom: 1px solid #e9d5ff; font-size: 0.82rem; color: #6b21a8; }
+.focus-bar button { font-size: 0.78rem; }
 .stats-row { display: flex; gap: 12px; }
 .stat-mini { text-align: center; flex: 1; padding: 8px; background: var(--bg, #f9fafb); border-radius: 8px; }
 .stat-mini .val { font-size: 1.2rem; font-weight: 700; color: #7c3aed; }
@@ -187,22 +197,43 @@
                 <button class="btn btn-sm" @click="downloadOpen = !downloadOpen" :disabled="graphNodes.length === 0" title="Download graph data">
                     <i class="fas fa-download"></i> <i class="fas fa-caret-down" style="font-size:0.7rem;margin-left:2px"></i>
                 </button>
-                <div x-show="downloadOpen" @click.outside="downloadOpen = false" x-cloak style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--card-bg,#fff);border:1px solid var(--border,#e5e7eb);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:200px;z-index:20;overflow:hidden">
-                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadJSON(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
-                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON (Full Graph)
+                <div x-show="downloadOpen" @click.outside="downloadOpen = false" x-cloak style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--card-bg,#fff);border:1px solid var(--border,#e5e7eb);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:240px;z-index:20;overflow:hidden">
+                    <div style="padding:6px 14px 2px;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Visible Graph</div>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadJSON(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON
                     </button>
-                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-top:1px solid var(--border,#e5e7eb)" @click="downloadCSVEntities(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadCSVEntities(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
                         <i class="fas fa-table" style="width:20px;color:#059669"></i> CSV (Entities)
                     </button>
-                    <button style="display:block;width:100%;text-align:left;padding:10px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem;border-top:1px solid var(--border,#e5e7eb)" @click="downloadCSVRelationships(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadCSVRelationships(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
                         <i class="fas fa-project-diagram" style="width:20px;color:#2563eb"></i> CSV (Relationships)
+                    </button>
+                    <div style="padding:6px 14px 2px;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-top:1px solid var(--border,#e5e7eb);margin-top:4px">Full Graph (All Data)</div>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullJSON(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON (Complete)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullCSVEntities(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-table" style="width:20px;color:#059669"></i> CSV Entities (Complete)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullCSVRelationships(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-project-diagram" style="width:20px;color:#2563eb"></i> CSV Relationships (Complete)
                     </button>
                 </div>
             </div>
             <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;border:none" @click="generateInsights()" :disabled="insightsLoading || graphNodes.length === 0" title="AI Insights">
                 <i class="fas" :class="insightsLoading ? 'fa-spinner fa-spin' : 'fa-lightbulb'"></i> Insights
             </button>
+            <button class="btn btn-sm" :class="focusMode ? 'btn-primary' : ''" @click="toggleFocusMode()" :disabled="graphNodes.length === 0" title="Focus mode: click nodes to highlight their connections">
+                <i class="fas fa-crosshairs"></i> Focus
+            </button>
             <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
+        </div>
+        <div class="focus-bar" x-show="focusMode" x-cloak>
+            <i class="fas fa-crosshairs"></i>
+            <span>Focus Mode</span>
+            <span x-show="focusedNodeIds.length > 0" class="focus-badge" x-text="focusedNodeIds.length + ' node' + (focusedNodeIds.length !== 1 ? 's' : '') + ' selected'"></span>
+            <span x-show="focusedNodeIds.length === 0" style="opacity:0.7">Click nodes to focus on their connections</span>
+            <button class="btn btn-sm" x-show="focusedNodeIds.length > 0" @click="clearFocus()" style="margin-left:auto">Clear Selection</button>
         </div>
         <div class="graph-canvas" id="graphCanvas">
             <div class="empty-graph" x-show="graphNodes.length === 0 && !loadingGraph">
@@ -386,6 +417,8 @@ function graphExplorer() {
         showInsights: false,
         insightsLoading: false,
         insightsData: null,
+        focusMode: false,
+        focusedNodeIds: [],
 
         get availableDocs() {
             return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
@@ -753,6 +786,10 @@ function graphExplorer() {
 
             const self = this;
             node.on('click', (e, d) => {
+                if (self.focusMode) {
+                    self.toggleFocusNode(d.id);
+                    return;
+                }
                 const ent = self.entities.find(en => en.id === d.id);
                 if (ent) self.selectEntity(ent);
             });
