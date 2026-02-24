@@ -49,16 +49,17 @@ async def get_entity_detail(
         return None
 
     mention_rows = (await db.execute(
-        select(EntityMention, Document.filename, Document.format)
+        select(EntityMention, Document.filename, Document.format, Document.source_url)
         .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(_DEFAULT_LIMIT)
     )).all()
 
     enriched_mentions = []
-    for mention, doc_filename, doc_format in mention_rows:
+    for mention, doc_filename, doc_format, doc_source_url in mention_rows:
         mention.document_filename = doc_filename
         mention.document_format = doc_format
+        mention.source_url = doc_source_url
         enriched_mentions.append(mention)
 
     edges = (await db.execute(
@@ -82,16 +83,17 @@ async def get_entity_mentions(
 ) -> list[EntityMention]:
     """Get all tree nodes where an entity is mentioned."""
     rows = (await db.execute(
-        select(EntityMention, Document.filename, Document.format)
+        select(EntityMention, Document.filename, Document.format, Document.source_url)
         .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(min(limit, 200))
     )).all()
 
     enriched = []
-    for mention, doc_filename, doc_format in rows:
+    for mention, doc_filename, doc_format, doc_source_url in rows:
         mention.document_filename = doc_filename
         mention.document_format = doc_format
+        mention.source_url = doc_source_url
         enriched.append(mention)
     return enriched
 
