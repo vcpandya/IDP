@@ -3,7 +3,7 @@
 {% block head %}
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
-.graph-layout { display: grid; grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; height: calc(100vh - 120px); overflow: hidden; }
+.graph-layout { display: grid; grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; overflow: hidden; }
 .graph-layout.fullscreen-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; grid-template-columns: 1fr; gap: 0; height: 100vh; background: var(--bg, #f9fafb); padding: 0; }
 .graph-layout.fullscreen-mode .graph-sidebar { display: none; }
 .graph-layout.fullscreen-mode .graph-main { border-radius: 0; border: none; }
@@ -753,12 +753,6 @@ function graphExplorer() {
                 contentEl.style.display = 'flex';
                 contentEl.style.flexDirection = 'column';
                 contentEl.style.boxSizing = 'border-box';
-            }
-            const layoutEl = document.querySelector('.graph-layout');
-            if (layoutEl) {
-                layoutEl.style.flex = '1';
-                layoutEl.style.minHeight = '0';
-                layoutEl.style.height = 'auto';
             }
             const [docRes, typesRes, tagsRes] = await Promise.all([
                 fetch('/api/documents/?limit=500'),
