@@ -947,23 +947,26 @@ async def smart_focus(
     if not entities:
         return {"focus_entity_ids": [], "summary": "No entities found in the knowledge graph."}
 
+    name_to_id: dict[str, str] = {}
     entity_list_parts = []
-    for e in entities[:200]:
+    for idx, e in enumerate(entities[:200]):
         desc = f" — {e.description[:80]}" if e.description else ""
-        entity_list_parts.append(f"- ID:{e.id} | {e.canonical_name} ({e.entity_type}){desc}")
+        entity_list_parts.append(f"- #{idx} | {e.canonical_name} ({e.entity_type}){desc}")
+        name_to_id[e.canonical_name.lower()] = e.id
     entity_list_text = "\n".join(entity_list_parts)
 
     prompt = f"""You are a knowledge graph analyst. The user wants to focus on specific aspects of their knowledge graph.
 
 User's focus prompt: "{body.prompt}"
 
-Here are the entities in the graph:
+Here are the entities in the graph (each prefixed with a numeric index #N):
 {entity_list_text}
 
 Your task:
 1. Identify which entities are most relevant to the user's focus prompt.
-2. Return ONLY a JSON object with exactly two keys:
-   - "ids": an array of entity ID strings that are relevant (include at least the top matches, up to 30)
+2. Return ONLY a JSON object with exactly these keys:
+   - "indices": an array of the numeric index numbers (integers) of relevant entities (up to 30)
+   - "names": an array of the exact entity name strings of relevant entities (up to 30)
    - "summary": a brief 1-2 sentence description of what you found
 
 Return ONLY valid JSON, no markdown fences, no explanation outside the JSON."""
@@ -974,10 +977,42 @@ Return ONLY valid JSON, no markdown fences, no explanation outside the JSON."""
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         result = json.loads(raw)
-        focus_ids = result.get("ids", [])
         summary = result.get("summary", "")
+
+        focus_ids: list[str] = []
+        seen_ids: set[str] = set()
+        ent_list = entities[:200]
+
+        for idx in result.get("indices", []):
+            try:
+                i = int(idx)
+                if 0 <= i < len(ent_list) and ent_list[i].id not in seen_ids:
+                    focus_ids.append(ent_list[i].id)
+                    seen_ids.add(ent_list[i].id)
+            except (ValueError, TypeError):
+                pass
+
+        for name in result.get("names", []):
+            if not isinstance(name, str):
+                continue
+            nl = name.lower()
+            if nl in name_to_id and name_to_id[nl] not in seen_ids:
+                focus_ids.append(name_to_id[nl])
+                seen_ids.add(name_to_id[nl])
+                continue
+            for ent_name, ent_id in name_to_id.items():
+                if ent_id not in seen_ids and (nl in ent_name or ent_name in nl):
+                    focus_ids.append(ent_id)
+                    seen_ids.add(ent_id)
+                    break
+
+        old_ids = result.get("ids", [])
         valid_ids = {e.id for e in entities}
-        focus_ids = [fid for fid in focus_ids if fid in valid_ids]
+        for fid in old_ids:
+            if fid in valid_ids and fid not in seen_ids:
+                focus_ids.append(fid)
+                seen_ids.add(fid)
+
         return {"focus_entity_ids": focus_ids, "summary": summary}
     except Exception as exc:
         logger.error("Smart Focus LLM call failed: %s", exc)

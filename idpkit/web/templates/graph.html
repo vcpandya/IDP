@@ -4,7 +4,12 @@
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
 .graph-layout { display: grid; grid-template-columns: 320px 1fr; gap: 16px; height: calc(100vh - 120px); }
-.graph-sidebar { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.graph-layout.fullscreen-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; grid-template-columns: 1fr; gap: 0; height: 100vh; background: var(--bg, #f9fafb); padding: 0; }
+.graph-layout.fullscreen-mode .graph-sidebar { display: none; }
+.graph-layout.fullscreen-mode .graph-main { border-radius: 0; border: none; }
+.graph-sidebar { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); padding: 16px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.graph-sidebar > * { flex-shrink: 0; }
+.graph-sidebar > .sidebar-section:last-child { flex-shrink: 1; min-height: 0; }
 .graph-main { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .graph-canvas { flex: 1; position: relative; }
 .graph-canvas svg { width: 100%; height: 100%; }
@@ -44,9 +49,18 @@
 .detail-section h5 { margin: 0 0 4px; font-size: 0.8rem; color: var(--text-muted, #6b7280); text-transform: uppercase; }
 .mention-item { font-size: 0.8rem; padding: 4px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
 .mention-item:last-child { border-bottom: none; }
-.neighbor-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; padding: 4px 0; cursor: pointer; }
-.neighbor-item:hover { color: #7c3aed; }
+.neighbor-item { display: flex; flex-direction: column; gap: 3px; font-size: 0.8rem; padding: 8px; cursor: pointer; border-radius: 8px; border: 1px solid var(--border, #e5e7eb); margin-bottom: 4px; transition: all 0.15s; }
+.neighbor-item:hover { border-color: #7c3aed; background: #faf5ff; }
+.neighbor-item .edge-header { display: flex; align-items: center; gap: 6px; }
+.neighbor-item .edge-context { font-size: 0.72rem; color: var(--text-secondary, #4b5563); line-height: 1.4; margin-top: 2px; }
+.neighbor-item .edge-meta { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
 .relation-label { font-size: 0.65rem; color: var(--text-muted, #6b7280); background: var(--bg, #f3f4f6); padding: 1px 5px; border-radius: 3px; }
+.scope-badge { font-size: 0.6rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+.scope-badge.inter { background: #dbeafe; color: #1d4ed8; }
+.scope-badge.intra { background: #f3e8ff; color: #7c3aed; }
+.confidence-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.fullscreen-exit-btn { position: fixed; top: 12px; right: 12px; z-index: 1001; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 0.85rem; backdrop-filter: blur(4px); }
+.fullscreen-exit-btn:hover { background: rgba(0,0,0,0.8); }
 .close-panel { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted, #6b7280); }
 .close-panel:hover { color: var(--text, #111); }
 .insights-panel { position: absolute; top: 12px; left: 12px; right: 12px; bottom: 12px; background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); box-shadow: 0 4px 20px rgba(0,0,0,0.12); z-index: 15; display: flex; flex-direction: column; overflow: hidden; }
@@ -120,6 +134,9 @@
 .node-ghosted circle { opacity: 0.08 !important; }
 .node-ghosted text { opacity: 0.08 !important; }
 .link-ghosted line { opacity: 0.04 !important; }
+.node-type-ghosted circle { opacity: 0.1 !important; }
+.node-type-ghosted text { opacity: 0.1 !important; }
+.link-type-ghosted line { opacity: 0.06 !important; }
 .node-focused circle { stroke: #7c3aed !important; stroke-width: 4px !important; filter: drop-shadow(0 0 6px rgba(124,58,237,0.5)); }
 .node-connected circle { opacity: 1 !important; }
 .node-connected text { opacity: 1 !important; }
@@ -142,7 +159,7 @@
     <h2><i class="fas fa-project-diagram"></i> Knowledge Graph</h2>
 </div>
 
-<div class="graph-layout" x-data="graphExplorer()" x-init="init()">
+<div class="graph-layout" :class="{ 'fullscreen-mode': fullscreenMode }" x-data="graphExplorer()" x-init="init()" @keydown.escape.window="if(fullscreenMode) toggleFullscreen()">
     <div class="graph-sidebar">
         <div class="stats-row">
             <div class="stat-mini">
@@ -208,9 +225,9 @@
         <div class="sidebar-section">
             <h4>Entity Types</h4>
             <div class="type-filters">
-                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities()"><i class="fas fa-globe" style="margin-right:3px"></i> All</button>
+                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities(); applyTypeFilter()"><i class="fas fa-globe" style="margin-right:3px"></i> All</button>
                 <template x-for="t in entityTypes" :key="t">
-                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities()"><i class="fas" :class="typeIcon(t)" style="margin-right:3px"></i> <span x-text="t"></span></button>
+                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities(); applyTypeFilter()"><i class="fas" :class="typeIcon(t)" style="margin-right:3px"></i> <span x-text="t"></span></button>
                 </template>
             </div>
         </div>
@@ -239,6 +256,7 @@
             <button class="btn btn-sm" @click="zoomIn()" title="Zoom in"><i class="fas fa-search-plus"></i></button>
             <button class="btn btn-sm" @click="zoomOut()" title="Zoom out"><i class="fas fa-search-minus"></i></button>
             <button class="btn btn-sm" @click="resetZoom()" title="Reset view"><i class="fas fa-expand"></i></button>
+            <button class="btn btn-sm" @click="toggleFullscreen()" :title="fullscreenMode ? 'Exit fullscreen' : 'Fullscreen mode'"><i class="fas" :class="fullscreenMode ? 'fa-compress-arrows-alt' : 'fa-expand-arrows-alt'"></i></button>
             <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building || bulkBuilding">
                 <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
             </button>
@@ -310,6 +328,7 @@
                 <p x-show="selectedDocIds.length > 1">No graph data found for the selected documents. Click <strong>Build Graphs</strong> to extract entities and relationships.</p>
             </div>
         </div>
+        <button class="fullscreen-exit-btn" x-show="fullscreenMode" x-cloak @click="toggleFullscreen()"><i class="fas fa-compress-arrows-alt" style="margin-right:4px"></i> Exit Fullscreen</button>
 
         <div class="detail-panel" x-show="detailEntity" x-cloak>
             <button class="close-panel" @click="detailEntity = null">&times;</button>
@@ -348,13 +367,30 @@
             </div>
 
             <div class="detail-section" x-show="detailEntity?.edges?.length > 0">
-                <h5>Relationships (<span x-text="detailEntity?.edges?.length"></span>)</h5>
+                <h5>Connections (<span x-text="detailEntity?.edges?.length"></span>)</h5>
                 <template x-for="e in (detailEntity?.edges || []).slice(0, 15)" :key="e.id || (e.source_entity_id + e.target_entity_id)">
-                    <div class="neighbor-item">
-                        <span class="relation-label" x-text="e.relation_type"></span>
-                        <span x-text="e.target_entity_name || e.source_entity_name || '...'"></span>
+                    <div class="neighbor-item" @click="navigateToEdgeEntity(e)" x-data="{ get otherName() { return e.target_entity_id === $data.detailEntity?.entity?.id ? (e.source_entity_name || '...') : (e.target_entity_name || '...') }, get otherType() { return e.target_entity_id === $data.detailEntity?.entity?.id ? (e.source_entity_type || 'UNKNOWN') : (e.target_entity_type || 'UNKNOWN') } }">
+                        <div class="edge-header">
+                            <span class="entity-type-badge" style="font-size:0.6rem;padding:1px 5px" :style="'background:' + typeColor(otherType) + '22; color:' + typeColor(otherType)">
+                                <i class="fas" :class="typeIcon(otherType)" style="margin-right:2px"></i>
+                                <span x-text="otherType"></span>
+                            </span>
+                            <span style="font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="otherName"></span>
+                        </div>
+                        <div class="edge-meta">
+                            <span class="relation-label" x-text="e.relation_type"></span>
+                            <span class="scope-badge" :class="e.scope || 'intra'" x-text="e.scope === 'inter' ? 'cross-doc' : 'same-doc'"></span>
+                            <template x-if="e.confidence">
+                                <span style="display:flex;align-items:center;gap:2px;font-size:0.6rem;color:var(--text-muted)">
+                                    <span class="confidence-dot" :style="'background:' + (e.confidence >= 80 ? '#059669' : e.confidence >= 50 ? '#d97706' : '#dc2626')"></span>
+                                    <span x-text="e.confidence + '%'"></span>
+                                </span>
+                            </template>
+                        </div>
+                        <div class="edge-context" x-show="e.context_snippet" x-text="(e.context_snippet || '').slice(0, 120) + (e.context_snippet && e.context_snippet.length > 120 ? '...' : '')"></div>
                     </div>
                 </template>
+                <div x-show="(detailEntity?.edges || []).length > 15" style="font-size:0.75rem;color:var(--text-muted);padding-top:4px" x-text="'+ ' + (detailEntity.edges.length - 15) + ' more connections'"></div>
             </div>
 
             <a :href="buildAskIdaUrl()" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
@@ -700,6 +736,7 @@ function graphExplorer() {
         smartFocusPrompt: '',
         smartFocusLoading: false,
         smartFocusSummary: '',
+        fullscreenMode: false,
 
         get availableDocs() {
             return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
@@ -1059,6 +1096,71 @@ function graphExplorer() {
                 }
             } catch(e) {}
             this.highlightNode(ent.id);
+        },
+
+        async navigateToEdgeEntity(edge) {
+            const currentId = this.detailEntity?.entity?.id;
+            const targetId = edge.target_entity_id === currentId ? edge.source_entity_id : edge.target_entity_id;
+            if (!targetId) return;
+            try {
+                const res = await fetch(`/api/graph/entities/${targetId}`);
+                if (res.ok) {
+                    this.detailEntity = await res.json();
+                    this.highlightNode(targetId);
+                }
+            } catch(e) {}
+        },
+
+        toggleFullscreen() {
+            this.fullscreenMode = !this.fullscreenMode;
+            this.$nextTick(() => {
+                if (this.simulation) {
+                    const canvas = document.getElementById('graphCanvas');
+                    if (canvas && this.svg) {
+                        const w = canvas.clientWidth;
+                        const h = canvas.clientHeight;
+                        this.svg.attr('viewBox', null);
+                        this.simulation.force('center', d3.forceCenter(w / 2, h / 2));
+                        this.simulation.alpha(0.1).restart();
+                    }
+                }
+            });
+        },
+
+        applyTypeFilter() {
+            const svg = d3.select('#graphCanvas svg');
+            if (svg.empty()) return;
+            const filterType = this.selectedType;
+            if (!filterType) {
+                svg.selectAll('.node-group').classed('node-type-ghosted', false);
+                svg.selectAll('.link-group').classed('link-type-ghosted', false);
+                svg.selectAll('.link-label').each(function() {
+                    const el = d3.select(this);
+                    if (!el.classed('link-ghosted')) el.style('opacity', null);
+                });
+                return;
+            }
+            const matchingIds = new Set();
+            this.graphNodes.forEach(n => {
+                if ((n.type || '').toUpperCase() === filterType.toUpperCase()) matchingIds.add(n.id);
+            });
+            const connectedEdgeIndices = new Set();
+            this.graphEdges.forEach((e, i) => {
+                const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+                const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+                if (matchingIds.has(srcId) || matchingIds.has(tgtId)) connectedEdgeIndices.add(i);
+            });
+            svg.selectAll('.node-group').each(function(d) {
+                d3.select(this).classed('node-type-ghosted', !matchingIds.has(d.id));
+            });
+            svg.selectAll('.link-group').each(function(d, i) {
+                d3.select(this).classed('link-type-ghosted', !connectedEdgeIndices.has(i));
+            });
+            svg.selectAll('.link-label').each(function(d, i) {
+                if (!d3.select(this).classed('link-ghosted')) {
+                    d3.select(this).style('opacity', connectedEdgeIndices.has(i) ? 1 : 0.08);
+                }
+            });
         },
 
         async buildGraph() {
