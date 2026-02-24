@@ -2,6 +2,10 @@
 set -e
 
 pip install --no-cache-dir ".[postgres]"
+pip install --no-cache-dir gunicorn uvicorn[standard]
+
+echo "Verifying gunicorn..."
+which gunicorn || python -m gunicorn --version || { echo "ERROR: gunicorn not found"; exit 1; }
 
 mkdir -p .deploy-libs
 
