@@ -37,5 +37,5 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "export LD_LIBRARY_PATH=.deploy-libs:$LD_LIBRARY_PATH && exec python3 run_server.py"]
+run = ["sh", "-c", "export LD_LIBRARY_PATH=.deploy-libs:$LD_LIBRARY_PATH PYTHONPATH=.pythonlibs/lib/python3.10/site-packages && exec python3 run_server.py"]
 build = ["bash", "build.sh"]
