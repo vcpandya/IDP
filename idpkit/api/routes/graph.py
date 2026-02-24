@@ -308,6 +308,10 @@ async def get_multi_doc_visualization(
     )
 
 
+class InsightsRequest(BaseModel):
+    document_ids: List[str] = []
+
+
 class BulkBuildRequest(BaseModel):
     document_ids: List[str]
 
@@ -425,4 +429,211 @@ async def build_bulk_graphs(
         "skipped": skipped,
         "failed": failed,
         "results": results,
+    }
+
+
+@router.post(
+    "/insights",
+    summary="Generate AI insights from the knowledge graph",
+)
+async def generate_insights(
+    body: InsightsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+):
+    """Analyze the knowledge graph and generate hidden insights using LLM."""
+    from sqlalchemy import select as sa_select, func, distinct
+    from idpkit.graph.models import Entity as EntityModel, EntityMention, GraphEdge
+
+    doc_ids = body.document_ids
+
+    if doc_ids:
+        owned = (await db.execute(
+            sa_select(Document.id).where(
+                Document.id.in_(doc_ids),
+                Document.owner_id == user.id,
+            )
+        )).scalars().all()
+        doc_ids = list(owned)
+
+    if doc_ids:
+        entity_ids_subq = (
+            sa_select(EntityMention.entity_id)
+            .where(EntityMention.document_id.in_(doc_ids))
+            .distinct()
+            .subquery()
+        )
+        entities = list((await db.execute(
+            sa_select(EntityModel)
+            .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
+            .order_by(EntityModel.document_count.desc())
+            .limit(150)
+        )).scalars().all())
+
+        from sqlalchemy import or_
+        edges = list((await db.execute(
+            sa_select(GraphEdge)
+            .where(or_(
+                GraphEdge.source_document_id.in_(doc_ids),
+                GraphEdge.target_document_id.in_(doc_ids),
+            ))
+            .limit(500)
+        )).scalars().all())
+
+        doc_rows = (await db.execute(
+            sa_select(Document.id, Document.filename)
+            .where(Document.id.in_(doc_ids))
+        )).all()
+        doc_names = {r[0]: r[1] for r in doc_rows}
+    else:
+        user_doc_ids_q = sa_select(Document.id).where(Document.owner_id == user.id)
+        user_doc_ids = list((await db.execute(user_doc_ids_q)).scalars().all())
+
+        if not user_doc_ids:
+            return {"insights": "No documents found. Upload and index documents, then build their knowledge graphs to generate insights."}
+
+        entity_ids_subq = (
+            sa_select(EntityMention.entity_id)
+            .where(EntityMention.document_id.in_(user_doc_ids))
+            .distinct()
+            .subquery()
+        )
+        entities = list((await db.execute(
+            sa_select(EntityModel)
+            .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
+            .order_by(EntityModel.document_count.desc())
+            .limit(150)
+        )).scalars().all())
+
+        from sqlalchemy import or_
+        edges = list((await db.execute(
+            sa_select(GraphEdge)
+            .where(or_(
+                GraphEdge.source_document_id.in_(user_doc_ids),
+                GraphEdge.target_document_id.in_(user_doc_ids),
+            ))
+            .limit(500)
+        )).scalars().all())
+
+        doc_rows = (await db.execute(
+            sa_select(Document.id, Document.filename)
+            .where(Document.id.in_(user_doc_ids))
+        )).all()
+        doc_names = {r[0]: r[1] for r in doc_rows}
+
+    if not entities:
+        return {"insights": "No entities found in the knowledge graph. Build graphs for your documents first to generate insights."}
+
+    entity_map = {e.id: e for e in entities}
+    entity_ids = set(entity_map.keys())
+
+    type_counts: dict[str, int] = {}
+    for e in entities:
+        type_counts[e.entity_type] = type_counts.get(e.entity_type, 0) + 1
+
+    top_entities = sorted(entities, key=lambda e: e.document_count or 1, reverse=True)[:30]
+
+    relationships = []
+    relation_type_counts: dict[str, int] = {}
+    for edge in edges:
+        src = entity_map.get(edge.source_entity_id)
+        tgt = entity_map.get(edge.target_entity_id)
+        if src and tgt and edge.relation_type != "co_occurrence":
+            relationships.append({
+                "source": src.canonical_name,
+                "source_type": src.entity_type,
+                "target": tgt.canonical_name,
+                "target_type": tgt.entity_type,
+                "relation": edge.relation_type,
+                "context": edge.context_snippet or "",
+            })
+        rt = edge.relation_type
+        relation_type_counts[rt] = relation_type_counts.get(rt, 0) + 1
+
+    co_occurrences = []
+    for edge in edges:
+        if edge.relation_type == "co_occurrence":
+            src = entity_map.get(edge.source_entity_id)
+            tgt = entity_map.get(edge.target_entity_id)
+            if src and tgt:
+                co_occurrences.append(f"{src.canonical_name} ({src.entity_type}) <-> {tgt.canonical_name} ({tgt.entity_type})")
+
+    multi_doc_entities = [e for e in entities if (e.document_count or 1) > 1]
+
+    prompt_parts = [
+        "You are an expert knowledge analyst. Analyze the following knowledge graph data and produce deep, actionable insights.",
+        "",
+        f"## Graph Overview",
+        f"- Total entities: {len(entities)}",
+        f"- Total relationships: {len(edges)}",
+        f"- Entity types: {', '.join(f'{t} ({c})' for t, c in sorted(type_counts.items(), key=lambda x: -x[1]))}",
+        f"- Relationship types: {', '.join(f'{t} ({c})' for t, c in sorted(relation_type_counts.items(), key=lambda x: -x[1])[:15])}",
+    ]
+
+    if doc_names:
+        prompt_parts.append(f"- Documents analyzed: {', '.join(doc_names.values())}")
+
+    prompt_parts.append(f"\n## Top Entities (by cross-document presence)")
+    for e in top_entities[:20]:
+        desc = f" — {e.description[:100]}" if e.description else ""
+        prompt_parts.append(f"- **{e.canonical_name}** ({e.entity_type}, appears in {e.document_count} docs){desc}")
+
+    if relationships:
+        prompt_parts.append(f"\n## Key Relationships (sample of {len(relationships)})")
+        for r in relationships[:40]:
+            ctx = f" [{r['context'][:80]}]" if r['context'] else ""
+            prompt_parts.append(f"- {r['source']} ({r['source_type']}) --[{r['relation']}]--> {r['target']} ({r['target_type']}){ctx}")
+
+    if co_occurrences:
+        prompt_parts.append(f"\n## Co-occurrences (entities appearing together, sample of {len(co_occurrences)})")
+        for c in co_occurrences[:30]:
+            prompt_parts.append(f"- {c}")
+
+    if multi_doc_entities:
+        prompt_parts.append(f"\n## Cross-Document Entities ({len(multi_doc_entities)} entities span multiple documents)")
+        for e in multi_doc_entities[:15]:
+            prompt_parts.append(f"- {e.canonical_name} ({e.entity_type}) — in {e.document_count} documents")
+
+    prompt_parts.append("""
+## Your Task
+
+Produce a structured analysis in Markdown with EXACTLY these sections:
+
+### 🔍 Hidden Connections
+Identify non-obvious relationships between entities that might be missed at first glance. Look for indirect links, shared contexts, and unexpected bridges between different entity types or topics.
+
+### 💡 Key Insights
+Highlight the most important patterns, trends, and takeaways from the knowledge graph. What are the central themes? What entities are most influential?
+
+### 🌐 Cross-Document Patterns
+If entities span multiple documents, explain what connects them and why this matters. Identify knowledge that only emerges when looking across documents together.
+
+### ⚡ Interesting Facts & Tidbits
+Surface surprising, counterintuitive, or particularly noteworthy details from the data. These are the "did you know?" moments.
+
+### 🎯 Recommendations
+Based on the graph structure, suggest what the user should explore further, which connections deserve deeper investigation, or what additional documents might enrich the knowledge base.
+
+Be specific — reference actual entity names and relationships from the data. Avoid generic statements. Each section should have 3-5 bullet points.
+""")
+
+    prompt = "\n".join(prompt_parts)
+
+    try:
+        response = await llm.acomplete(prompt)
+        insights_text = response.content
+    except Exception as exc:
+        logger.error("Insights LLM call failed: %s", exc)
+        return {"insights": f"Failed to generate insights: {exc}"}
+
+    return {
+        "insights": insights_text,
+        "stats": {
+            "entities": len(entities),
+            "edges": len(edges),
+            "entity_types": len(type_counts),
+            "relationship_types": len(relation_type_counts),
+            "cross_doc_entities": len(multi_doc_entities),
+        },
     }
