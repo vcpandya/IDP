@@ -31,7 +31,7 @@ async def search_entities(
     if entity_type:
         stmt = stmt.where(Entity.entity_type == entity_type.upper()[:50])
 
-    stmt = stmt.order_by(Entity.document_count.desc()).limit(min(limit, 200))
+    stmt = stmt.order_by(Entity.document_count.desc()).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -108,8 +108,6 @@ async def get_entity_neighbors(
 
     Returns list of {"entity": Entity, "edge": GraphEdge} dicts.
     """
-    capped_limit = min(limit, 200)
-
     # Outgoing edges
     stmt_out = select(GraphEdge, Entity).join(
         Entity, GraphEdge.target_entity_id == Entity.id
@@ -124,8 +122,8 @@ async def get_entity_neighbors(
         stmt_out = stmt_out.where(GraphEdge.relation_type == relation_type)
         stmt_in = stmt_in.where(GraphEdge.relation_type == relation_type)
 
-    stmt_out = stmt_out.limit(capped_limit)
-    stmt_in = stmt_in.limit(capped_limit)
+    stmt_out = stmt_out.limit(limit)
+    stmt_in = stmt_in.limit(limit)
 
     out_results = (await db.execute(stmt_out)).all()
     in_results = (await db.execute(stmt_in)).all()
@@ -143,13 +141,13 @@ async def get_entity_neighbors(
             neighbors.append({"entity": entity, "edge": edge})
             seen_ids.add(entity.id)
 
-    return neighbors[:capped_limit]
+    return neighbors[:limit]
 
 
 async def get_document_entities(
     db: AsyncSession,
     document_id: str,
-    limit: int = _DEFAULT_LIMIT,
+    limit: int = 1000,
 ) -> list[Entity]:
     """Get all entities found in a specific document."""
     stmt = (
@@ -158,7 +156,7 @@ async def get_document_entities(
         .where(EntityMention.document_id == document_id)
         .distinct()
         .order_by(Entity.canonical_name)
-        .limit(min(limit, 500))
+        .limit(limit)
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -168,7 +166,7 @@ async def get_document_edges(
     db: AsyncSession,
     document_id: str,
     scope: str | None = None,
-    limit: int = 200,
+    limit: int = 2000,
 ) -> list[GraphEdge]:
     """Get all edges involving a specific document."""
     stmt = select(GraphEdge).where(
@@ -180,7 +178,7 @@ async def get_document_edges(
     if scope:
         stmt = stmt.where(GraphEdge.scope == scope)
 
-    stmt = stmt.limit(min(limit, 500))
+    stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -404,11 +402,11 @@ async def get_document_graph_summary(
 async def get_visualization_data(
     db: AsyncSession,
     document_id: str,
-    limit: int = 200,
+    limit: int = 1000,
 ) -> dict:
     """Generate nodes+edges JSON for D3/visualization of a document's graph."""
     entities = await get_document_entities(db, document_id, limit=limit)
-    edges = await get_document_edges(db, document_id, limit=limit * 2)
+    edges = await get_document_edges(db, document_id, limit=limit * 3)
 
     vis_nodes = []
     entity_ids = set()
@@ -437,19 +435,17 @@ async def get_visualization_data(
 async def get_multi_doc_visualization_data(
     db: AsyncSession,
     document_ids: list[str],
-    limit: int = 300,
+    limit: int = 1000,
 ) -> dict:
     """Generate nodes+edges JSON for D3 visualization across multiple documents."""
     if not document_ids:
         return {"nodes": [], "edges": []}
 
-    capped_ids = document_ids[:20]
-
     distinct_entity_ids_subq = (
         select(EntityMention.entity_id)
-        .where(EntityMention.document_id.in_(capped_ids))
+        .where(EntityMention.document_id.in_(document_ids))
         .distinct()
-        .limit(min(limit, 500))
+        .limit(limit)
         .subquery()
     )
     stmt_entities = (
@@ -466,11 +462,11 @@ async def get_multi_doc_visualization_data(
         select(GraphEdge)
         .where(
             or_(
-                GraphEdge.source_document_id.in_(capped_ids),
-                GraphEdge.target_document_id.in_(capped_ids),
+                GraphEdge.source_document_id.in_(document_ids),
+                GraphEdge.target_document_id.in_(document_ids),
             )
         )
-        .limit(min(limit * 2, 1000))
+        .limit(limit * 3)
     )
     edges = list((await db.execute(stmt_edges)).scalars().all())
 
