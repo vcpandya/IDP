@@ -1,129 +1,41 @@
 # IDP Kit — Intelligent Document Processing Toolkit & AI Agent
 
 ## Overview
-IDP Kit is a Python-based intelligent document processing toolkit with an AI agent. It provides document parsing, indexing, retrieval, processing, and generation capabilities via a FastAPI web application with a Jinja2 template-based frontend.
+IDP Kit is a Python-based intelligent document processing toolkit designed for document parsing, indexing, retrieval, processing, and generation. It features an AI agent and is delivered as a FastAPI web application with a Jinja2 template-based frontend. The project aims to provide comprehensive tools for managing and extracting insights from various document types, supporting an end-to-end intelligent document processing workflow.
 
-## Architecture
-- **Backend**: Python FastAPI application (`idpkit/api/app.py`)
-- **Frontend**: Server-side rendered Jinja2 templates (`idpkit/web/templates/`)
-- **Database**: Replit PostgreSQL via SQLAlchemy async + asyncpg (reads `DATABASE_URL` env var; falls back to SQLite if not set)
-- **File Storage**: GCS object storage via Replit sidecar when `DEFAULT_OBJECT_STORAGE_BUCKET_ID` and `PRIVATE_OBJECT_DIR` are set; falls back to local filesystem (`./storage`)
-- **Entry point**: `run_server.py` — starts uvicorn on port 5000
+## User Preferences
+I prefer clear, concise, and structured communication. When making changes, please outline the proposed modifications and their rationale before implementation. For complex features or architectural decisions, provide detailed explanations and consider potential impacts. I favor iterative development and expect regular updates on progress. Do not make changes to files outside the `idpkit/` directory unless explicitly instructed.
 
-## Database
-All data lives in a single PostgreSQL database (15 tables):
-- **Core**: users, documents, jobs, prompts, templates, conversations, conversation_messages
-- **Knowledge Graph**: entities, entity_mentions, graph_edges (standard relational tables, no graph DB needed)
-- **Batch Processing**: processing_templates, batch_jobs, batch_items
-- **Tags**: tags, document_tags (many-to-many junction table for document grouping)
-- **Document extra columns**: `source_url` (YouTube/external URL), `source_type` (upload/youtube)
-- **Connection**: `idpkit/db/session.py` reads `DATABASE_URL`, converts to `postgresql+asyncpg://`, strips sslmode params
-- **Schema**: Auto-created via `Base.metadata.create_all()` at startup; includes migration helper to drop/recreate legacy `conversation_messages` table if missing `owner_id` column
-- **DateTime handling**: Uses `TZDateTime` custom type decorator to handle timezone-aware datetimes with asyncpg
-- **Indexes**: `Document.status` is indexed for fast status-based filtering
+## System Architecture
+The application follows a client-server architecture:
+-   **Backend**: Python FastAPI application.
+-   **Frontend**: Server-Side Rendered (SSR) Jinja2 templates for the web UI.
+-   **Database**: PostgreSQL is the primary database, managed with SQLAlchemy (async). It includes tables for core data, knowledge graphs, batch processing, and tags. The schema is auto-created on startup.
+-   **File Storage**: An abstract `StorageBackend` interface supports Google Cloud Storage (GCS) via Replit sidecar for production and local filesystem for development. GCS supports direct client uploads via signed URLs.
+-   **Authentication & Authorization**: Features a three-tier role hierarchy (`superadmin`, `admin`, `user`), JWT-based authentication, API key support, and a user approval workflow for new registrations. An admin panel facilitates user management and rate limit configuration.
+-   **Security**: Employs JWT signing, CORS configuration, sanitized API error responses, rate limiting, and restricts file uploads to prevent XSS. LLM API keys are strictly loaded from environment variables.
+-   **Document Processing**: Includes parsers for various document types (PDF, DOCX, HTML, PPTX, YouTube transcripts), an indexing engine (`PageIndex`), and an AI auto-tagger.
+-   **Retrieval**: Utilizes a tree-based retrieval system without an external vector database, where search results load document content on-demand.
+-   **AI Agent**: The IDA agent (`idpkit/agent/agent.py`) is equipped with 12 specialized tools for document interaction, knowledge graph querying, smart tool execution, report generation, and web search capabilities (Jina AI).
+-   **Knowledge Graph**: A dedicated module for building and querying knowledge graphs, including entity extraction, cross-document linking, and visualization.
+-   **Batch Processing**: A redesigned 3-step workflow for processing documents in batches, supporting schema generation from prompts.
+-   **UI/UX**: Features an SVG favicon, interactive agent chat with collapsible tool calls and source citations, dashboard tiles for quick access to features, a dedicated Knowledge Graph explorer with D3 visualization and export options, and YouTube ingestion with a video preview/selection modal. Knowledge Base filtering, bulk actions, and AI auto-tagging are also integrated. The document viewer supports tree, outline, and JSON views. LLM model lists are dynamically fetched.
+-   **Performance**: N+1 query fixes and query limits are implemented in list endpoints.
 
-## Security
-- **JWT signing**: Uses `SESSION_SECRET` env var (required); falls back to ephemeral random key with a logged warning — no hardcoded default
-- **CORS**: Reads `ALLOWED_ORIGINS` env var (comma-separated); defaults to wildcard if not set
-- **Session cookies**: Login sets `secure=True`, `httponly=True` flags
-- **Error responses**: All API exception messages are sanitized — no internal details leaked to clients; full tracebacks logged server-side via `logger.exception()`
-- **Rate limiting**: slowapi with admin-exempt key function — defaults 30/min for agent chat, 10/min for batch creation; admins/superadmins are exempt; limits configurable via Admin panel (stored in `system_settings` table); returns 429 on excess
-- **File uploads**: SVG uploads blocked (XSS risk); max upload size enforced (50 MB)
-- **API keys**: All LLM provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_BASE_URL`) read from env only — no `os.environ` mutation at runtime
-
-## Authentication & User Management
-- **Roles**: Three-tier hierarchy — `superadmin` > `admin` > `user`
-- **Admin seeding**: On startup, if no users exist, a default superadmin is created (username: `admin`, password from `IDP_ADMIN_PASSWORD` env var, default: `admin123`). Existing `admin`-role users named "admin" are auto-migrated to `superadmin`.
-- **User approval flow**: New user registrations create accounts with `is_active=0` (pending). Users cannot log in until an admin approves them via the Admin panel.
-- **Admin panel**: Available at `/admin/users` (sidebar link visible to admin and superadmin). Features: approve/deactivate users, promote users to admin, demote admins (superadmin only), delete users, configure rate limits.
-- **Role hierarchy rules**: Superadmin cannot be deleted/deactivated/demoted by anyone. Only superadmin can delete/deactivate/demote other admins. Any admin can promote regular users to admin.
-- **Auth methods**: JWT Bearer token, API key header (`X-API-Key`), or session cookie
-
-## File Storage
-- **Abstract interface**: `StorageBackend` in `idpkit/core/storage.py`
-- **GCS backend**: `GCSStorageBackend` uses Replit's sidecar API at `127.0.0.1:1106` for signed URL upload/download with local caching
-- **Direct upload**: GCS backend supports `get_signed_upload_url()` — clients upload directly to GCS via signed PUT URL, then call `POST /api/documents/{id}/confirm-upload`; local backend falls back to server-proxied multipart upload via `POST /api/documents/{id}/upload-content`
-- **Local backend**: `LocalStorageBackend` for development/fallback
-- **Selection**: `get_storage()` in `idpkit/api/deps.py` auto-selects based on env vars
-
-## Project Structure
-- `idpkit/api/` — FastAPI app factory and API routes (auth, documents, indexing, jobs, retrieval, agent, tools, generation, processing, plugins, graph, batch, admin, settings, tags, youtube)
-- `idpkit/api/deps.py` — Shared dependencies: auth, storage, rate limiter
-- `idpkit/web/` — Web UI routes and Jinja2 templates
-- `idpkit/db/` — Database models, session management, and admin seeding
-- `idpkit/engine/` — PageIndex document indexing engine, AI auto-tagger
-- `idpkit/parsing/` — Document parsers (PDF, DOCX, HTML, PPTX, YouTube transcripts, etc.)
-- `idpkit/youtube/` — YouTube URL resolver, metadata fetcher (Data API v3), playlist/channel enumeration
-- `idpkit/processing/` — Document processing pipelines
-- `idpkit/retrieval/` — RAG retrieval and search (tree-based, no vector DB)
-- `idpkit/agent/` — AI agent with tools
-- `idpkit/tools/` — Smart document tools (extract, summarize, compare, etc.)
-- `idpkit/graph/` — Knowledge graph builder (entities, edges, cross-doc linking)
-- `idpkit/generation/` — Document generation (DOCX, Markdown)
-- `idpkit/plugins/` — Plugin system
-- `idpkit/core/storage.py` — File storage abstraction (GCS + local)
-- `idpkit/core/llm.py` — LLM client (LiteLLM-based, passes API keys via kwargs not env mutation)
-
-## IDA Agent Tools
-The IDA agent (`idpkit/agent/agent.py` + `idpkit/agent/tools.py`) has 12 tools:
-- **Core**: `search_document`, `list_documents`, `summarize_section`, `extract_data`
-- **Knowledge Graph**: `query_graph` (5 operations: find_entity, entity_mentions, related_sections, cross_document_links, document_entities), `find_cross_references`
-- **Smart Tools**: `run_smart_tool` (gateway to 13 smart tools)
-- **Composition**: `compose_with_context`, `generate_report`, `run_batch`
-- **Web (Jina AI)**: `web_search` (via `s.jina.ai`), `fetch_url` (via `r.jina.ai`) — requires `JINA_API_KEY` env var
-
-- `pageindex/` — Standalone PageIndex library
-
-## Environment Variables
-- `DATABASE_URL` — PostgreSQL connection string (set by Replit)
-- `DEFAULT_OBJECT_STORAGE_BUCKET_ID` — GCS bucket for file storage (set by Replit)
-- `PRIVATE_OBJECT_DIR` — Private directory prefix in GCS bucket (set by Replit)
-- `IDP_ADMIN_PASSWORD` — Default admin password (default: `admin123`)
-- `SESSION_SECRET` — JWT signing key (required for production; ephemeral random fallback in dev)
-- `ALLOWED_ORIGINS` — Comma-separated CORS allowed origins (optional)
-- `JINA_API_KEY` — Jina AI API key for web search (`s.jina.ai`) and URL reader (`r.jina.ai`) tools in IDA agent (optional)
-- `YOUTUBE_API_KEY` — YouTube Data API v3 key for video metadata, playlist/channel resolution (required for YouTube ingestion)
-- `SUPADATA_API_KEY` — Supadata API key for fallback YouTube transcript extraction when `youtube-transcript-api` is blocked by cloud IPs (optional; free tier: 100 requests)
-- `WEBSHARE_PROXY_USERNAME` — Webshare rotating residential proxy username for proxied YouTube transcript fetching (optional; used as primary transcript source when set)
-- `WEBSHARE_PROXY_PASSWORD` — Webshare rotating residential proxy password (required alongside `WEBSHARE_PROXY_USERNAME`)
-
-## Running
-- Dev: `python run_server.py` (port 5000, host 0.0.0.0)
-- Deployment: autoscale target with `python run_server.py`
-
-## Key Dependencies
-- FastAPI, Uvicorn, SQLAlchemy (async), asyncpg
-- OpenAI, LiteLLM, tiktoken
-- PyMuPDF, PyPDF2, python-docx, beautifulsoup4
-- Jinja2, Pydantic, httpx
-- passlib + bcrypt (auth), python-jose (JWT)
-- slowapi (rate limiting)
-- NetworkX (optional, for graph analytics)
-- youtube-transcript-api (YouTube transcript extraction)
-- google-api-python-client (YouTube Data API v3)
-
-## Retrieval / Search Pipeline
-- **Tree index format**: `{"doc_name": ..., "doc_description": ..., "structure": [...]}` — the `structure` key holds the actual hierarchical node list
-- **Node fields**: `title`, `start_index`/`page_start`, `end_index`/`page_end`, `node_id`, `summary`, optional `text`, optional `nodes` or `children` (children key varies by source)
-- **Search flow**: `_flatten_tree()` unwraps the `structure` key, flattens all nodes recursively, LLM ranks by title+summary, then actual PDF text is loaded on-demand for matched page ranges
-- **Text loading**: Nodes typically don't store inline text (config `if_add_node_text: "no"`). The search tool loads PDF pages from storage using `get_page_tokens()` for matched sections
-- **Config defaults** (`idpkit/engine/config.yaml`): model=gpt-4o, toc_check_page_num=20, max_page_num_each_node=10, if_add_node_id=yes, if_add_node_summary=yes, if_add_node_text=no
-
-## UI/UX Features
-- **Favicon**: SVG favicon at `idpkit/web/static/favicon.svg` — document with search icon in indigo gradient
-- **Agent Chat**: Tool call messages render as collapsible accordions; source citations open in popup modal with text preview. Supports `?prompt=` URL param to pre-populate the input field (used by dashboard tiles).
-- **Dashboard tiles**: "Knowledge Graph" links to `/graph`; "Cross-Document Search", "Entity Discovery", and "Report Generation" tiles link to `/chat?prompt=...` with contextual example prompts pre-filled in the chat input.
-- **Knowledge Graph page** (`/graph`): Dedicated explorer with entity search, type filtering, D3 force-directed graph visualization, entity detail panel with mentions and relationships, and "Ask IDA" link. Supports multi-document selection (add/remove individual docs) and tag-based filtering (select a tag group to load all its indexed documents). Multi-doc graph uses `GET /api/graph/visualization?doc_ids=...&tag_id=...` endpoint backed by `get_multi_doc_visualization_data()`. Entity types loaded dynamically from `/api/graph/entity-types`; icons auto-resolve for unknown types via keyword matching. Added to sidebar nav. **Download/Export**: Toolbar dropdown button to download the visible graph as JSON (full `{nodes, edges}` structure), CSV Entities (`name, type, mention_count, document_ids`), or CSV Relationships (`source_name, relation, target_name, weight`). Client-side Blob download, no backend needed. **Bulk Graph Build**: "Build Graphs" toolbar button appears when documents are selected (individually or via tag). Calls `POST /api/graph/build-bulk` to build graphs for all selected documents that don't already have one. Shows progress and skips documents that already have graphs or lack tree indexes.
-- **YouTube Ingestion**: Knowledge Base and Upload pages have a YouTube URL input panel. Accepts video, playlist, or channel URLs. Transcripts are extracted with temporal segmentation (2-min windows with timestamps as structural elements like page numbers). Videos become Document records with `format="youtube"`. Playlists/channels resolve to multiple documents (capped at 100 videos). **Transcript fallback chain**: 1) Webshare proxy via `youtube-transcript-api` + `WebshareProxyConfig` (requires `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD`), 2) Supadata API (requires `SUPADATA_API_KEY`), 3) direct `youtube-transcript-api` (no proxy, works locally but blocked on cloud IPs), 4) metadata-only document (video title/description/channel as content, `transcript_available: false` in metadata, skips auto-indexing). Source tracked in `transcript_source` metadata field. Job results include `transcript_source_counts` summary. **Preview/selection modal**: For playlists and channels, a modal shows all discovered videos (up to 200) with thumbnails, titles, publish dates, view counts, and duration. Filtering: search by title, sort by newest/oldest/most viewed/most liked/playlist order, date range (from/to), and "Latest N" limiter. Select Shown/Deselect Shown buttons apply to filtered results. Single video URLs bypass the modal. API supports `video_ids` parameter for selective import. Preview endpoint enriches video metadata via batch `videos.list` API calls. **Auto-tagging by source**: Channel/playlist name is auto-suggested as a tag (special characters stripped, red color). Shown in modal with "Apply tag" checkbox (on by default). Reuses existing tag if name matches (case-insensitive). Hidden when importing into an already-selected tag. Supports auto-tag and auto-index options. Progress polling shows real-time status.
-- **Knowledge Base filtering & bulk actions**: The "All Documents" table has a filter bar (text search by filename, format dropdown, status dropdown, tag dropdown including "Untagged" option) with a clear button. Documents can be bulk-selected via row checkboxes and a "select all visible" header checkbox. Bulk action bar appears with: tag picker (assign all selected docs to a tag via `POST /api/tags/{tag_id}/documents`), delete selected (with confirmation), and deselect button. **Tag detail view** also has a "Build Graphs" button to bulk-build knowledge graphs for all indexed documents in the tag via `POST /api/graph/build-bulk`.
-- **AI Auto-Tagging**: Auto-tag button on document rows in Knowledge Base. Uses LLM to analyze document content (filename, metadata, description, tree structure) and suggest 1-3 tags. Prefers existing user tags when they match. Can auto-apply suggestions. Also available during YouTube ingestion via checkbox. API: `POST /api/documents/{id}/auto-tag`.
-- **Graph build tree_index handling**: `doc.tree_index` is always stored as `{"doc_name": ..., "doc_description": ..., "structure": [...]}`. Build endpoints detect this format and pass it directly to `build_document_graph()` without re-wrapping. The builder reads `tree_index["structure"]` to get the node array.
-- **Cumulative entity type bank**: Entity extraction no longer enforces a hardcoded type whitelist. The LLM prompt includes all existing entity types from the DB (merged with defaults) and allows creating new UPPER_SNAKE_CASE types when none fit. Types validated by regex format only. This builds a growing corpus across documents.
-- **Batch Processing**: Redesigned with 3-step flow (Instructions → Select Documents to Process → Settings). Reference documents attach to the prompt (Step 1) as AI context. Two-pass schema generation: when no template is selected, Pass 1 generates a JSON schema from the prompt + reference docs, Pass 2 uses that schema as structured output constraint for all target documents.
-- **Document Viewer**: Tree structure with D3 visualization, outline view, and JSON view; `$watch` on viewMode for dynamic D3 rendering
-- **Settings**: LLM model lists fetched dynamically from provider APIs (OpenAI, Anthropic, Google, OpenRouter, Ollama) with curated fallbacks. Model filter search icon positioned on the right to avoid text overlap.
-
-## Performance
-- **N+1 fix**: `list_conversations` uses a single LEFT JOIN + GROUP BY query instead of N+1 message count queries
-- **Query bounds**: All list endpoints have `.limit()` caps (50-200 depending on endpoint)
-- **Direct uploads**: Large files bypass the server entirely when GCS is active (signed PUT URL)
+## External Dependencies
+-   **Database Drivers**: `asyncpg`
+-   **Web Framework**: `FastAPI`, `Uvicorn`
+-   **ORM**: `SQLAlchemy`
+-   **Templating**: `Jinja2`
+-   **LLM Integration**: `OpenAI`, `LiteLLM`, `tiktoken` (for tokenization)
+-   **Document Parsing**: `PyMuPDF`, `PyPDF2`, `python-docx`, `beautifulsoup4`
+-   **Authentication**: `passlib`, `bcrypt`, `python-jose`
+-   **Rate Limiting**: `slowapi`
+-   **HTTP Client**: `httpx`
+-   **Data Validation**: `Pydantic`
+-   **Graph Analytics**: `NetworkX` (optional)
+-   **YouTube Integration**: `youtube-transcript-api`, `google-api-python-client` (YouTube Data API v3)
+-   **Third-Party APIs**:
+    -   `Jina AI` (for `web_search` and `fetch_url` agent tools)
+    -   `Supadata API` (fallback for YouTube transcript extraction)
+    -   `Webshare Proxy` (for proxied YouTube transcript fetching)
