@@ -5,7 +5,7 @@ integrations = ["javascript_object_storage:2.0.0"]
 
 [nix]
 channel = "stable-25_05"
-packages = ["cargo", "freetype", "gumbo", "harfbuzz", "jbig2dec", "libiconv", "libjpeg_turbo", "libxcrypt", "libyaml", "mupdf", "openjpeg", "postgresql", "rustc", "swig", "xcbuild"]
+packages = ["freetype", "gumbo", "harfbuzz", "jbig2dec", "libiconv", "libjpeg_turbo", "libxcrypt", "libyaml", "mupdf", "openjpeg", "postgresql"]
 
 [workflows]
 runButton = "Project"
