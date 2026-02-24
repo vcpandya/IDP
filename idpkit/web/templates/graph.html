@@ -1242,7 +1242,7 @@ function graphExplorer() {
                 .attr('width', width).attr('height', height);
 
             this.zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
-            svg.call(this.zoom);
+            svg.call(this.zoom).on('dblclick.zoom', null);
             this.svg = svg;
 
             const g = svg.append('g');
@@ -1293,6 +1293,13 @@ function graphExplorer() {
                 }
                 const ent = self.entities.find(en => en.id === d.id);
                 if (ent) self.selectEntity(ent);
+            });
+            node.on('dblclick', (e, d) => {
+                e.stopPropagation();
+                if (self.focusMode) {
+                    const ent = self.entities.find(en => en.id === d.id);
+                    if (ent) self.selectEntity(ent);
+                }
             });
 
             node.append('circle')
