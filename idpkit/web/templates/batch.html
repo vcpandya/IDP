@@ -482,9 +482,9 @@
                                     <span style="font-weight:600;font-size:.9rem;" x-text="item.filename || item.document_id"></span>
                                     <div style="display:flex;align-items:center;gap:6px;">
                                         <button x-show="item.status === 'completed' && item.result"
-                                            class="btn btn-sm" title="Download result"
+                                            class="btn btn-sm" title="Download as DOCX"
                                             @click.stop="downloadItemResult(viewingJob.id, item.id, item.filename || item.document_id)">
-                                            <i class="fas fa-download"></i>
+                                            <i class="fas fa-file-word"></i>
                                         </button>
                                         <span class="status-badge" :class="'status-' + item.status" x-text="item.status"></span>
                                     </div>
