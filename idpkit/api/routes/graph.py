@@ -470,7 +470,6 @@ async def generate_insights(
             sa_select(EntityModel)
             .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
             .order_by(EntityModel.document_count.desc())
-            .limit(150)
         )).scalars().all())
 
         from sqlalchemy import or_
@@ -480,7 +479,6 @@ async def generate_insights(
                 GraphEdge.source_document_id.in_(doc_ids),
                 GraphEdge.target_document_id.in_(doc_ids),
             ))
-            .limit(500)
         )).scalars().all())
 
         doc_rows = (await db.execute(
@@ -505,7 +503,6 @@ async def generate_insights(
             sa_select(EntityModel)
             .where(EntityModel.id.in_(sa_select(entity_ids_subq)))
             .order_by(EntityModel.document_count.desc())
-            .limit(150)
         )).scalars().all())
 
         from sqlalchemy import or_
@@ -515,7 +512,6 @@ async def generate_insights(
                 GraphEdge.source_document_id.in_(user_doc_ids),
                 GraphEdge.target_document_id.in_(user_doc_ids),
             ))
-            .limit(500)
         )).scalars().all())
 
         doc_rows = (await db.execute(
