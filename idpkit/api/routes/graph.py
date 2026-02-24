@@ -322,7 +322,6 @@ async def export_full_graph(
     db: AsyncSession = Depends(get_db),
 ):
     """Export the complete knowledge graph for selected documents without view limits."""
-    import io
     import json
     from fastapi.responses import Response
     from sqlalchemy import select as sa_select
