@@ -37,5 +37,5 @@ externalPort = 80
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "export LD_LIBRARY_PATH=.deploy-libs:$LD_LIBRARY_PATH PYTHONPATH=.pythonlibs/lib/python3.10/site-packages && exec python3 run_server.py"]
+run = ["bash", "-c", "export LD_LIBRARY_PATH=.deploy-libs:$LD_LIBRARY_PATH PYTHONPATH=.pythonlibs/lib/python3.10/site-packages && exec gunicorn -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:5000 --reuse-port -w 2 --timeout 120 --graceful-timeout 30 'idpkit.api.app:create_app()'"]
 build = ["bash", "build.sh"]

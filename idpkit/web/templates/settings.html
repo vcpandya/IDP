@@ -139,6 +139,163 @@
             <p>Powered by PageIndex vectorless RAG engine + LiteLLM</p>
         </div>
     </div>
+
+    <div class="settings-card" style="margin-top:20px;" x-data="{ apiDocsOpen: false }">
+        <h3 @click="apiDocsOpen = !apiDocsOpen" style="cursor:pointer;user-select:none;">
+            <i class="fas fa-book"></i> API Documentation
+            <i :class="apiDocsOpen ? 'fas fa-chevron-up' : 'fas fa-chevron-down'" style="margin-left:auto;font-size:.75rem;color:var(--text-muted);"></i>
+        </h3>
+        <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:12px;">
+            Complete reference for the IDP Kit REST API. Also available at
+            <a href="/docs" target="_blank">/docs</a> (Swagger) and
+            <a href="/redoc" target="_blank">/redoc</a> (ReDoc).
+        </p>
+
+        <div x-show="apiDocsOpen" x-transition style="font-size:.85rem;line-height:1.7;">
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-bottom:16px;">
+                <h4 style="margin:0 0 8px;font-size:.92rem;"><i class="fas fa-shield-alt" style="color:var(--primary);"></i> Authentication</h4>
+                <p style="margin-bottom:8px;">All API endpoints require authentication via one of these methods:</p>
+                <ul style="padding-left:20px;margin-bottom:8px;">
+                    <li><strong>API Key</strong> &mdash; Send your key in the <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">X-API-Key</code> header.</li>
+                    <li><strong>JWT Bearer Token</strong> &mdash; Obtain a token from <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">POST /api/auth/login</code> and send it as <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">Authorization: Bearer &lt;token&gt;</code>.</li>
+                    <li><strong>Session Cookie</strong> &mdash; Browsers are automatically authenticated via the <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">session_token</code> cookie set on login.</li>
+                </ul>
+            </div>
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-bottom:16px;">
+                <h4 style="margin:0 0 8px;font-size:.92rem;"><i class="fas fa-tachometer-alt" style="color:var(--warning);"></i> Rate Limiting</h4>
+                <p>API requests are rate-limited per user. Limits vary by endpoint category and can be configured by admins. When exceeded, the API returns <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">429 Too Many Requests</code>.</p>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(420px, 1fr));gap:12px;">
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-sign-in-alt"></i> Auth</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/login</td><td style="padding:3px 6px;color:var(--text-secondary);">Authenticate &amp; get JWT token</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/register</td><td style="padding:3px 6px;color:var(--text-secondary);">Create a new user account</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/me</td><td style="padding:3px 6px;color:var(--text-secondary);">Get current user profile</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/apikey</td><td style="padding:3px 6px;color:var(--text-secondary);">Generate a new API key</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/change-password</td><td style="padding:3px 6px;color:var(--text-secondary);">Change password</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-file-alt"></i> Documents</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/</td><td style="padding:3px 6px;color:var(--text-secondary);">Upload a document (multipart)</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/</td><td style="padding:3px 6px;color:var(--text-secondary);">List your documents</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/{id}</td><td style="padding:3px 6px;color:var(--text-secondary);">Get document details</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--danger-light);color:var(--danger);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">DEL</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/{id}</td><td style="padding:3px 6px;color:var(--text-secondary);">Delete a document</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-search"></i> Retrieval</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/retrieval/documents/{doc_id}/query</td><td style="padding:3px 6px;color:var(--text-secondary);">Query a document with RAG</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-magic"></i> Tools</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tools/</td><td style="padding:3px 6px;color:var(--text-secondary);">List available Smart Tools</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tools/{tool_name}</td><td style="padding:3px 6px;color:var(--text-secondary);">Execute a tool on a document</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-robot"></i> Agent</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/agent/chat</td><td style="padding:3px 6px;color:var(--text-secondary);">Chat with the AI agent</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/agent/conversations</td><td style="padding:3px 6px;color:var(--text-secondary);">List conversations</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-layer-group"></i> Batch</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/</td><td style="padding:3px 6px;color:var(--text-secondary);">Create &amp; start a batch job</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/</td><td style="padding:3px 6px;color:var(--text-secondary);">List batch jobs</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/{id}/start</td><td style="padding:3px 6px;color:var(--text-secondary);">Start a batch job</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-project-diagram"></i> Graph</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/documents/{id}/build</td><td style="padding:3px 6px;color:var(--text-secondary);">Build knowledge graph</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/visualization</td><td style="padding:3px 6px;color:var(--text-secondary);">Get graph visualization data</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/insights</td><td style="padding:3px 6px;color:var(--text-secondary);">Generate AI insights</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/smart-focus</td><td style="padding:3px 6px;color:var(--text-secondary);">AI-powered graph focus</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-tags"></i> Tags</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tags/</td><td style="padding:3px 6px;color:var(--text-secondary);">List tags</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tags/</td><td style="padding:3px 6px;color:var(--text-secondary);">Create a tag</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-sliders-h"></i> Settings</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/settings/providers</td><td style="padding:3px 6px;color:var(--text-secondary);">List LLM providers</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/settings/models?provider=X</td><td style="padding:3px 6px;color:var(--text-secondary);">List models for provider</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-top:16px;">
+                <h4 style="margin:0 0 10px;font-size:.92rem;"><i class="fas fa-code" style="color:var(--primary);"></i> Quick Start Examples</h4>
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Login and get a JWT token:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "you", "password": "pass"}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Upload a document (using API key):</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/documents/ \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -F "file=@document.pdf"</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Query a document:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/retrieval/documents/{doc_id}/query \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the key findings?"}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Execute a Smart Tool:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;">curl -X POST /api/tools/smart_summary \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "options": {}}'</pre>
+            </div>
+
+        </div>
+    </div>
 </div>
 <script>
 function settingsPage() {

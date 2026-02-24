@@ -23,8 +23,8 @@ if "postgresql" in DATABASE_URL:
     _engine_kwargs.update(
         pool_pre_ping=True,
         pool_recycle=300,
-        pool_size=5,
-        max_overflow=10,
+        pool_size=3,
+        max_overflow=5,
     )
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
