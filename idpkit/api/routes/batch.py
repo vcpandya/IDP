@@ -935,9 +935,11 @@ async def download_batch_item(
         raise HTTPException(status_code=400, detail="No result available for this item")
 
     doc_result = await db.execute(
-        select(Document.filename).where(Document.id == item.document_id)
+        select(Document.filename, Document.tree_index).where(Document.id == item.document_id)
     )
-    filename = doc_result.scalar_one_or_none() or item.document_id
+    doc_row = doc_result.first()
+    filename = doc_row[0] if doc_row else item.document_id
+    doc_tree_index = doc_row[1] if doc_row else None
     safe_name = filename.rsplit(".", 1)[0] if "." in filename else filename
 
     content = None
@@ -958,7 +960,13 @@ async def download_batch_item(
     if content is None and item.result is not None:
         try:
             from idpkit.batch.formatter import format_result_to_docx
-            content = format_result_to_docx(batch.tool_name, item.result, filename=filename)
+            from idpkit.batch.runner import _extract_text_from_tree
+            original_text = _extract_text_from_tree(doc_tree_index) if doc_tree_index else None
+            content = format_result_to_docx(
+                batch.tool_name, item.result,
+                filename=filename,
+                original_text=original_text if original_text else None,
+            )
             is_docx = True
         except Exception:
             content = json.dumps(item.result, indent=2, default=str).encode("utf-8")
@@ -1013,9 +1021,9 @@ async def download_batch_zip(
 
     doc_ids = [item.document_id for item in items]
     docs_result = await db.execute(
-        select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+        select(Document.id, Document.filename, Document.tree_index).where(Document.id.in_(doc_ids))
     )
-    doc_names = {row[0]: row[1] for row in docs_result.all()}
+    doc_info = {row[0]: (row[1], row[2]) for row in docs_result.all()}
 
     storage = get_storage()
     buf = io.BytesIO()
@@ -1024,7 +1032,9 @@ async def download_batch_zip(
         for item in items:
             item_bytes = None
             ext = "docx"
-            filename = doc_names.get(item.document_id, item.document_id)
+            info = doc_info.get(item.document_id, (item.document_id, None))
+            filename = info[0]
+            tree_index = info[1]
             if item.output_file and item.output_file.endswith(".docx"):
                 try:
                     item_bytes = storage.load(item.output_file)
@@ -1039,7 +1049,13 @@ async def download_batch_zip(
             if item_bytes is None and item.result is not None:
                 try:
                     from idpkit.batch.formatter import format_result_to_docx
-                    item_bytes = format_result_to_docx(batch.tool_name, item.result, filename=filename)
+                    from idpkit.batch.runner import _extract_text_from_tree
+                    original_text = _extract_text_from_tree(tree_index) if tree_index else None
+                    item_bytes = format_result_to_docx(
+                        batch.tool_name, item.result,
+                        filename=filename,
+                        original_text=original_text if original_text else None,
+                    )
                     ext = "docx"
                 except Exception:
                     item_bytes = json.dumps(item.result, indent=2, default=str).encode("utf-8")
