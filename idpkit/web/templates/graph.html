@@ -49,6 +49,18 @@
 .relation-label { font-size: 0.65rem; color: var(--text-muted, #6b7280); background: var(--bg, #f3f4f6); padding: 1px 5px; border-radius: 3px; }
 .close-panel { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted, #6b7280); }
 .close-panel:hover { color: var(--text, #111); }
+.insights-panel { position: absolute; top: 12px; left: 12px; right: 12px; bottom: 12px; background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); box-shadow: 0 4px 20px rgba(0,0,0,0.12); padding: 24px; z-index: 15; overflow-y: auto; }
+.insights-panel h3 { margin: 0 0 16px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+.insights-panel .insights-content { font-size: 0.88rem; line-height: 1.7; }
+.insights-panel .insights-content h3 { font-size: 1rem; margin-top: 20px; margin-bottom: 8px; color: #7c3aed; }
+.insights-panel .insights-content ul { padding-left: 20px; margin: 4px 0 12px; }
+.insights-panel .insights-content li { margin-bottom: 6px; }
+.insights-panel .insights-content strong { color: var(--text, #111); }
+.insights-stats { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.insights-stat { padding: 6px 12px; background: var(--bg, #f9fafb); border-radius: 8px; font-size: 0.78rem; color: var(--text-muted, #6b7280); }
+.insights-stat b { color: #7c3aed; margin-right: 4px; }
+.insights-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; gap: 16px; color: var(--text-muted, #6b7280); }
+.insights-loading i { font-size: 2rem; color: #7c3aed; }
 .node-label { font-size: 11px; pointer-events: none; }
 .link-label { font-size: 9px; fill: #999; pointer-events: none; }
 .stats-row { display: flex; gap: 12px; }
@@ -167,6 +179,9 @@
                     </button>
                 </div>
             </div>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;border:none" @click="generateInsights()" :disabled="insightsLoading || graphNodes.length === 0" title="AI Insights">
+                <i class="fas" :class="insightsLoading ? 'fa-spinner fa-spin' : 'fa-lightbulb'"></i> Insights
+            </button>
             <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
         </div>
         <div class="graph-canvas" id="graphCanvas">
@@ -227,6 +242,27 @@
             <a :href="'/chat?prompt=Tell me about the entity ' + encodeURIComponent(detailEntity?.entity?.name || '') + ' and its connections across my documents'" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
                 <i class="fas fa-brain"></i> Ask IDA about this
             </a>
+        </div>
+
+        <div class="insights-panel" x-show="showInsights" x-cloak x-transition>
+            <button class="close-panel" @click="showInsights = false">&times;</button>
+            <h3><i class="fas fa-lightbulb" style="color:#7c3aed"></i> Knowledge Graph Insights</h3>
+
+            <div x-show="insightsLoading" class="insights-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Analyzing your knowledge graph...</p>
+                <p style="font-size:0.75rem">This may take a moment as the AI examines entities, relationships, and cross-document patterns.</p>
+            </div>
+
+            <div x-show="!insightsLoading && insightsData">
+                <div class="insights-stats" x-show="insightsData?.stats">
+                    <div class="insights-stat"><b x-text="insightsData?.stats?.entities || 0"></b> Entities</div>
+                    <div class="insights-stat"><b x-text="insightsData?.stats?.edges || 0"></b> Relationships</div>
+                    <div class="insights-stat"><b x-text="insightsData?.stats?.entity_types || 0"></b> Types</div>
+                    <div class="insights-stat"><b x-text="insightsData?.stats?.cross_doc_entities || 0"></b> Cross-Doc</div>
+                </div>
+                <div class="insights-content" x-html="renderMarkdown(insightsData?.insights || '')"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -326,6 +362,9 @@ function graphExplorer() {
         simulation: null,
         svg: null,
         zoom: null,
+        showInsights: false,
+        insightsLoading: false,
+        insightsData: null,
 
         get availableDocs() {
             return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
@@ -390,6 +429,56 @@ function graphExplorer() {
             } catch(e) {
                 return sourceUrl;
             }
+        },
+
+        renderMarkdown(text) {
+            if (!text) return '';
+            const lines = text.split('\n');
+            let html = '';
+            let inList = false;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('### ')) {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<h3>' + trimmed.slice(4) + '</h3>';
+                } else if (trimmed.startsWith('- ')) {
+                    if (!inList) { html += '<ul>'; inList = true; }
+                    html += '<li>' + trimmed.slice(2) + '</li>';
+                } else if (trimmed === '') {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<br>';
+                } else {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<p>' + trimmed + '</p>';
+                }
+            }
+            if (inList) html += '</ul>';
+            html = html
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>');
+            return html;
+        },
+
+        async generateInsights() {
+            this.showInsights = true;
+            this.insightsLoading = true;
+            this.insightsData = null;
+            try {
+                const res = await fetch('/api/graph/insights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: this.selectedDocIds })
+                });
+                if (res.ok) {
+                    this.insightsData = await res.json();
+                } else {
+                    this.insightsData = { insights: 'Failed to generate insights. Please try again.' };
+                }
+            } catch(e) {
+                this.insightsData = { insights: 'An error occurred while generating insights.' };
+            }
+            this.insightsLoading = false;
         },
 
         addDocument(docId) {
