@@ -4,10 +4,16 @@ set -e
 pip install --no-cache-dir ".[postgres]"
 
 mkdir -p .deploy-libs
+
+GCC_LIB_DIR=$(gcc -print-file-name=libstdc++.so.6 2>/dev/null | xargs dirname 2>/dev/null || true)
+
 for lib in libstdc++.so.6 libgcc_s.so.1; do
-    src=$(ldconfig -p 2>/dev/null | grep "$lib" | head -1 | awk '{print $NF}')
+    src=""
+    if [ -n "$GCC_LIB_DIR" ] && [ -f "$GCC_LIB_DIR/$lib" ]; then
+        src="$GCC_LIB_DIR/$lib"
+    fi
     if [ -z "$src" ] || [ ! -f "$src" ]; then
-        src=$(find /lib /usr/lib -maxdepth 3 -name "$lib" -not -path "*/32/*" 2>/dev/null | head -1)
+        src=$(ldconfig -p 2>/dev/null | grep -m1 "$lib" | awk '{print $NF}')
     fi
     if [ -n "$src" ] && [ -f "$src" ]; then
         cp -L "$src" .deploy-libs/
