@@ -418,6 +418,12 @@ class InsightsRequest(BaseModel):
     document_ids: List[str] = []
 
 
+class InsightsFollowupRequest(BaseModel):
+    question: str
+    document_ids: List[str] = []
+    previous_context: str = ""
+
+
 class SmartFocusRequest(BaseModel):
     prompt: str
     document_ids: List[str] = []
@@ -542,6 +548,161 @@ async def build_bulk_graphs(
     }
 
 
+async def _load_graph_data(db: AsyncSession, user: User, doc_ids: list[str]):
+    """Shared helper to load entities, edges, and doc info for insights/followup."""
+    if doc_ids:
+        owned = (await db.execute(
+            select(Document.id).where(
+                Document.id.in_(doc_ids),
+                Document.owner_id == user.id,
+            )
+        )).scalars().all()
+        doc_ids = list(owned)
+    else:
+        doc_ids = list((await db.execute(
+            select(Document.id).where(Document.owner_id == user.id)
+        )).scalars().all())
+
+    if not doc_ids:
+        return None
+
+    entity_ids_subq = (
+        select(EntityMention.entity_id)
+        .where(EntityMention.document_id.in_(doc_ids))
+        .distinct()
+        .subquery()
+    )
+    entities = list((await db.execute(
+        select(EntityModel)
+        .where(EntityModel.id.in_(select(entity_ids_subq)))
+        .order_by(EntityModel.document_count.desc())
+    )).scalars().all())
+
+    edges = list((await db.execute(
+        select(GraphEdge)
+        .where(or_(
+            GraphEdge.source_document_id.in_(doc_ids),
+            GraphEdge.target_document_id.in_(doc_ids),
+        ))
+    )).scalars().all())
+
+    doc_rows = (await db.execute(
+        select(Document.id, Document.filename, Document.format, Document.source_url)
+        .where(Document.id.in_(doc_ids))
+    )).all()
+
+    return {
+        "doc_ids": doc_ids,
+        "entities": entities,
+        "edges": edges,
+        "doc_rows": doc_rows,
+    }
+
+
+def _build_graph_context_text(entities, edges, doc_rows):
+    """Build the LLM context text from graph data."""
+    entity_map = {e.id: e for e in entities}
+    doc_names = {r[0]: r[1] for r in doc_rows}
+    doc_formats = {r[0]: (r[2] or "pdf") for r in doc_rows}
+
+    type_counts: dict[str, int] = {}
+    for e in entities:
+        type_counts[e.entity_type] = type_counts.get(e.entity_type, 0) + 1
+
+    relation_type_counts: dict[str, int] = {}
+    scope_counts = {"intra": 0, "inter": 0}
+    confidence_values: list[int] = []
+    relationships = []
+    co_occurrences = []
+
+    for edge in edges:
+        rt = edge.relation_type
+        relation_type_counts[rt] = relation_type_counts.get(rt, 0) + 1
+        scope_counts[edge.scope or "intra"] = scope_counts.get(edge.scope or "intra", 0) + 1
+        if edge.confidence:
+            confidence_values.append(edge.confidence)
+
+        src = entity_map.get(edge.source_entity_id)
+        tgt = entity_map.get(edge.target_entity_id)
+        if src and tgt:
+            if edge.relation_type != "co_occurrence":
+                relationships.append({
+                    "source": src.canonical_name,
+                    "source_type": src.entity_type,
+                    "target": tgt.canonical_name,
+                    "target_type": tgt.entity_type,
+                    "relation": edge.relation_type,
+                    "context": edge.context_snippet or "",
+                    "scope": edge.scope or "intra",
+                })
+            else:
+                co_occurrences.append(
+                    f"{src.canonical_name} ({src.entity_type}) <-> {tgt.canonical_name} ({tgt.entity_type})"
+                )
+
+    multi_doc_entities = [e for e in entities if (e.document_count or 1) > 1]
+    top_entities = sorted(entities, key=lambda e: e.document_count or 1, reverse=True)[:30]
+
+    source_type_counts: dict[str, int] = {}
+    for fmt in doc_formats.values():
+        source_type_counts[fmt] = source_type_counts.get(fmt, 0) + 1
+
+    conf_min = min(confidence_values) if confidence_values else 0
+    conf_max = max(confidence_values) if confidence_values else 0
+    conf_avg = round(sum(confidence_values) / len(confidence_values)) if confidence_values else 0
+
+    parts = [
+        "## Graph Overview",
+        f"- Total entities: {len(entities)}",
+        f"- Total relationships: {len(edges)}",
+        f"- Entity types: {', '.join(f'{t} ({c})' for t, c in sorted(type_counts.items(), key=lambda x: -x[1]))}",
+        f"- Relationship types: {', '.join(f'{t} ({c})' for t, c in sorted(relation_type_counts.items(), key=lambda x: -x[1])[:15])}",
+        f"- Scope: {scope_counts.get('intra', 0)} intra-document, {scope_counts.get('inter', 0)} cross-document edges",
+        f"- Confidence: min={conf_min}, avg={conf_avg}, max={conf_max}",
+        f"- Source types: {', '.join(f'{t} ({c})' for t, c in source_type_counts.items())}",
+    ]
+
+    if doc_names:
+        parts.append(f"- Documents analyzed: {', '.join(doc_names.values())}")
+
+    parts.append("\n## Top Entities (by cross-document presence)")
+    for e in top_entities[:20]:
+        desc = f" — {e.description[:100]}" if e.description else ""
+        parts.append(f"- {e.canonical_name} ({e.entity_type}, in {e.document_count} docs){desc}")
+
+    if relationships:
+        parts.append(f"\n## Key Relationships (sample of {min(len(relationships), 40)})")
+        for r in relationships[:40]:
+            ctx = f" [{r['context'][:80]}]" if r['context'] else ""
+            scope_tag = " [cross-doc]" if r['scope'] == "inter" else ""
+            parts.append(f"- {r['source']} ({r['source_type']}) --[{r['relation']}]--> {r['target']} ({r['target_type']}){ctx}{scope_tag}")
+
+    if co_occurrences:
+        parts.append(f"\n## Co-occurrences (sample of {min(len(co_occurrences), 30)})")
+        for c in co_occurrences[:30]:
+            parts.append(f"- {c}")
+
+    if multi_doc_entities:
+        parts.append(f"\n## Cross-Document Entities ({len(multi_doc_entities)} entities span multiple docs)")
+        for e in multi_doc_entities[:15]:
+            parts.append(f"- {e.canonical_name} ({e.entity_type}) — in {e.document_count} documents")
+
+    analytics = {
+        "type_distribution": dict(sorted(type_counts.items(), key=lambda x: -x[1])),
+        "relation_distribution": dict(sorted(relation_type_counts.items(), key=lambda x: -x[1])),
+        "scope_breakdown": scope_counts,
+        "confidence_stats": {"min": conf_min, "max": conf_max, "avg": conf_avg},
+        "source_types": source_type_counts,
+        "top_entities": [
+            {"name": e.canonical_name, "type": e.entity_type, "doc_count": e.document_count or 1}
+            for e in top_entities[:10]
+        ],
+        "cross_doc_count": len(multi_doc_entities),
+    }
+
+    return "\n".join(parts), analytics, type_counts, relation_type_counts, multi_doc_entities
+
+
 @router.post(
     "/insights",
     summary="Generate AI insights from the knowledge graph",
@@ -552,184 +713,99 @@ async def generate_insights(
     db: AsyncSession = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ):
-    """Analyze the knowledge graph and generate hidden insights using LLM."""
-    doc_ids = body.document_ids
+    """Analyze the knowledge graph and generate structured, multi-dimensional insights."""
+    data = await _load_graph_data(db, user, body.document_ids)
+    if not data:
+        return {"insights": {"overview": "No documents found. Upload and index documents, then build their knowledge graphs to generate insights."}, "analytics": {}, "stats": {}}
 
-    if doc_ids:
-        owned = (await db.execute(
-            select(Document.id).where(
-                Document.id.in_(doc_ids),
-                Document.owner_id == user.id,
-            )
-        )).scalars().all()
-        doc_ids = list(owned)
-
-    if doc_ids:
-        entity_ids_subq = (
-            select(EntityMention.entity_id)
-            .where(EntityMention.document_id.in_(doc_ids))
-            .distinct()
-            .subquery()
-        )
-        entities = list((await db.execute(
-            select(EntityModel)
-            .where(EntityModel.id.in_(select(entity_ids_subq)))
-            .order_by(EntityModel.document_count.desc())
-        )).scalars().all())
-
-        edges = list((await db.execute(
-            select(GraphEdge)
-            .where(or_(
-                GraphEdge.source_document_id.in_(doc_ids),
-                GraphEdge.target_document_id.in_(doc_ids),
-            ))
-        )).scalars().all())
-
-        doc_rows = (await db.execute(
-            select(Document.id, Document.filename)
-            .where(Document.id.in_(doc_ids))
-        )).all()
-        doc_names = {r[0]: r[1] for r in doc_rows}
-    else:
-        user_doc_ids_q = select(Document.id).where(Document.owner_id == user.id)
-        user_doc_ids = list((await db.execute(user_doc_ids_q)).scalars().all())
-
-        if not user_doc_ids:
-            return {"insights": "No documents found. Upload and index documents, then build their knowledge graphs to generate insights."}
-
-        entity_ids_subq = (
-            select(EntityMention.entity_id)
-            .where(EntityMention.document_id.in_(user_doc_ids))
-            .distinct()
-            .subquery()
-        )
-        entities = list((await db.execute(
-            select(EntityModel)
-            .where(EntityModel.id.in_(select(entity_ids_subq)))
-            .order_by(EntityModel.document_count.desc())
-        )).scalars().all())
-
-        edges = list((await db.execute(
-            select(GraphEdge)
-            .where(or_(
-                GraphEdge.source_document_id.in_(user_doc_ids),
-                GraphEdge.target_document_id.in_(user_doc_ids),
-            ))
-        )).scalars().all())
-
-        doc_rows = (await db.execute(
-            select(Document.id, Document.filename)
-            .where(Document.id.in_(user_doc_ids))
-        )).all()
-        doc_names = {r[0]: r[1] for r in doc_rows}
+    entities = data["entities"]
+    edges = data["edges"]
+    doc_rows = data["doc_rows"]
 
     if not entities:
-        return {"insights": "No entities found in the knowledge graph. Build graphs for your documents first to generate insights."}
+        return {"insights": {"overview": "No entities found in the knowledge graph. Build graphs for your documents first."}, "analytics": {}, "stats": {}}
 
-    entity_map = {e.id: e for e in entities}
-    entity_ids = set(entity_map.keys())
+    context_text, analytics, type_counts, relation_type_counts, multi_doc_entities = _build_graph_context_text(
+        entities, edges, doc_rows
+    )
 
-    type_counts: dict[str, int] = {}
-    for e in entities:
-        type_counts[e.entity_type] = type_counts.get(e.entity_type, 0) + 1
+    prompt = f"""You are an expert knowledge analyst. Analyze the following knowledge graph data and produce deep, structured insights.
 
-    top_entities = sorted(entities, key=lambda e: e.document_count or 1, reverse=True)[:30]
+{context_text}
 
-    relationships = []
-    relation_type_counts: dict[str, int] = {}
-    for edge in edges:
-        src = entity_map.get(edge.source_entity_id)
-        tgt = entity_map.get(edge.target_entity_id)
-        if src and tgt and edge.relation_type != "co_occurrence":
-            relationships.append({
-                "source": src.canonical_name,
-                "source_type": src.entity_type,
-                "target": tgt.canonical_name,
-                "target_type": tgt.entity_type,
-                "relation": edge.relation_type,
-                "context": edge.context_snippet or "",
-            })
-        rt = edge.relation_type
-        relation_type_counts[rt] = relation_type_counts.get(rt, 0) + 1
-
-    co_occurrences = []
-    for edge in edges:
-        if edge.relation_type == "co_occurrence":
-            src = entity_map.get(edge.source_entity_id)
-            tgt = entity_map.get(edge.target_entity_id)
-            if src and tgt:
-                co_occurrences.append(f"{src.canonical_name} ({src.entity_type}) <-> {tgt.canonical_name} ({tgt.entity_type})")
-
-    multi_doc_entities = [e for e in entities if (e.document_count or 1) > 1]
-
-    prompt_parts = [
-        "You are an expert knowledge analyst. Analyze the following knowledge graph data and produce deep, actionable insights.",
-        "",
-        f"## Graph Overview",
-        f"- Total entities: {len(entities)}",
-        f"- Total relationships: {len(edges)}",
-        f"- Entity types: {', '.join(f'{t} ({c})' for t, c in sorted(type_counts.items(), key=lambda x: -x[1]))}",
-        f"- Relationship types: {', '.join(f'{t} ({c})' for t, c in sorted(relation_type_counts.items(), key=lambda x: -x[1])[:15])}",
-    ]
-
-    if doc_names:
-        prompt_parts.append(f"- Documents analyzed: {', '.join(doc_names.values())}")
-
-    prompt_parts.append(f"\n## Top Entities (by cross-document presence)")
-    for e in top_entities[:20]:
-        desc = f" — {e.description[:100]}" if e.description else ""
-        prompt_parts.append(f"- **{e.canonical_name}** ({e.entity_type}, appears in {e.document_count} docs){desc}")
-
-    if relationships:
-        prompt_parts.append(f"\n## Key Relationships (sample of {len(relationships)})")
-        for r in relationships[:40]:
-            ctx = f" [{r['context'][:80]}]" if r['context'] else ""
-            prompt_parts.append(f"- {r['source']} ({r['source_type']}) --[{r['relation']}]--> {r['target']} ({r['target_type']}){ctx}")
-
-    if co_occurrences:
-        prompt_parts.append(f"\n## Co-occurrences (entities appearing together, sample of {len(co_occurrences)})")
-        for c in co_occurrences[:30]:
-            prompt_parts.append(f"- {c}")
-
-    if multi_doc_entities:
-        prompt_parts.append(f"\n## Cross-Document Entities ({len(multi_doc_entities)} entities span multiple documents)")
-        for e in multi_doc_entities[:15]:
-            prompt_parts.append(f"- {e.canonical_name} ({e.entity_type}) — in {e.document_count} documents")
-
-    prompt_parts.append("""
 ## Your Task
 
-Produce a structured analysis in Markdown with EXACTLY these sections:
+Return a JSON object (no markdown fences) with EXACTLY these keys:
 
-### 🔍 Hidden Connections
-Identify non-obvious relationships between entities that might be missed at first glance. Look for indirect links, shared contexts, and unexpected bridges between different entity types or topics.
+{{
+  "overview": "A 2-3 sentence executive summary of the most important findings across the entire knowledge graph.",
+  "hidden_connections": [
+    {{ "finding": "Brief title of the connection", "entities": ["Entity A", "Entity B"], "explanation": "2-3 sentences explaining the non-obvious link and why it matters." }}
+  ],
+  "cross_document_patterns": [
+    {{ "finding": "Brief title", "documents": ["doc name 1", "doc name 2"], "entities": ["Entity X"], "explanation": "What connects these documents and why it matters." }}
+  ],
+  "temporal_dimensional": [
+    {{ "finding": "Brief title", "dimension": "type_distribution|scope|confidence|source_type", "explanation": "Analysis of patterns across this dimension." }}
+  ],
+  "knowledge_gaps": [
+    {{ "gap": "What's missing", "affected_area": "Which part of the graph is affected", "suggestion": "What to add", "search_query": "A specific web search query to fill this gap" }}
+  ],
+  "cross_source_triangulation": [
+    {{ "claim": "A finding confirmed by multiple sources", "sources_confirming": ["source 1", "source 2"], "confidence_note": "How strong is this finding based on multi-source evidence" }}
+  ],
+  "recommendations": [
+    {{ "suggestion": "What to do", "reason": "Why", "chat_prompt": "A ready-to-use prompt the user could ask an AI assistant about their documents" }}
+  ],
+  "suggested_questions": ["Question 1 the user might want to ask next?", "Question 2?", "Question 3?"]
+}}
 
-### 💡 Key Insights
-Highlight the most important patterns, trends, and takeaways from the knowledge graph. What are the central themes? What entities are most influential?
-
-### 🌐 Cross-Document Patterns
-If entities span multiple documents, explain what connects them and why this matters. Identify knowledge that only emerges when looking across documents together.
-
-### ⚡ Interesting Facts & Tidbits
-Surface surprising, counterintuitive, or particularly noteworthy details from the data. These are the "did you know?" moments.
-
-### 🎯 Recommendations
-Based on the graph structure, suggest what the user should explore further, which connections deserve deeper investigation, or what additional documents might enrich the knowledge base.
-
-Be specific — reference actual entity names and relationships from the data. Avoid generic statements. Each section should have 3-5 bullet points.
-""")
-
-    prompt = "\n".join(prompt_parts)
+Rules:
+- Each array should have 3-5 items (fewer if insufficient data).
+- Reference actual entity names from the data. Be specific, not generic.
+- For knowledge_gaps, think about what topics or connections are suspiciously absent.
+- For cross_source_triangulation, highlight when the same entity or claim appears across different document types (PDF, YouTube, etc.).
+- For temporal_dimensional, analyze patterns by entity type distribution, intra vs inter-document scope, confidence levels, and source types.
+- For recommendations, include chat_prompt that starts with "Analyze..." or "Compare..." — something actionable.
+- Return ONLY valid JSON. No markdown code fences."""
 
     try:
         response = await llm.acomplete(prompt)
-        insights_text = response.content
-    except Exception as exc:
-        logger.error("Insights LLM call failed: %s", exc)
-        return {"insights": f"Failed to generate insights: {exc}"}
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        insights = json.loads(raw)
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.error("Insights LLM call failed or returned invalid JSON: %s", exc)
+        fallback_text = ""
+        if hasattr(exc, "__context__") or isinstance(exc, json.JSONDecodeError):
+            try:
+                response_text = response.content if 'response' in dir() else ""
+                fallback_text = response_text
+            except Exception:
+                fallback_text = ""
+        if not fallback_text:
+            try:
+                resp = await llm.acomplete(prompt)
+                fallback_text = resp.content
+            except Exception:
+                fallback_text = f"Failed to generate insights: {exc}"
+        insights = {"overview": fallback_text}
+
+    if not isinstance(insights, dict):
+        insights = {"overview": str(insights)}
+
+    for key in ["hidden_connections", "cross_document_patterns", "temporal_dimensional",
+                 "knowledge_gaps", "cross_source_triangulation", "recommendations", "suggested_questions"]:
+        if key not in insights:
+            insights[key] = []
+
+    if "overview" not in insights:
+        insights["overview"] = ""
 
     return {
-        "insights": insights_text,
+        "insights": insights,
+        "analytics": analytics,
         "stats": {
             "entities": len(entities),
             "edges": len(edges),
@@ -737,7 +813,72 @@ Be specific — reference actual entity names and relationships from the data. A
             "relationship_types": len(relation_type_counts),
             "cross_doc_entities": len(multi_doc_entities),
         },
+        "suggested_questions": insights.get("suggested_questions", []),
     }
+
+
+@router.post(
+    "/insights/followup",
+    summary="Ask a follow-up question about knowledge graph insights",
+)
+async def insights_followup(
+    body: InsightsFollowupRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm),
+):
+    """Answer a follow-up question using graph data context and previous insights."""
+    data = await _load_graph_data(db, user, body.document_ids)
+    if not data:
+        return {"answer": "No graph data available to answer this question.", "suggested_questions": []}
+
+    entities = data["entities"]
+    edges = data["edges"]
+    doc_rows = data["doc_rows"]
+
+    if not entities:
+        return {"answer": "No entities in the graph to analyze.", "suggested_questions": []}
+
+    context_text, _, _, _, _ = _build_graph_context_text(entities, edges, doc_rows)
+    context_text_truncated = context_text[:6000]
+
+    prompt = f"""You are a knowledge graph analyst helping a user explore their document knowledge base.
+
+## Graph Data Summary
+{context_text_truncated}
+
+## Previous Insights Context
+{body.previous_context[:3000] if body.previous_context else "No previous context."}
+
+## User's Question
+{body.question}
+
+Answer the user's question thoroughly based on the graph data. Be specific — reference actual entity names and relationships. If the question asks about something not in the data, say so clearly.
+
+After your answer, suggest 2-3 natural follow-up questions the user might ask next.
+
+Return a JSON object (no markdown fences):
+{{
+  "answer": "Your detailed answer in markdown format...",
+  "suggested_questions": ["Follow-up question 1?", "Follow-up question 2?"]
+}}"""
+
+    try:
+        response = await llm.acomplete(prompt)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+        return {
+            "answer": result.get("answer", response.content),
+            "suggested_questions": result.get("suggested_questions", []),
+        }
+    except (json.JSONDecodeError, Exception):
+        try:
+            return {"answer": response.content, "suggested_questions": []}
+        except Exception as exc:
+            logger.error("Insights followup failed: %s", exc)
+            return {"answer": f"Failed to process your question: {exc}", "suggested_questions": []}
 
 
 @router.post(
