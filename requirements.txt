@@ -15,8 +15,10 @@ jinja2
 litellm
 openai
 openpyxl
+bcrypt>=4.0.0,<4.1
 passlib[bcrypt]
 pydantic
+networkx
 pymupdf
 PyPDF2
 python-docx
