@@ -336,6 +336,15 @@ function agentChat() {
             if (convRes.ok) { this.conversations = await convRes.json(); }
             const urlParams = new URLSearchParams(window.location.search);
             const promptParam = urlParams.get('prompt');
+            const docIdsParam = urlParams.get('doc_ids');
+            if (docIdsParam) {
+                const ids = docIdsParam.split(',').filter(Boolean);
+                for (const id of ids) {
+                    if (!this.selectedDocs.includes(id)) {
+                        this.selectedDocs.push(id);
+                    }
+                }
+            }
             if (promptParam) {
                 this.input = promptParam;
                 this.$nextTick(() => {

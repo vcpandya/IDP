@@ -239,7 +239,7 @@
                 </template>
             </div>
 
-            <a :href="'/chat?prompt=Tell me about the entity ' + encodeURIComponent(detailEntity?.entity?.name || '') + ' and its connections across my documents'" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
+            <a :href="buildAskIdaUrl()" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
                 <i class="fas fa-brain"></i> Ask IDA about this
             </a>
         </div>
@@ -458,6 +458,48 @@ function graphExplorer() {
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/`(.*?)`/g, '<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>');
             return html;
+        },
+
+        buildAskIdaUrl() {
+            const entity = this.detailEntity?.entity;
+            if (!entity) return '/chat';
+
+            const mentions = this.detailEntity?.mentions || [];
+            const edges = this.detailEntity?.edges || [];
+
+            const docIds = [...new Set(mentions.map(m => m.document_id).filter(Boolean))];
+            const docNames = [...new Set(mentions.map(m => m.document_filename).filter(Boolean))];
+
+            let prompt = `Analyze the entity "${entity.name}" (${entity.entity_type})`;
+            if (entity.description) {
+                prompt += ` — ${entity.description}`;
+            }
+            prompt += '.';
+
+            if (edges.length > 0) {
+                const relSummary = edges.slice(0, 5).map(e => {
+                    const other = e.target_entity_name || e.source_entity_name || 'unknown';
+                    return `${e.relation_type} → ${other}`;
+                }).join(', ');
+                prompt += ` It has ${edges.length} relationship(s) including: ${relSummary}.`;
+            }
+
+            if (mentions.length > 0) {
+                prompt += ` Found in ${mentions.length} section(s)`;
+                if (docNames.length > 0) {
+                    prompt += ` across: ${docNames.slice(0, 3).join(', ')}`;
+                    if (docNames.length > 3) prompt += ` and ${docNames.length - 3} more`;
+                }
+                prompt += '.';
+            }
+
+            prompt += ' Please provide a deep analysis of this entity: its significance, how it connects to other entities, key insights from the documents where it appears, and any patterns worth noting.';
+
+            let url = '/chat?prompt=' + encodeURIComponent(prompt);
+            if (docIds.length > 0) {
+                url += '&doc_ids=' + encodeURIComponent(docIds.join(','));
+            }
+            return url;
         },
 
         async generateInsights() {
