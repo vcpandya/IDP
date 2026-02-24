@@ -1,7 +1,7 @@
 #!/bin/bash
 # Remove development/test directories not needed for deployment
 rm -rf node_modules tests attached_assets cookbook tutorials logs pageindex \
-       .cache .upm .local .config .replit_integration_files \
+       .cache .upm .replit_integration_files \
        __pycache__ .pytest_cache
 
 # Remove unnecessary files
