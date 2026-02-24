@@ -50,7 +50,7 @@ async def list_entity_types(
 async def search_entities(
     name: str | None = Query(None, description="Filter by name (partial match)"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=5000),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -106,7 +106,7 @@ async def get_mentions(
 async def get_neighbors(
     entity_id: str,
     relation_type: str | None = Query(None),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=5000),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -242,13 +242,14 @@ async def build_doc_graph(
 )
 async def get_doc_visualization(
     doc_id: str,
+    limit: int = Query(1000, ge=1, le=10000, description="Max entities to include"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get nodes+edges JSON for D3 visualization."""
     from idpkit.graph.queries import get_visualization_data
 
-    data = await get_visualization_data(db, doc_id)
+    data = await get_visualization_data(db, doc_id, limit=limit)
     return VisualizationData(
         nodes=[VisualizationNode(**n) for n in data["nodes"]],
         edges=[VisualizationEdge(**e) for e in data["edges"]],
@@ -263,6 +264,7 @@ async def get_doc_visualization(
 async def get_multi_doc_visualization(
     doc_ids: Optional[str] = Query(None, description="Comma-separated document IDs"),
     tag_id: Optional[str] = Query(None, description="Tag ID to load all tagged documents"),
+    limit: int = Query(1000, ge=1, le=10000, description="Max entities to include"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -301,7 +303,7 @@ async def get_multi_doc_visualization(
     if not resolved_ids:
         return VisualizationData(nodes=[], edges=[])
 
-    data = await get_multi_doc_visualization_data(db, resolved_ids)
+    data = await get_multi_doc_visualization_data(db, resolved_ids, limit=limit)
     return VisualizationData(
         nodes=[VisualizationNode(**n) for n in data["nodes"]],
         edges=[VisualizationEdge(**e) for e in data["edges"]],
