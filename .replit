@@ -38,4 +38,4 @@ externalPort = 80
 [deployment]
 deploymentTarget = "autoscale"
 run = ["python", "run_server.py"]
-build = ["bash", "-c", "pip install -r requirements.txt"]
+build = ["bash", "-c", "rm -rf node_modules tests attached_assets cookbook tutorials logs pageindex .cache .upm && pip install -r requirements.txt"]
