@@ -520,7 +520,8 @@ async def _execute_search_document(
 
     # Load PDF page text — needed for text fallback search and previews
     page_list = None
-    if doc.file_path:
+    pdf_formats = {"pdf"}
+    if doc.file_path and getattr(doc, "format", None) in pdf_formats:
         try:
             from idpkit.api.deps import get_storage
             from idpkit.engine.page_index import get_page_tokens

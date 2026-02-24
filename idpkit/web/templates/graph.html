@@ -187,10 +187,22 @@
 
             <div class="detail-section" x-show="detailEntity?.mentions?.length > 0">
                 <h5>Mentions (<span x-text="detailEntity?.mentions?.length"></span>)</h5>
-                <template x-for="m in (detailEntity?.mentions || []).slice(0, 10)" :key="m.node_id">
+                <template x-for="m in (detailEntity?.mentions || []).slice(0, 10)" :key="m.id || m.node_id">
                     <div class="mention-item">
-                        <div x-text="m.node_title || m.node_id" style="font-weight:500"></div>
-                        <div x-show="m.document_filename" style="font-size:0.75rem;color:var(--text-muted)" x-text="m.document_filename"></div>
+                        <div style="font-weight:500">
+                            <i class="fas fa-file-alt" x-show="!m.document_format || m.document_format === 'pdf'" style="margin-right:3px;font-size:0.7rem;color:var(--text-muted)"></i>
+                            <i class="fas fa-video" x-show="m.document_format === 'youtube'" style="margin-right:3px;font-size:0.7rem;color:#e74c3c"></i>
+                            <span x-text="m.document_filename || 'Unknown document'"></span>
+                        </div>
+                        <div x-show="m.node_title" style="font-size:0.75rem;color:var(--text-secondary, #4b5563)" x-text="m.node_title"></div>
+                        <div style="font-size:0.7rem;color:var(--text-muted)">
+                            <template x-if="m.document_format === 'youtube' && m.start_page != null">
+                                <span x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                            </template>
+                            <template x-if="m.document_format !== 'youtube' && m.start_page != null">
+                                <span x-text="'Pages ' + m.start_page + (m.end_page != null && m.end_page !== m.start_page ? '-' + m.end_page : '')"></span>
+                            </template>
+                        </div>
                     </div>
                 </template>
                 <div x-show="(detailEntity?.mentions || []).length > 10" style="font-size:0.75rem;color:var(--text-muted);padding-top:4px" x-text="'+ ' + (detailEntity.mentions.length - 10) + ' more'"></div>
@@ -342,6 +354,16 @@ function graphExplorer() {
 
         typeColor(t) { return autoTypeColor(t); },
         typeIcon(t) { return autoTypeIcon(t); },
+
+        formatTimestamp(seconds) {
+            if (seconds == null) return '';
+            const s = Math.round(Number(seconds));
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            return m + ':' + String(sec).padStart(2, '0');
+        },
 
         addDocument(docId) {
             if (!docId || this.selectedDocIds.includes(docId)) return;
