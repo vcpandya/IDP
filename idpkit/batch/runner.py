@@ -390,14 +390,18 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
                     item_status = "failed"
                     item_error = getattr(item_result, "error", "Tool returned error status")
 
-                # Persist result to storage as a JSON file
+                # Persist result to storage as DOCX and JSON
                 output_file_key = None
                 if item_status == "completed" and result_data is not None:
                     try:
                         from idpkit.api.deps import get_storage as _get_storage
+                        from idpkit.batch.formatter import format_result_to_docx
                         storage = _get_storage()
-                        output_file_key = f"batch_outputs/{batch_id}/{item_id}.json"
-                        storage.save(output_file_key, json.dumps(result_data, indent=2, default=str).encode("utf-8"))
+                        output_file_key = f"batch_outputs/{batch_id}/{item_id}.docx"
+                        docx_bytes = format_result_to_docx(tool_name, result_data, filename=doc_filename)
+                        storage.save(output_file_key, docx_bytes)
+                        json_key = f"batch_outputs/{batch_id}/{item_id}.json"
+                        storage.save(json_key, json.dumps(result_data, indent=2, default=str).encode("utf-8"))
                     except Exception as exc:
                         logger.warning("Failed to persist batch item %s output to storage: %s", item_id, exc)
                         output_file_key = None

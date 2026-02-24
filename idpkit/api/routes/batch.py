@@ -941,17 +941,38 @@ async def download_batch_item(
     safe_name = filename.rsplit(".", 1)[0] if "." in filename else filename
 
     content = None
-    if item.output_file:
+    is_docx = False
+    if item.output_file and item.output_file.endswith(".docx"):
+        try:
+            storage = get_storage()
+            content = storage.load(item.output_file)
+            is_docx = True
+        except Exception:
+            pass
+    if content is None and item.output_file:
         try:
             storage = get_storage()
             content = storage.load(item.output_file)
         except Exception:
             pass
     if content is None and item.result is not None:
-        content = json.dumps(item.result, indent=2, default=str).encode("utf-8")
+        try:
+            from idpkit.batch.formatter import format_result_to_docx
+            content = format_result_to_docx(batch.tool_name, item.result, filename=filename)
+            is_docx = True
+        except Exception:
+            content = json.dumps(item.result, indent=2, default=str).encode("utf-8")
     if content is None:
         raise HTTPException(status_code=400, detail="No result available for this item")
 
+    if is_docx:
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}_result.docx"'
+            },
+        )
     return Response(
         content=content,
         media_type="application/json",
@@ -1001,27 +1022,37 @@ async def download_batch_zip(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         seen_names = {}
         for item in items:
-            item_content = None
-            if item.output_file:
+            item_bytes = None
+            ext = "docx"
+            filename = doc_names.get(item.document_id, item.document_id)
+            if item.output_file and item.output_file.endswith(".docx"):
                 try:
-                    item_content = storage.load(item.output_file).decode("utf-8")
+                    item_bytes = storage.load(item.output_file)
                 except Exception:
                     pass
-            if item_content is None and item.result is not None:
-                item_content = json.dumps(item.result, indent=2, default=str)
-            if item_content is None:
+            if item_bytes is None and item.output_file:
+                try:
+                    item_bytes = storage.load(item.output_file)
+                    ext = item.output_file.rsplit(".", 1)[-1] if "." in item.output_file else "json"
+                except Exception:
+                    pass
+            if item_bytes is None and item.result is not None:
+                try:
+                    from idpkit.batch.formatter import format_result_to_docx
+                    item_bytes = format_result_to_docx(batch.tool_name, item.result, filename=filename)
+                    ext = "docx"
+                except Exception:
+                    item_bytes = json.dumps(item.result, indent=2, default=str).encode("utf-8")
+                    ext = "json"
+            if item_bytes is None:
                 continue
-            filename = doc_names.get(item.document_id, item.document_id)
             safe_name = filename.rsplit(".", 1)[0] if "." in filename else filename
             if safe_name in seen_names:
                 seen_names[safe_name] += 1
                 safe_name = f"{safe_name}_{seen_names[safe_name]}"
             else:
                 seen_names[safe_name] = 1
-            zf.writestr(
-                f"{safe_name}_result.json",
-                item_content,
-            )
+            zf.writestr(f"{safe_name}_result.{ext}", item_bytes)
     buf.seek(0)
 
     zip_filename = f"batch_{batch_id[:8]}_results.zip"
