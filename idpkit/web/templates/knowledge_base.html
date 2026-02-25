@@ -48,16 +48,31 @@
             </div>
         </div>
 
-        <!-- Upload progress -->
         <div class="file-list" x-show="uploadFiles.length > 0">
-            <h3>Uploading</h3>
+            <h3 style="display:flex;align-items:center;gap:8px">
+                <span>Processing Files</span>
+                <span class="text-muted" style="font-size:0.8rem;font-weight:normal" x-text="'(' + uploadFiles.filter(f => f.status === 'ready').length + '/' + uploadFiles.length + ' done)'"></span>
+            </h3>
             <template x-for="(uf, idx) in uploadFiles" :key="idx">
-                <div class="file-item">
-                    <div class="file-info">
-                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
-                        <span x-text="uf.filename"></span>
+                <div class="file-item" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div class="file-info" style="gap:8px">
+                            <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'" style="font-size:1rem"></i>
+                            <span x-text="uf.filename" style="font-weight:500"></span>
+                        </div>
+                        <span class="status-badge" :class="'status-' + uf.status"
+                              x-text="uf.status === 'ready' ? 'Complete' : uf.status === 'failed' ? 'Failed' : uf.stage || uf.status"></span>
                     </div>
-                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                    <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
+                        <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                            <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
+                                 :style="'width:' + (uf.progress || 0) + '%'"></div>
+                        </div>
+                        <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
+                    </div>
+                    <div x-show="uf.status === 'ready'" style="height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:100%;border-radius:3px;background:#059669"></div>
+                    </div>
                 </div>
             </template>
         </div>
@@ -227,15 +242,27 @@
             </div>
         </div>
 
-        <!-- Upload progress (tag context) -->
         <div class="file-list" x-show="uploadFiles.length > 0" style="margin-top:12px">
             <template x-for="(uf, idx) in uploadFiles" :key="idx">
-                <div class="file-item">
-                    <div class="file-info">
-                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
-                        <span x-text="uf.filename"></span>
+                <div class="file-item" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div class="file-info" style="gap:8px">
+                            <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'" style="font-size:1rem"></i>
+                            <span x-text="uf.filename" style="font-weight:500"></span>
+                        </div>
+                        <span class="status-badge" :class="'status-' + uf.status"
+                              x-text="uf.status === 'ready' ? 'Complete' : uf.status === 'failed' ? 'Failed' : uf.stage || uf.status"></span>
                     </div>
-                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                    <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
+                        <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                            <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
+                                 :style="'width:' + (uf.progress || 0) + '%'"></div>
+                        </div>
+                        <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
+                    </div>
+                    <div x-show="uf.status === 'ready'" style="height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:100%;border-radius:3px;background:#059669"></div>
+                    </div>
                 </div>
             </template>
         </div>
@@ -899,18 +926,25 @@ function knowledgeBase() {
 
         async _uploadFiles(files, tagId) {
             for (const file of files) {
-                const entry = { filename: file.name, status: 'uploading' };
+                const entry = { filename: file.name, status: 'uploading', stage: 'Uploading file', progress: 0 };
                 this.uploadFiles.push(entry);
                 try {
+                    entry.progress = 5;
                     const form = new FormData();
                     form.append('file', file);
                     const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
-                    if (!upRes.ok) { entry.status = 'failed'; continue; }
+                    if (!upRes.ok) {
+                        entry.status = 'failed';
+                        entry.stage = 'Upload failed';
+                        continue;
+                    }
                     const doc = await upRes.json();
                     entry.status = 'indexing';
+                    entry.stage = 'Uploaded — starting indexing';
+                    entry.progress = 15;
 
-                    // Associate with tag if uploading into a tag
                     if (tagId) {
+                        entry.stage = 'Tagging document';
                         await fetch('/api/tags/' + tagId + '/documents', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
@@ -919,36 +953,54 @@ function knowledgeBase() {
                         this.tagDocuments.push({ id: doc.id, filename: doc.filename, format: doc.format, status: 'indexing' });
                     }
 
-                    // Trigger indexing
-                    await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                    entry.stage = 'Starting indexing';
+                    entry.progress = 20;
+                    const indexRes = await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                    if (!indexRes.ok) {
+                        entry.status = 'failed';
+                        entry.stage = 'Failed to start indexing';
+                        continue;
+                    }
 
-                    // Poll for index completion
                     let attempts = 0;
                     while (attempts < 60) {
-                        await new Promise(r => setTimeout(r, 2000));
+                        await new Promise(r => setTimeout(r, 1500));
                         const statusRes = await fetch('/api/indexing/documents/' + doc.id + '/index/status');
                         if (statusRes.ok) {
                             const statusData = await statusRes.json();
-                            const st = statusData.status || statusData.index_status || '';
-                            if (st === 'indexed' || st === 'completed') {
+                            const st = statusData.status || '';
+                            const serverProgress = statusData.progress || 0;
+                            const serverStage = statusData.stage || '';
+
+                            if (serverStage) {
+                                entry.stage = serverStage;
+                            }
+                            entry.progress = Math.max(entry.progress, 20 + Math.round(serverProgress * 0.8));
+
+                            if (st === 'completed') {
                                 entry.status = 'ready';
-                                // Update tag doc list status
+                                entry.stage = 'Complete';
+                                entry.progress = 100;
                                 const td = this.tagDocuments.find(d => d.id === doc.id);
                                 if (td) td.status = 'indexed';
                                 break;
                             } else if (st === 'failed') {
                                 entry.status = 'failed';
+                                entry.stage = statusData.error ? ('Failed: ' + statusData.error.substring(0, 60)) : 'Indexing failed';
                                 break;
                             }
                         }
                         attempts++;
                     }
-                    if (attempts >= 60 && entry.status === 'indexing') entry.status = 'failed';
+                    if (attempts >= 60 && entry.status === 'indexing') {
+                        entry.status = 'failed';
+                        entry.stage = 'Timed out';
+                    }
                 } catch (e) {
                     entry.status = 'failed';
+                    entry.stage = 'Error: ' + (e.message || 'Unknown error').substring(0, 60);
                 }
             }
-            // Refresh document list
             await this.loadData();
         }
     }

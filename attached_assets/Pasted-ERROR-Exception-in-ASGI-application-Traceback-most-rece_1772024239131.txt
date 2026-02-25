@@ -1,0 +1,63 @@
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/applications.py", line 1134, in __call__
+    await super().__call__(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/applications.py", line 107, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+  File "/nix/store/qfbm3hh62fjiv4gm79j7bw1jrc7vv33r-python3-3.10.18/lib/python3.10/contextlib.py", line 153, in __exit__
+    self.gen.throw(typ, value, traceback)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+  File "/home/runner/workspace/idpkit/api/app.py", line 163, in inject_user_role
+    return await call_next(request)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/cors.py", line 95, in __call__
+    await self.simple_response(scope, receive, send, request_headers=headers)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/cors.py", line 153, in simple_response
+    await self.app(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/routing.py", line 119, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/routing.py", line 105, in app
+    response = await f(request)
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/routing.py", line 455, in app
+    content = await serialize_response(
+  File "/home/runner/workspace/.pythonlibs/lib/python3.10/site-packages/fastapi/routing.py", line 285, in serialize_response
+    raise ResponseValidationError(
+fastapi.exceptions.ResponseValidationError: 1 validation error:
+  {'type': 'get_attribute_error', 'loc': ('response', 'tags'), 'msg': "Error extracting attribute: MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)", 'input': <idpkit.db.models.Document object at 0x7fafe8ed4be0>, 'ctx': {'error': "MissingGreenlet: greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)"}}
+
+  File "/home/runner/workspace/idpkit/api/routes/documents.py", line 172, in upload_document
+    POST /api/documents/

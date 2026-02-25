@@ -39,6 +39,7 @@ class JobStatusResponse(BaseModel):
     job_type: str
     status: str
     progress: int = 0
+    stage: Optional[str] = None
     result: Optional[dict] = None
     error: Optional[str] = None
     created_at: datetime
@@ -90,10 +91,10 @@ async def _run_indexing_task(
 
             job.status = "running"
             job.progress = 0
+            job.stage = "Preparing document"
             db.add(job)
             await db.commit()
 
-            # Mark document as indexing
             result = await db.execute(select(Document).where(Document.id == doc_id))
             doc = result.scalar_one_or_none()
             if not doc:
@@ -108,15 +109,29 @@ async def _run_indexing_task(
             db.add(doc)
             await db.commit()
 
-            # --- Attempt to call the indexer engine ---
-            # Import here to avoid circular imports and allow graceful
-            # degradation when indexing engine is not yet implemented.
+            await _update_job_progress(job_id, 5, "Reading file from storage")
+
             tree_result = None
             try:
                 from idpkit.engine.page_index import build_tree_index
 
+                await _update_job_progress(job_id, 10, "Extracting text content")
+
                 llm = get_llm()
                 storage = get_storage()
+
+                async def _progress_with_stage(pct):
+                    if pct < 30:
+                        stage = "Extracting text content"
+                    elif pct < 60:
+                        stage = "Analyzing document structure"
+                    elif pct < 80:
+                        stage = "Building tree index"
+                    elif pct < 95:
+                        stage = "Generating summaries"
+                    else:
+                        stage = "Finalizing index"
+                    await _update_job_progress(job_id, pct, stage)
 
                 tree_result = await build_tree_index(
                     file_key=storage_path,
@@ -125,13 +140,14 @@ async def _run_indexing_task(
                     model=params.get("model"),
                     toc_check_pages=params.get("toc_check_pages"),
                     max_pages_per_node=params.get("max_pages_per_node"),
-                    progress_callback=lambda pct: _update_job_progress(job_id, pct),
+                    progress_callback=_progress_with_stage,
                 )
             except ImportError:
                 logger.warning(
                     "build_tree_index not available; storing placeholder tree for doc %s",
                     doc_id,
                 )
+                await _update_job_progress(job_id, 50, "Extracting text content")
                 tree_result = {
                     "doc_name": doc.filename,
                     "doc_description": None,
@@ -141,6 +157,7 @@ async def _run_indexing_task(
             except Exception as exc:
                 logger.error("Indexing failed for document %s: %s", doc_id, exc)
                 job.status = "failed"
+                job.stage = "Failed"
                 job.error = str(exc)
                 job.completed_at = datetime.now(timezone.utc)
                 doc.status = "failed"
@@ -149,7 +166,8 @@ async def _run_indexing_task(
                 await db.commit()
                 return
 
-            # Persist result
+            await _update_job_progress(job_id, 95, "Saving results")
+
             if isinstance(tree_result, dict):
                 tree_json = tree_result
             elif hasattr(tree_result, "model_dump"):
@@ -163,6 +181,7 @@ async def _run_indexing_task(
 
             job.status = "completed"
             job.progress = 100
+            job.stage = "Complete"
             job.result = tree_json
             job.completed_at = datetime.now(timezone.utc)
             db.add(job)
@@ -192,14 +211,16 @@ async def _run_indexing_task(
                 logger.exception("Failed to record error state for job %s", job_id)
 
 
-async def _update_job_progress(job_id: str, progress: int) -> None:
-    """Helper to update job progress from inside the indexer."""
+async def _update_job_progress(job_id: str, progress: int, stage: str | None = None) -> None:
+    """Helper to update job progress and stage from inside the indexer."""
     try:
         async with async_session() as db:
             result = await db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
             if job:
                 job.progress = min(max(progress, 0), 100)
+                if stage is not None:
+                    job.stage = stage
                 db.add(job)
                 await db.commit()
     except Exception as exc:
