@@ -116,6 +116,7 @@ class Job(Base):
     job_type = Column(String(50), nullable=False)  # index, extract, convert, tool, batch
     status = Column(String(20), default="pending")  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
+    stage = Column(String(100), nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     params = Column(JSON, nullable=True)
     result = Column(JSON, nullable=True)

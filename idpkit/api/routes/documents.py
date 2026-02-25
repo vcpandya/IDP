@@ -237,7 +237,13 @@ async def upload_document(
 
     db.add(doc)
     await db.flush()
-    await db.refresh(doc)
+
+    result = await db.execute(
+        select(Document)
+        .options(selectinload(Document.tags))
+        .where(Document.id == doc.id)
+    )
+    doc = result.scalar_one()
 
     logger.info(
         "Document uploaded: %s (id=%s, format=%s, size=%d, pages=%s)",
@@ -353,7 +359,13 @@ async def upload_content(
         doc.page_count = page_count
     db.add(doc)
     await db.flush()
-    await db.refresh(doc)
+
+    result = await db.execute(
+        select(Document)
+        .options(selectinload(Document.tags))
+        .where(Document.id == doc.id)
+    )
+    doc = result.scalar_one()
     return doc
 
 
@@ -383,7 +395,13 @@ async def confirm_upload(
     doc.status = "uploaded"
     db.add(doc)
     await db.flush()
-    await db.refresh(doc)
+
+    result = await db.execute(
+        select(Document)
+        .options(selectinload(Document.tags))
+        .where(Document.id == doc.id)
+    )
+    doc = result.scalar_one()
 
     logger.info("Direct upload confirmed for doc %s (%s)", doc.id, doc.filename)
     return doc
