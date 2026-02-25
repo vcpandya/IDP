@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% block title %}Document Verifier — IDP Kit{% endblock %}
+{% block content %}
+<div class="page-container" x-data="verifierPage()" x-init="init()">
+    <div class="page-header">
+        <h2><i class="fas fa-check-double"></i> Document Verifier</h2>
+        <p class="page-subtitle">Upload documents and verify they match expected criteria using AI vision</p>
+    </div>
+
+    <div class="verifier-layout">
+        <div class="verifier-input-panel">
+            <div class="card">
+                <h3><i class="fas fa-file-upload"></i> Documents</h3>
+                <div class="drop-zone"
+                     @dragover.prevent="dragOver = true"
+                     @dragleave.prevent="dragOver = false"
+                     @drop.prevent="handleDrop($event)"
+                     :class="{ 'drop-active': dragOver }"
+                     @click="$refs.fileInput.click()">
+                    <input type="file" x-ref="fileInput" multiple @change="handleFiles($event)" style="display:none"
+                           accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.bmp,.webp,.gif,.docx,.doc,.txt,.md,.html,.csv">
+                    <div class="drop-zone-content">
+                        <i class="fas fa-cloud-upload-alt" style="font-size:2rem;color:var(--primary);margin-bottom:8px"></i>
+                        <p>Drop files here or click to browse</p>
+                        <span style="font-size:0.8rem;color:var(--text-muted)">PDF, Images, DOCX, and more — up to 20MB each</span>
+                    </div>
+                </div>
+
+                <template x-if="files.length > 0">
+                    <div class="file-list">
+                        <template x-for="(f, i) in files" :key="i">
+                            <div class="file-item">
+                                <div class="file-item-info">
+                                    <i :class="getFileIcon(f.name)"></i>
+                                    <span class="file-item-name" x-text="f.name"></span>
+                                    <span class="file-item-size" x-text="formatSize(f.size)"></span>
+                                </div>
+                                <button class="btn-icon-sm" @click="removeFile(i)" title="Remove">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+
+            <div class="card">
+                <h3><i class="fas fa-clipboard-check"></i> Verification Criteria</h3>
+                <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px">
+                    Specify what each document should be. Each criterion will be checked against all uploaded documents.
+                </p>
+                <template x-for="(exp, i) in expectations" :key="i">
+                    <div class="expectation-row">
+                        <input type="text" x-model="expectations[i]" class="expectation-input"
+                               :placeholder="'e.g. This should be an Aadhaar card, PAN card, Degree certificate...'"
+                               @keydown.enter.prevent="addExpectation()">
+                        <button class="btn-icon-sm" @click="removeExpectation(i)" x-show="expectations.length > 1" title="Remove">
+                            <i class="fas fa-minus-circle"></i>
+                        </button>
+                    </div>
+                </template>
+                <button class="btn btn-sm btn-outline" @click="addExpectation()" style="margin-top:8px">
+                    <i class="fas fa-plus"></i> Add criterion
+                </button>
+            </div>
+
+            <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <div style="flex:1;min-width:200px">
+                    <label style="font-size:0.85rem;font-weight:600">Model</label>
+                    <select x-model="model" class="verifier-select">
+                        <option value="">Default (GPT-4o)</option>
+                        <option value="gpt-4o">GPT-4o</option>
+                        <option value="gpt-4o-mini">GPT-4o Mini</option>
+                        <option value="gpt-4.1">GPT-4.1</option>
+                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-lg" @click="verify()"
+                        :disabled="loading || files.length === 0 || !hasValidExpectations()"
+                        style="margin-top:auto">
+                    <template x-if="!loading">
+                        <span><i class="fas fa-shield-alt"></i> Verify Documents</span>
+                    </template>
+                    <template x-if="loading">
+                        <span><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
+                    </template>
+                </button>
+            </div>
+        </div>
+
+        <div class="verifier-results-panel" x-show="results.length > 0 || loading" x-cloak>
+            <h3><i class="fas fa-clipboard-list"></i> Results</h3>
+
+            <template x-if="loading && results.length === 0">
+                <div class="verifier-loading">
+                    <i class="fas fa-spinner fa-spin" style="font-size:1.5rem;color:var(--primary)"></i>
+                    <p>Analyzing documents...</p>
+                </div>
+            </template>
+
+            <template x-for="(r, ri) in results" :key="ri">
+                <div class="result-card" :class="'result-' + r.status">
+                    <div class="result-header">
+                        <div class="result-status-icon">
+                            <i :class="r.status === 'ok' ? 'fas fa-check-circle' : 'fas fa-times-circle'"
+                               :style="r.status === 'ok' ? 'color:var(--success)' : 'color:var(--danger)'"></i>
+                        </div>
+                        <div class="result-file-info">
+                            <span class="result-filename" x-text="r.filename"></span>
+                            <span class="result-status-badge" :class="'badge-' + r.status"
+                                  x-text="r.status === 'ok' ? 'VERIFIED' : 'ISSUES FOUND'"></span>
+                        </div>
+                    </div>
+                    <div class="result-summary" x-text="r.summary"></div>
+                    <template x-if="r.matches && r.matches.length > 0">
+                        <div class="result-matches">
+                            <template x-for="(m, mi) in r.matches" :key="mi">
+                                <div class="match-item" :class="'match-' + m.result">
+                                    <div class="match-icon">
+                                        <i :class="m.result === 'ok' ? 'fas fa-check' : 'fas fa-times'"
+                                           :style="m.result === 'ok' ? 'color:var(--success)' : 'color:var(--danger)'"></i>
+                                    </div>
+                                    <div class="match-details">
+                                        <div class="match-expected" x-text="m.expected"></div>
+                                        <div class="match-explanation" x-text="m.details"></div>
+                                        <template x-if="m.confidence">
+                                            <span class="confidence-badge" :class="'conf-' + m.confidence" x-text="m.confidence + ' confidence'"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <template x-if="summary">
+                <div class="verifier-summary-card">
+                    <span><strong x-text="summary.ok_count"></strong> verified</span>
+                    <span style="color:var(--text-muted)">|</span>
+                    <span><strong x-text="summary.not_ok_count"></strong> with issues</span>
+                    <span style="color:var(--text-muted)">|</span>
+                    <span><strong x-text="summary.total"></strong> total</span>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<script>
+function verifierPage() {
+    return {
+        files: [],
+        expectations: [''],
+        model: '',
+        loading: false,
+        results: [],
+        summary: null,
+        dragOver: false,
+
+        init() {},
+
+        handleFiles(e) {
+            const newFiles = Array.from(e.target.files);
+            this.files = [...this.files, ...newFiles];
+            e.target.value = '';
+        },
+
+        handleDrop(e) {
+            this.dragOver = false;
+            const newFiles = Array.from(e.dataTransfer.files);
+            this.files = [...this.files, ...newFiles];
+        },
+
+        removeFile(i) {
+            this.files.splice(i, 1);
+        },
+
+        addExpectation() {
+            this.expectations.push('');
+        },
+
+        removeExpectation(i) {
+            this.expectations.splice(i, 1);
+        },
+
+        hasValidExpectations() {
+            return this.expectations.some(e => e.trim().length > 0);
+        },
+
+        getFileIcon(name) {
+            const ext = name.split('.').pop().toLowerCase();
+            if (['pdf'].includes(ext)) return 'fas fa-file-pdf';
+            if (['png','jpg','jpeg','tiff','tif','bmp','webp','gif'].includes(ext)) return 'fas fa-file-image';
+            if (['docx','doc'].includes(ext)) return 'fas fa-file-word';
+            return 'fas fa-file';
+        },
+
+        formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        },
+
+        async verify() {
+            const validExps = this.expectations.filter(e => e.trim().length > 0);
+            if (!validExps.length || !this.files.length) return;
+
+            this.loading = true;
+            this.results = [];
+            this.summary = null;
+
+            const token = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('session_token='));
+            const authToken = token ? token.split('=')[1] : '';
+
+            const formData = new FormData();
+            for (const f of this.files) {
+                formData.append('files', f);
+            }
+            formData.append('expectations', JSON.stringify(validExps));
+            if (this.model) formData.append('model', this.model);
+
+            if (this.files.length === 1) {
+                try {
+                    const resp = await fetch('/api/verify', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + authToken },
+                        body: formData,
+                    });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({ detail: 'Verification failed' }));
+                        alert(err.detail || 'Verification failed');
+                        this.loading = false;
+                        return;
+                    }
+                    const result = await resp.json();
+                    this.results = [result];
+                    this.summary = { total: 1, ok_count: result.status === 'ok' ? 1 : 0, not_ok_count: result.status === 'ok' ? 0 : 1 };
+                } catch (e) {
+                    alert('Error: ' + e.message);
+                }
+                this.loading = false;
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + authToken },
+                    body: formData,
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: 'Verification failed' }));
+                    alert(err.detail || 'Verification failed');
+                    this.loading = false;
+                    return;
+                }
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.done) {
+                                this.summary = data;
+                            } else {
+                                this.results.push(data);
+                            }
+                        } catch (e) {}
+                    }
+                }
+
+                if (buffer.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(buffer.slice(6));
+                        if (data.done) {
+                            this.summary = data;
+                        } else {
+                            this.results.push(data);
+                        }
+                    } catch (e) {}
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+            this.loading = false;
+        }
+    };
+}
+</script>
+{% endblock %}
