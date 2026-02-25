@@ -222,7 +222,6 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
             if batch_model:
                 temp_llm = LLMClient(
                     default_model=batch_model,
-                    api_key=temp_llm.api_key,
                     api_base=temp_llm.api_base,
                 )
             logger.info(
@@ -270,7 +269,6 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
     if batch_model:
         llm = LLMClient(
             default_model=batch_model,
-            api_key=llm.api_key,
             api_base=llm.api_base,
         )
 

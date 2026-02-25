@@ -121,7 +121,6 @@ async def execute_tool(
     if body.model:
         tool_llm = LLMClient(
             default_model=body.model,
-            api_key=llm.api_key,
             api_base=llm.api_base,
         )
 

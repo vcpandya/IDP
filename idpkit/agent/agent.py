@@ -236,13 +236,15 @@ class IDPAgent:
         for iteration in range(MAX_TOOL_ITERATIONS):
             # Call the LLM with tool definitions
             try:
+                from idpkit.core.llm import _resolve_api_key_for_model
+                resolved_key = llm.api_key or _resolve_api_key_for_model(llm.default_model)
                 response = await litellm.acompletion(
                     model=llm.default_model,
                     messages=messages,
                     tools=TOOL_DEFINITIONS,
                     tool_choice="auto",
                     temperature=llm.temperature,
-                    api_key=llm.api_key or None,
+                    api_key=resolved_key or None,
                     api_base=llm.api_base or None,
                 )
             except Exception as exc:
