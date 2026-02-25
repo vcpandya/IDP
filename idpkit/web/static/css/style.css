@@ -1083,6 +1083,7 @@ tbody tr:hover { background: var(--border-light); }
     border-top: 1px solid var(--border);
     background: var(--bg);
     padding: 12px 20px 16px;
+    position: relative;
 }
 
 .chat-upload-tags {
@@ -2346,8 +2347,8 @@ tbody tr:hover { background: var(--border-light); }
     position: absolute;
     bottom: 100%;
     left: 50px;
-    width: 240px;
-    max-height: 200px;
+    right: 50px;
+    max-height: 240px;
     overflow-y: auto;
     background: var(--bg-white);
     border: 1px solid var(--border);
