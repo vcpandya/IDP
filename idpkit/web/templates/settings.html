@@ -360,9 +360,16 @@ function settingsPage() {
             const res = await fetch('/api/auth/me');
             if (res.ok) this.user = await res.json();
             await this.loadProviders();
-            // Restore saved provider/model from localStorage
-            const savedProvider = localStorage.getItem('idpkit_provider');
-            const savedModel = localStorage.getItem('idpkit_model');
+            let savedProvider = localStorage.getItem('idpkit_provider');
+            let savedModel = localStorage.getItem('idpkit_model');
+            try {
+                const dmRes = await fetch('/api/settings/default-model');
+                if (dmRes.ok) {
+                    const dm = await dmRes.json();
+                    if (dm.provider) { savedProvider = dm.provider; localStorage.setItem('idpkit_provider', dm.provider); }
+                    if (dm.model) { savedModel = dm.model; localStorage.setItem('idpkit_model', dm.model); }
+                }
+            } catch(e) { console.error('Error loading default model:', e); }
             if (savedProvider) {
                 this.selectedProvider = savedProvider;
                 await this.fetchModels();
@@ -419,6 +426,11 @@ function settingsPage() {
         selectModel(m) {
             this.defaultModel = m.id;
             localStorage.setItem('idpkit_model', m.id);
+            fetch('/api/settings/default-model', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ provider: this.selectedProvider, model: m.id }),
+            }).catch(e => console.error('Error saving default model:', e));
         },
 
         async changePassword() {

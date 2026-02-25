@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.session import get_db
 from idpkit.db.models import User, Document
-from idpkit.api.deps import get_current_user, get_llm
+from idpkit.api.deps import get_current_user, get_llm, get_llm_for_user
 from idpkit.core.llm import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -87,13 +87,13 @@ async def execute_tool(
     body: ToolExecuteRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    llm: LLMClient = Depends(get_llm),
 ):
     """Execute a specific Smart Tool on a document.
 
     The tool is identified by its ``tool_name`` in the URL path.
     Tool-specific options are passed in the request body.
     """
+    llm = get_llm_for_user(user)
     from idpkit.tools import TOOL_REGISTRY
 
     # Verify document ownership before executing tool

@@ -196,5 +196,11 @@ async def require_superadmin(
     return user
 
 
+def get_llm_for_user(user: User) -> LLMClient:
+    if user.default_model:
+        return get_default_client(model=user.default_model)
+    return get_default_client()
+
+
 def get_llm() -> LLMClient:
     return get_default_client()

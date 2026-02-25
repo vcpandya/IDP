@@ -14,7 +14,7 @@ from idpkit.db.session import get_db
 from idpkit.db.models import (
     User, Document, document_tags, Conversation, ConversationMessage,
 )
-from idpkit.api.deps import get_current_user, get_llm
+from idpkit.api.deps import get_current_user, get_llm, get_llm_for_user
 from idpkit.core.llm import LLMClient
 from idpkit.agent.agent import IDPAgent
 from idpkit.agent.memory import ConversationMemory
@@ -475,7 +475,6 @@ async def agent_chat(
     body: ChatRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    llm: LLMClient = Depends(get_llm),
 ):
     """Send a message to the IDP Agent and receive a response.
 
@@ -484,6 +483,7 @@ async def agent_chat(
     (user + tool + assistant) are persisted to the DB after the agent
     responds.
     """
+    llm = get_llm_for_user(user)
     # Resolve tag_ids → document_ids and merge
     combined_doc_ids = list(body.document_ids)
     if body.tag_ids:

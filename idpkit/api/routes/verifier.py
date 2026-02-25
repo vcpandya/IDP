@@ -76,6 +76,9 @@ async def verify_single(
     _validate_file(file)
     exps = _parse_expectations(expectations)
 
+    if not model and user.default_model:
+        model = user.default_model
+
     file_bytes = await file.read()
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -100,6 +103,9 @@ async def verify_documents(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Too many files. Maximum is {MAX_FILES}.",
         )
+    if not model and user.default_model:
+        model = user.default_model
+
     for f in files:
         _validate_file(f)
     exps = _parse_expectations(expectations)
