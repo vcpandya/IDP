@@ -4,7 +4,7 @@
 <div class="page-header">
     <h2><i class="fas fa-brain"></i> IDA — Intelligent Document Assistant</h2>
 </div>
-<div class="chat-container" x-data="agentChat()" @click.away="showTagMention = false">
+<div class="chat-container" x-data="agentChat()" @click.away="showTagMention = false; showDocMention = false">
     <div class="chat-sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
         <!-- Conversations only -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -123,8 +123,8 @@
                     </span>
                 </template>
             </div>
-            <!-- @mention tag dropdown -->
             <div class="tag-mention-dropdown" x-show="showTagMention" x-cloak>
+                <div style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tags</div>
                 <template x-for="tag in filteredMentionTags()" :key="tag.id">
                     <div class="tag-mention-item" @click="selectTagMention(tag)">
                         <span class="tag-dot" :style="'background:' + tag.color"></span>
@@ -134,12 +134,23 @@
                 </template>
                 <div x-show="filteredMentionTags().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching tags</div>
             </div>
+            <div class="tag-mention-dropdown" x-show="showDocMention" x-cloak>
+                <div style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Documents</div>
+                <template x-for="doc in filteredMentionDocs()" :key="doc.id">
+                    <div class="tag-mention-item" @click="selectDocMention(doc)">
+                        <i class="fas fa-file-alt" style="color:var(--primary,#4f46e5);font-size:0.75rem;width:10px;text-align:center"></i>
+                        <span x-text="doc.filename"></span>
+                        <span style="font-size:0.7rem;color:var(--text-muted);margin-left:auto" x-text="doc.format || ''"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionDocs().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching documents</div>
+            </div>
             <div class="chat-input" style="position:relative">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
                 <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
-                <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (type @ for tags)" :disabled="loading">
+                <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -321,6 +332,8 @@ function agentChat() {
         docFilter: '',
         showTagMention: false,
         tagMentionFilter: '',
+        showDocMention: false,
+        docMentionFilter: '',
         selectedTagChips: [],
         showSourceModal: false,
         sourceModalData: {},
@@ -369,6 +382,14 @@ function agentChat() {
             const q = this.tagMentionFilter.toLowerCase();
             return this.tags.filter(t => t.name.toLowerCase().includes(q));
         },
+        filteredMentionDocs() {
+            let docs = this.documents.filter(d => !this.selectedDocs.includes(d.id));
+            if (this.docMentionFilter.trim()) {
+                const q = this.docMentionFilter.toLowerCase();
+                docs = docs.filter(d => d.filename.toLowerCase().includes(q));
+            }
+            return docs.slice(0, 15);
+        },
         getDocName(docId) {
             const d = this.documents.find(x => x.id === docId);
             return d ? d.filename : docId.substring(0, 8) + '...';
@@ -393,36 +414,60 @@ function agentChat() {
             const val = this.input;
             const cursorPos = event.target.selectionStart || val.length;
             const textBefore = val.substring(0, cursorPos);
+
+            const lastHashIdx = textBefore.lastIndexOf('#');
+            if (lastHashIdx !== -1 && (lastHashIdx === 0 || textBefore[lastHashIdx - 1] === ' ')) {
+                const afterHash = textBefore.substring(lastHashIdx + 1);
+                if (!afterHash.includes(' ')) {
+                    this.showTagMention = true;
+                    this.tagMentionFilter = afterHash;
+                    this.showDocMention = false;
+                    this.docMentionFilter = '';
+                    return;
+                }
+            }
+
             const lastAtIdx = textBefore.lastIndexOf('@');
             if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ')) {
                 const afterAt = textBefore.substring(lastAtIdx + 1);
                 if (!afterAt.includes(' ')) {
-                    this.showTagMention = true;
-                    this.tagMentionFilter = afterAt;
+                    this.showDocMention = true;
+                    this.docMentionFilter = afterAt;
+                    this.showTagMention = false;
+                    this.tagMentionFilter = '';
                     return;
                 }
             }
+
             this.showTagMention = false;
             this.tagMentionFilter = '';
+            this.showDocMention = false;
+            this.docMentionFilter = '';
         },
         async selectTagMention(tag) {
-            // Remove the @text from input
-            const cursorPos = this.input.length;
-            const lastAtIdx = this.input.lastIndexOf('@');
-            if (lastAtIdx !== -1) {
-                this.input = this.input.substring(0, lastAtIdx) + this.input.substring(cursorPos).replace(/^\S*/, '');
-                this.input = this.input.trim();
+            const lastHashIdx = this.input.lastIndexOf('#');
+            if (lastHashIdx !== -1) {
+                this.input = this.input.substring(0, lastHashIdx).trim();
             }
             this.showTagMention = false;
             this.tagMentionFilter = '';
-            // Add as chip if not already present
             if (!this.selectedTagChips.find(c => c.id === tag.id)) {
                 this.selectedTagChips.push({ id: tag.id, name: tag.name, color: tag.color });
-                // Auto-select tag's docs
                 await this.onTagToggle(tag.id, true);
                 if (!this.selectedTags.includes(tag.id)) {
                     this.selectedTags.push(tag.id);
                 }
+            }
+        },
+        selectDocMention(doc) {
+            const lastAtIdx = this.input.lastIndexOf('@');
+            if (lastAtIdx !== -1) {
+                this.input = this.input.substring(0, lastAtIdx).trim();
+            }
+            this.showDocMention = false;
+            this.docMentionFilter = '';
+            if (!this.selectedDocs.includes(doc.id)) {
+                this.selectedDocs.push(doc.id);
             }
         },
         async removeTagChip(tagId) {
