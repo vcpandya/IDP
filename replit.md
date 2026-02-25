@@ -42,3 +42,7 @@ The application follows a client-server architecture:
     -   `Supadata API` (fallback for YouTube transcript extraction)
     -   `Webshare Proxy` (for proxied YouTube transcript fetching)
 -   **Skills Framework**: User-uploadable custom skills following the Anthropic Agent Skills spec. Skills are stored in the `skills` DB table with SKILL.md content (YAML frontmatter + instructions). CRUD API at `/api/skills`, management UI at `/skills`. Active skills are injected into IDA's system prompt per conversation. The `use_skill` agent tool loads full skill content on demand.
+
+## Deployment Notes
+-   **Nix layer caching**: Deployment works best when Nix layers are cached. Keep the Nix packages list minimal — only include runtime dependencies, not build-time tools. Heavy build-only packages (`cargo`, `rustc`, `swig`, `xcbuild`) were removed to reduce layer size. The `build.sh` script copies needed shared libraries (`libstdc++.so.6`, `libgcc_s.so.1`) into `.deploy-libs/` so `gcc` is only needed in the dev environment. If Nix layers become uncached (e.g., after a channel update), a smaller package list ensures the push completes within the deployment timeout.
+-   **Deployment target**: `autoscale` with Gunicorn + UvicornWorker, 2 workers, 120s timeout.
