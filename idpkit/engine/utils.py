@@ -18,8 +18,6 @@ from types import SimpleNamespace as config
 
 from idpkit.core.llm import get_default_client
 
-CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
-
 def count_tokens(text, model=None):
     if not text:
         return 0
@@ -27,14 +25,15 @@ def count_tokens(text, model=None):
     tokens = enc.encode(text)
     return len(tokens)
 
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=None):
     """Synchronous LLM completion returning (content, finish_reason).
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
         return client.complete_with_finish_reason(
             prompt=prompt,
             model=model,
@@ -45,14 +44,15 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_
         return "Error"
 
 
-def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+def ChatGPT_API(model, prompt, api_key=None, chat_history=None):
     """Synchronous LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
         response = client.complete(
             prompt=prompt,
             model=model,
@@ -64,14 +64,15 @@ def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
         return "Error"
 
 
-async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
+async def ChatGPT_API_async(model, prompt, api_key=None):
     """Async LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
         response = await client.acomplete(
             prompt=prompt,
             model=model,
