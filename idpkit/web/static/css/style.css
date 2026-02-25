@@ -1083,7 +1083,6 @@ tbody tr:hover { background: var(--border-light); }
     border-top: 1px solid var(--border);
     background: var(--bg);
     padding: 12px 20px 16px;
-    position: relative;
 }
 
 .chat-upload-tags {
@@ -2344,18 +2343,13 @@ tbody tr:hover { background: var(--border-light); }
 
 /* ========== @Mention Tag Dropdown ========== */
 .tag-mention-dropdown {
-    position: absolute;
-    bottom: 100%;
-    left: 50px;
-    right: 50px;
-    max-height: 240px;
+    max-height: 200px;
     overflow-y: auto;
     background: var(--bg-white);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow-lg);
-    z-index: 60;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
 }
 
 .tag-mention-item {

@@ -371,10 +371,8 @@ function agentChat() {
                 if (!inputEl) return;
                 const cursorPos = inputEl.selectionStart != null ? inputEl.selectionStart : (val || '').length;
                 const textBefore = (val || '').substring(0, cursorPos);
-                console.log('[mention] textBefore:', JSON.stringify(textBefore), 'docs:', this.documents.length, 'tags:', this.tags.length);
                 const hashMatch = textBefore.match(/(^|[ ])#([^ ]*)$/);
                 if (hashMatch) {
-                    console.log('[mention] HASH match:', hashMatch[2]);
                     this.showTagMention = true;
                     this.tagMentionFilter = hashMatch[2];
                     this.showDocMention = false;
@@ -383,7 +381,6 @@ function agentChat() {
                 }
                 const atMatch = textBefore.match(/(^|[ ])@([^ ]*)$/);
                 if (atMatch) {
-                    console.log('[mention] AT match:', atMatch[2]);
                     this.showDocMention = true;
                     this.docMentionFilter = atMatch[2];
                     this.showTagMention = false;
