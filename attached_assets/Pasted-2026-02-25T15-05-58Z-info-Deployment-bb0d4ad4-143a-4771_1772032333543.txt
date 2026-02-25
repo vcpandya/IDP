@@ -1,0 +1,294 @@
+2026-02-25T15:05:58Z info: Deployment: bb0d4ad4-143a-4771-b521-feea767adbb6
+2026-02-25T15:05:58Z info: Build: e99cfb8a-c889-4514-bd8f-2e7d1e371127
+2026-02-25T15:05:58Z info: Running Security Scan
+2026-02-25T15:06:05Z info: Security Scan Complete
+2026-02-25T15:06:05Z info: Connecting to builder
+2026-02-25T15:06:06Z info: Builder connected
+2026-02-25T15:06:08Z info: Installing packages
+2026-02-25T15:06:10Z info: Starting Build
+Processing /home/runner/workspace
+
+  Installing build dependencies: started
+
+  Installing build dependencies: finished with status 'done'
+
+  Getting requirements to build wheel: started
+
+  Getting requirements to build wheel: finished with status 'done'
+
+  Preparing metadata (pyproject.toml): started
+
+  Preparing metadata (pyproject.toml): finished with status 'done'
+
+Requirement already satisfied: openai>=1.101.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.101.0)
+
+Requirement already satisfied: pymupdf>=1.26.4 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.26.4)
+
+Requirement already satisfied: PyPDF2>=3.0.1 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (3.0.1)
+
+Requirement already satisfied: python-dotenv>=1.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.1.0)
+
+Requirement already satisfied: tiktoken>=0.11.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.11.0)
+
+Requirement already satisfied: pyyaml>=6.0.2 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (6.0.2)
+
+Requirement already satisfied: litellm>=1.40.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.80.0)
+
+Requirement already satisfied: fastapi>=0.115.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.131.0)
+
+Requirement already satisfied: uvicorn>=0.30.0 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]>=0.30.0->idpkit==2.0.0) (0.41.0)
+
+Requirement already satisfied: gunicorn>=22.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (25.1.0)
+
+Requirement already satisfied: python-multipart>=0.0.9 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.0.22)
+
+Requirement already satisfied: python-jose>=3.3.0 in ./.pythonlibs/lib/python3.10/site-packages (from python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (3.5.0)
+
+Requirement already satisfied: passlib>=1.7.4 in ./.pythonlibs/lib/python3.10/site-packages (from passlib[bcrypt]>=1.7.4->idpkit==2.0.0) (1.7.4)
+
+Requirement already satisfied: bcrypt<4.1,>=4.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (4.0.1)
+
+Requirement already satisfied: itsdangerous>=2.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (2.2.0)
+
+Requirement already satisfied: jinja2>=3.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (3.1.6)
+
+Requirement already satisfied: aiofiles>=24.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (25.1.0)
+
+Requirement already satisfied: sqlalchemy>=2.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from sqlalchemy[asyncio]>=2.0.0->idpkit==2.0.0) (2.0.46)
+
+Requirement already satisfied: aiosqlite>=0.20.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.22.1)
+
+Requirement already satisfied: alembic>=1.13.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.18.4)
+
+Requirement already satisfied: python-docx>=1.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.2.0)
+
+Requirement already satisfied: beautifulsoup4>=4.12.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (4.14.3)
+
+Requirement already satisfied: openpyxl>=3.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (3.1.5)
+
+Requirement already satisfied: python-pptx>=1.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (1.0.2)
+
+Requirement already satisfied: pydantic>=2.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (2.12.5)
+
+Requirement already satisfied: httpx>=0.27.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.28.1)
+
+Requirement already satisfied: asyncpg>=0.29.0 in ./.pythonlibs/lib/python3.10/site-packages (from idpkit==2.0.0) (0.31.0)
+
+Requirement already satisfied: Mako in ./.pythonlibs/lib/python3.10/site-packages (from alembic>=1.13.0->idpkit==2.0.0) (1.3.10)
+
+Requirement already satisfied: typing-extensions>=4.12 in ./.pythonlibs/lib/python3.10/site-packages (from alembic>=1.13.0->idpkit==2.0.0) (4.15.0)
+
+Requirement already satisfied: tomli in ./.pythonlibs/lib/python3.10/site-packages (from alembic>=1.13.0->idpkit==2.0.0) (2.4.0)
+
+Requirement already satisfied: async_timeout>=4.0.3 in ./.pythonlibs/lib/python3.10/site-packages (from asyncpg>=0.29.0->idpkit==2.0.0) (5.0.1)
+
+Requirement already satisfied: soupsieve>=1.6.1 in ./.pythonlibs/lib/python3.10/site-packages (from beautifulsoup4>=4.12.0->idpkit==2.0.0) (2.8.3)
+
+Requirement already satisfied: starlette<1.0.0,>=0.40.0 in ./.pythonlibs/lib/python3.10/site-packages (from fastapi>=0.115.0->idpkit==2.0.0) (0.52.1)
+
+Requirement already satisfied: typing-inspection>=0.4.2 in ./.pythonlibs/lib/python3.10/site-packages (from fastapi>=0.115.0->idpkit==2.0.0) (0.4.2)
+
+Requirement already satisfied: annotated-doc>=0.0.2 in ./.pythonlibs/lib/python3.10/site-packages (from fastapi>=0.115.0->idpkit==2.0.0) (0.0.4)
+
+Requirement already satisfied: packaging in ./.pythonlibs/lib/python3.10/site-packages (from gunicorn>=22.0.0->idpkit==2.0.0) (26.0)
+
+Requirement already satisfied: anyio in ./.pythonlibs/lib/python3.10/site-packages (from httpx>=0.27.0->idpkit==2.0.0) (4.12.1)
+
+Requirement already satisfied: certifi in ./.pythonlibs/lib/python3.10/site-packages (from httpx>=0.27.0->idpkit==2.0.0) (2026.1.4)
+
+Requirement already satisfied: httpcore==1.* in ./.pythonlibs/lib/python3.10/site-packages (from httpx>=0.27.0->idpkit==2.0.0) (1.0.9)
+
+Requirement already satisfied: idna in ./.pythonlibs/lib/python3.10/site-packages (from httpx>=0.27.0->idpkit==2.0.0) (3.11)
+
+Requirement already satisfied: h11>=0.16 in ./.pythonlibs/lib/python3.10/site-packages (from httpcore==1.*->httpx>=0.27.0->idpkit==2.0.0) (0.16.0)
+
+Requirement already satisfied: MarkupSafe>=2.0 in ./.pythonlibs/lib/python3.10/site-packages (from jinja2>=3.1.0->idpkit==2.0.0) (3.0.3)
+
+Requirement already satisfied: aiohttp>=3.10 in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (3.13.3)
+
+Requirement already satisfied: click in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (8.3.1)
+
+Requirement already satisfied: fastuuid>=0.13.0 in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (0.14.0)
+
+Requirement already satisfied: importlib-metadata>=6.8.0 in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (8.7.1)
+
+Requirement already satisfied: jsonschema<5.0.0,>=4.22.0 in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (4.26.0)
+
+Requirement already satisfied: tokenizers in ./.pythonlibs/lib/python3.10/site-packages (from litellm>=1.40.0->idpkit==2.0.0) (0.22.2)
+
+Requirement already satisfied: distro<2,>=1.7.0 in ./.pythonlibs/lib/python3.10/site-packages (from openai>=1.101.0->idpkit==2.0.0) (1.9.0)
+
+Requirement already satisfied: jiter<1,>=0.4.0 in ./.pythonlibs/lib/python3.10/site-packages (from openai>=1.101.0->idpkit==2.0.0) (0.13.0)
+
+Requirement already satisfied: sniffio in ./.pythonlibs/lib/python3.10/site-packages (from openai>=1.101.0->idpkit==2.0.0) (1.3.1)
+
+Requirement already satisfied: tqdm>4 in ./.pythonlibs/lib/python3.10/site-packages (from openai>=1.101.0->idpkit==2.0.0) (4.67.3)
+
+Requirement already satisfied: et-xmlfile in ./.pythonlibs/lib/python3.10/site-packages (from openpyxl>=3.1.0->idpkit==2.0.0) (2.0.0)
+
+Requirement already satisfied: annotated-types>=0.6.0 in ./.pythonlibs/lib/python3.10/site-packages (from pydantic>=2.0.0->idpkit==2.0.0) (0.7.0)
+
+Requirement already satisfied: pydantic-core==2.41.5 in ./.pythonlibs/lib/python3.10/site-packages (from pydantic>=2.0.0->idpkit==2.0.0) (2.41.5)
+
+Requirement already satisfied: lxml>=3.1.0 in ./.pythonlibs/lib/python3.10/site-packages (from python-docx>=1.1.0->idpkit==2.0.0) (6.0.2)
+
+Requirement already satisfied: ecdsa!=0.15 in ./.pythonlibs/lib/python3.10/site-packages (from python-jose>=3.3.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (0.19.1)
+
+Requirement already satisfied: rsa!=4.1.1,!=4.4,<5.0,>=4.0 in ./.pythonlibs/lib/python3.10/site-packages (from python-jose>=3.3.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (4.9.1)
+
+Requirement already satisfied: pyasn1>=0.5.0 in ./.pythonlibs/lib/python3.10/site-packages (from python-jose>=3.3.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (0.6.2)
+
+Requirement already satisfied: cryptography>=3.4.0 in ./.pythonlibs/lib/python3.10/site-packages (from python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (46.0.5)
+
+Requirement already satisfied: Pillow>=3.3.2 in ./.pythonlibs/lib/python3.10/site-packages (from python-pptx>=1.0.0->idpkit==2.0.0) (12.1.1)
+
+Requirement already satisfied: XlsxWriter>=0.5.7 in ./.pythonlibs/lib/python3.10/site-packages (from python-pptx>=1.0.0->idpkit==2.0.0) (3.2.9)
+
+Requirement already satisfied: greenlet>=1 in ./.pythonlibs/lib/python3.10/site-packages (from sqlalchemy>=2.0.0->sqlalchemy[asyncio]>=2.0.0->idpkit==2.0.0) (3.3.2)
+
+Requirement already satisfied: regex>=2022.1.18 in ./.pythonlibs/lib/python3.10/site-packages (from tiktoken>=0.11.0->idpkit==2.0.0) (2026.2.19)
+
+Requirement already satisfied: requests>=2.26.0 in ./.pythonlibs/lib/python3.10/site-packages (from tiktoken>=0.11.0->idpkit==2.0.0) (2.32.5)
+
+Requirement already satisfied: httptools>=0.6.3 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]>=0.30.0->idpkit==2.0.0) (0.7.1)
+
+Requirement already satisfied: uvloop>=0.15.1 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]>=0.30.0->idpkit==2.0.0) (0.22.1)
+
+Requirement already satisfied: watchfiles>=0.20 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]>=0.30.0->idpkit==2.0.0) (1.1.1)
+
+Requirement already satisfied: websockets>=10.4 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]>=0.30.0->idpkit==2.0.0) (16.0)
+
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (2.6.1)
+
+Requirement already satisfied: aiosignal>=1.4.0 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (1.4.0)
+
+Requirement already satisfied: attrs>=17.3.0 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (25.4.0)
+
+Requirement already satisfied: frozenlist>=1.1.1 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (1.8.0)
+
+Requirement already satisfied: multidict<7.0,>=4.5 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (6.7.1)
+
+Requirement already satisfied: propcache>=0.2.0 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (0.4.1)
+
+Requirement already satisfied: yarl<2.0,>=1.17.0 in ./.pythonlibs/lib/python3.10/site-packages (from aiohttp>=3.10->litellm>=1.40.0->idpkit==2.0.0) (1.22.0)
+
+Requirement already satisfied: exceptiongroup>=1.0.2 in ./.pythonlibs/lib/python3.10/site-packages (from anyio->httpx>=0.27.0->idpkit==2.0.0) (1.3.1)
+
+Requirement already satisfied: cffi>=2.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from cryptography>=3.4.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (2.0.0)
+
+Requirement already satisfied: six>=1.9.0 in ./.pythonlibs/lib/python3.10/site-packages (from ecdsa!=0.15->python-jose>=3.3.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (1.17.0)
+
+Requirement already satisfied: zipp>=3.20 in ./.pythonlibs/lib/python3.10/site-packages (from importlib-metadata>=6.8.0->litellm>=1.40.0->idpkit==2.0.0) (3.23.0)
+
+Requirement already satisfied: jsonschema-specifications>=2023.03.6 in ./.pythonlibs/lib/python3.10/site-packages (from jsonschema<5.0.0,>=4.22.0->litellm>=1.40.0->idpkit==2.0.0) (2025.9.1)
+
+Requirement already satisfied: referencing>=0.28.4 in ./.pythonlibs/lib/python3.10/site-packages (from jsonschema<5.0.0,>=4.22.0->litellm>=1.40.0->idpkit==2.0.0) (0.37.0)
+
+Requirement already satisfied: rpds-py>=0.25.0 in ./.pythonlibs/lib/python3.10/site-packages (from jsonschema<5.0.0,>=4.22.0->litellm>=1.40.0->idpkit==2.0.0) (0.30.0)
+
+Requirement already satisfied: charset_normalizer<4,>=2 in ./.pythonlibs/lib/python3.10/site-packages (from requests>=2.26.0->tiktoken>=0.11.0->idpkit==2.0.0) (3.4.4)
+
+Requirement already satisfied: urllib3<3,>=1.21.1 in ./.pythonlibs/lib/python3.10/site-packages (from requests>=2.26.0->tiktoken>=0.11.0->idpkit==2.0.0) (2.6.3)
+
+Requirement already satisfied: huggingface-hub<2.0,>=0.16.4 in ./.pythonlibs/lib/python3.10/site-packages (from tokenizers->litellm>=1.40.0->idpkit==2.0.0) (1.4.1)
+
+Requirement already satisfied: pycparser in ./.pythonlibs/lib/python3.10/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->python-jose[cryptography]>=3.3.0->idpkit==2.0.0) (3.0)
+
+Requirement already satisfied: filelock in ./.pythonlibs/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (3.24.3)
+
+Requirement already satisfied: fsspec>=2023.5.0 in ./.pythonlibs/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (2026.2.0)
+
+Requirement already satisfied: hf-xet<2.0.0,>=1.2.0 in ./.pythonlibs/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (1.2.0)
+
+Requirement already satisfied: shellingham in ./.pythonlibs/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (1.5.4)
+
+Requirement already satisfied: typer-slim in ./.pythonlibs/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (0.24.0)
+
+Requirement already satisfied: typer>=0.24.0 in ./.pythonlibs/lib/python3.10/site-packages (from typer-slim->huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (0.24.1)
+
+Requirement already satisfied: rich>=12.3.0 in ./.pythonlibs/lib/python3.10/site-packages (from typer>=0.24.0->typer-slim->huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (14.3.3)
+
+Requirement already satisfied: markdown-it-py>=2.2.0 in ./.pythonlibs/lib/python3.10/site-packages (from rich>=12.3.0->typer>=0.24.0->typer-slim->huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (4.0.0)
+
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in ./.pythonlibs/lib/python3.10/site-packages (from rich>=12.3.0->typer>=0.24.0->typer-slim->huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (2.19.2)
+
+Requirement already satisfied: mdurl~=0.1 in ./.pythonlibs/lib/python3.10/site-packages (from markdown-it-py>=2.2.0->rich>=12.3.0->typer>=0.24.0->typer-slim->huggingface-hub<2.0,>=0.16.4->tokenizers->litellm>=1.40.0->idpkit==2.0.0) (0.1.2)
+
+Building wheels for collected packages: idpkit
+
+  Building wheel for idpkit (pyproject.toml): started
+
+  Building wheel for idpkit (pyproject.toml): finished with status 'done'
+
+  Created wheel for idpkit: filename=idpkit-2.0.0-py3-none-any.whl size=260681 sha256=60d6e78d152ae29755a058f5d5a9fecd77e5e6c251a20c89359d20eacd40e32d
+
+  Stored in directory: /tmp/pip-ephem-wheel-cache-r4wrcnut/wheels/37/1b/0b/7d13b2bb5d63ca0407e56f55519bdff15ccc962ce3fcc29aff
+
+Successfully built idpkit
+
+Installing collected packages: idpkit
+
+  Attempting uninstall: idpkit
+
+    Found existing installation: idpkit 2.0.0
+
+    Uninstalling idpkit-2.0.0:
+
+      Successfully uninstalled idpkit-2.0.0
+
+Successfully installed idpkit-2.0.0
+
+Requirement already satisfied: gunicorn in ./.pythonlibs/lib/python3.10/site-packages (25.1.0)
+
+Requirement already satisfied: uvicorn[standard] in ./.pythonlibs/lib/python3.10/site-packages (0.41.0)
+
+Requirement already satisfied: packaging in ./.pythonlibs/lib/python3.10/site-packages (from gunicorn) (26.0)
+
+Requirement already satisfied: click>=7.0 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (8.3.1)
+
+Requirement already satisfied: h11>=0.8 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (0.16.0)
+
+Requirement already satisfied: typing-extensions>=4.0 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (4.15.0)
+
+Requirement already satisfied: httptools>=0.6.3 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (0.7.1)
+
+Requirement already satisfied: python-dotenv>=0.13 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (1.1.0)
+
+Requirement already satisfied: pyyaml>=5.1 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (6.0.2)
+
+Requirement already satisfied: uvloop>=0.15.1 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (0.22.1)
+
+Requirement already satisfied: watchfiles>=0.20 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (1.1.1)
+
+Requirement already satisfied: websockets>=10.4 in ./.pythonlibs/lib/python3.10/site-packages (from uvicorn[standard]) (16.0)
+
+Requirement already satisfied: anyio>=3.0.0 in ./.pythonlibs/lib/python3.10/site-packages (from watchfiles>=0.20->uvicorn[standard]) (4.12.1)
+
+Requirement already satisfied: exceptiongroup>=1.0.2 in ./.pythonlibs/lib/python3.10/site-packages (from anyio>=3.0.0->watchfiles>=0.20->uvicorn[standard]) (1.3.1)
+
+Requirement already satisfied: idna>=2.8 in ./.pythonlibs/lib/python3.10/site-packages (from anyio>=3.0.0->watchfiles>=0.20->uvicorn[standard]) (3.11)
+
+Verifying gunicorn...
+
+/home/runner/workspace/.pythonlibs/bin/gunicorn
+
+Copied libstdc++.so.6 from /nix/store/bmi5znnqk4kg2grkrhk6py0irc8phf6l-gcc-14.2.1.20250322-lib/lib/libstdc++.so.6
+
+Copied libgcc_s.so.1 from /nix/store/bmi5znnqk4kg2grkrhk6py0irc8phf6l-gcc-14.2.1.20250322-lib/lib/libgcc_s.so.1
+
+Checking .pythonlibs/lib/python3.10/site-packages...
+
+idpkit package: OK
+
+Build complete
+
+2026-02-25T15:06:23Z info: Pushing pid1 binary layer...
+2026-02-25T15:06:25Z info: Pushing Repl layer...
+2026-02-25T15:06:25Z info: Pushing hosting layer...
+2026-02-25T15:06:26Z info: Nix layers for this Repl are uncached.
+2026-02-25T15:06:26Z info: Pushing nix-0 layer...
+2026-02-25T15:06:27Z info: Created hosting layer
+2026-02-25T15:06:42Z info: Created pid1 binary layer
+2026-02-25T15:09:18Z info: Created Repl layer
+2026-02-25T15:09:18Z info: Pushing Repl (cache) layer...
+2026-02-25T15:09:19Z info: Created Repl (cache) layer
