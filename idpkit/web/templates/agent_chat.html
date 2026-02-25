@@ -150,7 +150,7 @@
                 <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
-                <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @input="handleInputChange($event)" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
+                <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -366,6 +366,35 @@ function agentChat() {
                 });
                 window.history.replaceState({}, '', '/chat');
             }
+            this.$watch('input', (val) => {
+                const inputEl = this.$el.querySelector('.chat-input input[type="text"]');
+                if (!inputEl) return;
+                const cursorPos = inputEl.selectionStart != null ? inputEl.selectionStart : (val || '').length;
+                const textBefore = (val || '').substring(0, cursorPos);
+                console.log('[mention] textBefore:', JSON.stringify(textBefore), 'docs:', this.documents.length, 'tags:', this.tags.length);
+                const hashMatch = textBefore.match(/(^|[ ])#([^ ]*)$/);
+                if (hashMatch) {
+                    console.log('[mention] HASH match:', hashMatch[2]);
+                    this.showTagMention = true;
+                    this.tagMentionFilter = hashMatch[2];
+                    this.showDocMention = false;
+                    this.docMentionFilter = '';
+                    return;
+                }
+                const atMatch = textBefore.match(/(^|[ ])@([^ ]*)$/);
+                if (atMatch) {
+                    console.log('[mention] AT match:', atMatch[2]);
+                    this.showDocMention = true;
+                    this.docMentionFilter = atMatch[2];
+                    this.showTagMention = false;
+                    this.tagMentionFilter = '';
+                    return;
+                }
+                this.showTagMention = false;
+                this.tagMentionFilter = '';
+                this.showDocMention = false;
+                this.docMentionFilter = '';
+            });
         },
         filteredConversations() {
             if (!this.convSearch.trim()) return this.conversations;
@@ -411,33 +440,6 @@ function agentChat() {
             this.docFilter = '';
         },
         handleInputChange(event) {
-            const el = event.target;
-            const val = el.value || '';
-            const cursorPos = (el.selectionStart != null) ? el.selectionStart : val.length;
-            const textBefore = val.substring(0, cursorPos);
-
-            const hashMatch = textBefore.match(/(^|[ ])#([^ ]*)$/);
-            if (hashMatch) {
-                this.showTagMention = true;
-                this.tagMentionFilter = hashMatch[2];
-                this.showDocMention = false;
-                this.docMentionFilter = '';
-                return;
-            }
-
-            const atMatch = textBefore.match(/(^|[ ])@([^ ]*)$/);
-            if (atMatch) {
-                this.showDocMention = true;
-                this.docMentionFilter = atMatch[2];
-                this.showTagMention = false;
-                this.tagMentionFilter = '';
-                return;
-            }
-
-            this.showTagMention = false;
-            this.tagMentionFilter = '';
-            this.showDocMention = false;
-            this.docMentionFilter = '';
         },
         async selectTagMention(tag) {
             const lastHashIdx = this.input.lastIndexOf('#');
