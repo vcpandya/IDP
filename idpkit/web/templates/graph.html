@@ -418,6 +418,7 @@
                 <button class="insights-tab" :class="{ active: insightsTab === 'crossdoc' }" @click="insightsTab = 'crossdoc'"><i class="fas fa-layer-group"></i> Cross-Doc</button>
                 <button class="insights-tab" :class="{ active: insightsTab === 'dimensions' }" @click="insightsTab = 'dimensions'"><i class="fas fa-cubes"></i> Dimensions</button>
                 <button class="insights-tab" :class="{ active: insightsTab === 'gaps' }" @click="insightsTab = 'gaps'"><i class="fas fa-search-location"></i> Gaps & Sources</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'deep' }" @click="insightsTab = 'deep'" style="font-weight:600"><i class="fas fa-microscope"></i> Deep Analysis</button>
                 <button class="insights-tab" :class="{ active: insightsTab === 'recommendations' }" @click="insightsTab = 'recommendations'"><i class="fas fa-compass"></i> Recommendations</button>
             </div>
 
@@ -578,6 +579,50 @@
                             </div>
                         </template>
                         <div x-show="(insightsData?.insights?.cross_source_triangulation || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No cross-source triangulation found. Add documents from different sources to enable this feature.</div>
+                    </div>
+
+                    <div x-show="insightsTab === 'deep'">
+                        <template x-if="insightsData?.insights?.deep_analysis?.meta_observation">
+                            <div class="insight-card" style="background:linear-gradient(135deg,#faf5ff,#ede9fe);border-left:4px solid #7c3aed;margin-bottom:16px">
+                                <h4 style="color:#7c3aed;margin-bottom:6px"><i class="fas fa-bullseye" style="margin-right:4px"></i> Key Observation</h4>
+                                <p style="font-weight:500;line-height:1.5" x-text="insightsData.insights.deep_analysis.meta_observation"></p>
+                            </div>
+                        </template>
+
+                        <template x-for="(item, idx) in (insightsData?.insights?.deep_analysis?.findings || [])" :key="'da'+idx">
+                            <div class="insight-card" :style="item.severity === 'high' ? 'border-left:4px solid #dc2626' : item.severity === 'medium' ? 'border-left:4px solid #d97706' : 'border-left:4px solid #6b7280'">
+                                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+                                    <span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;text-transform:uppercase"
+                                          :style="item.severity === 'high' ? 'background:#fef2f2;color:#dc2626' : item.severity === 'medium' ? 'background:#fffbeb;color:#d97706' : 'background:#f3f4f6;color:#6b7280'"
+                                          x-text="item.severity"></span>
+                                    <span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;background:#f3f4f6;color:#374151"
+                                          x-text="(item.category || '').replace('_', ' ')"></span>
+                                    <span x-show="item.web_enriched" style="font-size:0.6rem;padding:2px 6px;border-radius:8px;background:#dbeafe;color:#2563eb">
+                                        <i class="fas fa-globe" style="margin-right:2px"></i> web-enriched
+                                    </span>
+                                </div>
+                                <h4 style="margin-bottom:4px"><span x-text="item.title"></span></h4>
+                                <p x-text="item.analysis"></p>
+                                <div x-show="item.evidence" style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);background:var(--bg-card,#f9fafb);padding:8px 10px;border-radius:6px;border:1px solid var(--border,#e5e7eb)">
+                                    <strong>Evidence:</strong> <span x-text="item.evidence"></span>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="(insightsData?.insights?.deep_analysis?.web_sources || []).length > 0" style="margin-top:16px;padding:12px;background:var(--bg-card,#f9fafb);border-radius:8px;border:1px solid var(--border,#e5e7eb)">
+                            <div style="font-size:0.75rem;font-weight:600;color:var(--text-muted);margin-bottom:8px"><i class="fas fa-globe" style="margin-right:4px"></i> Web Sources Used</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:4px">
+                                <template x-for="(src, idx) in (insightsData?.insights?.deep_analysis?.web_sources || [])" :key="'ws'+idx">
+                                    <a :href="src.url" target="_blank" class="doc-badge" style="text-decoration:none;cursor:pointer;font-size:0.7rem">
+                                        <i class="fas fa-external-link-alt" style="font-size:0.5rem;margin-right:2px"></i> <span x-text="src.title || src.url"></span>
+                                    </a>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div x-show="!insightsData?.insights?.deep_analysis || (insightsData?.insights?.deep_analysis?.findings || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">
+                            Deep analysis could not be generated. This may be due to limited graph data or web search unavailability.
+                        </div>
                     </div>
 
                     <div x-show="insightsTab === 'recommendations'">
@@ -974,6 +1019,53 @@ function graphExplorer() {
             });
         },
 
+        _buildEntityContext() {
+            if (!this.detailEntity?.entity) return null;
+            const e = this.detailEntity.entity;
+            const mentions = (this.detailEntity.mentions || []).slice(0, 10).map(m => ({
+                document_filename: m.document_filename || '',
+                node_title: m.node_title || '',
+                start_page: m.start_page,
+                end_page: m.end_page,
+            }));
+            const relationships = (this.detailEntity.edges || []).slice(0, 10).map(edge => ({
+                relation_type: edge.relation_type || '',
+                target_name: edge.target_entity_name || '',
+                target_type: edge.target_entity_type || '',
+                source_name: edge.source_entity_name || '',
+                source_type: edge.source_entity_type || '',
+            }));
+            return {
+                name: e.name || e.canonical_name || '',
+                type: e.entity_type || '',
+                description: e.description || '',
+                mentions,
+                relationships,
+            };
+        },
+
+        _findEntityContextFromQuestion(question) {
+            if (!this.graphData?.entities?.length) return null;
+            const qLower = question.toLowerCase();
+            let bestMatch = null;
+            let bestLen = 0;
+            for (const ent of this.graphData.entities) {
+                const name = (ent.name || ent.canonical_name || '').toLowerCase();
+                if (name.length >= 3 && qLower.includes(name) && name.length > bestLen) {
+                    bestMatch = ent;
+                    bestLen = name.length;
+                }
+            }
+            if (!bestMatch) return null;
+            return {
+                name: bestMatch.name || bestMatch.canonical_name || '',
+                type: bestMatch.entity_type || '',
+                description: bestMatch.description || '',
+                mentions: [],
+                relationships: [],
+            };
+        },
+
         async askInsightsFollowup() {
             const q = this.followupQuestion.trim();
             if (!q || this.followupLoading) return;
@@ -981,19 +1073,33 @@ function graphExplorer() {
             this.insightsFollowups.push({ role: 'user', text: q });
             this.followupQuestion = '';
             const prevContext = this.insightsData?.insights?.overview || '';
+
+            let entityCtx = this._buildEntityContext();
+            if (!entityCtx) {
+                entityCtx = this._findEntityContextFromQuestion(q);
+            }
+
             try {
+                const payload = {
+                    question: q,
+                    document_ids: this.selectedDocIds,
+                    previous_context: prevContext.slice(0, 3000),
+                };
+                if (entityCtx) {
+                    payload.entity_context = entityCtx;
+                }
                 const res = await fetch('/api/graph/insights/followup', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        question: q,
-                        document_ids: this.selectedDocIds,
-                        previous_context: prevContext.slice(0, 3000)
-                    })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    this.insightsFollowups.push({ role: 'ai', text: data.answer || 'No answer received.' });
+                    let answerText = data.answer || 'No answer received.';
+                    if (data.web_sources?.length) {
+                        answerText += '\n\n---\n**Web sources:** ' + data.web_sources.map(s => `[${s.title}](${s.url})`).join(', ');
+                    }
+                    this.insightsFollowups.push({ role: 'ai', text: answerText });
                     if (data.suggested_questions?.length) {
                         this.insightsSuggestedQuestions = data.suggested_questions;
                     }
