@@ -150,7 +150,7 @@
                 <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
-                <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
+                <input type="text" x-model="input" @keyup.enter="sendMessage()" @keyup="handleInputChange($event)" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -411,38 +411,43 @@ function agentChat() {
             this.docFilter = '';
         },
         handleInputChange(event) {
-            const val = this.input;
-            const cursorPos = event.target.selectionStart || val.length;
-            const textBefore = val.substring(0, cursorPos);
+            if (event.key === 'Enter' || event.key === 'Escape') return;
 
-            const lastHashIdx = textBefore.lastIndexOf('#');
-            if (lastHashIdx !== -1 && (lastHashIdx === 0 || textBefore[lastHashIdx - 1] === ' ')) {
-                const afterHash = textBefore.substring(lastHashIdx + 1);
-                if (!afterHash.includes(' ')) {
-                    this.showTagMention = true;
-                    this.tagMentionFilter = afterHash;
-                    this.showDocMention = false;
-                    this.docMentionFilter = '';
-                    return;
+            this.$nextTick(() => {
+                const val = this.input || '';
+                const el = event.target;
+                const cursorPos = el.selectionStart != null ? el.selectionStart : val.length;
+                const textBefore = val.substring(0, cursorPos);
+
+                const lastHashIdx = textBefore.lastIndexOf('#');
+                if (lastHashIdx !== -1 && (lastHashIdx === 0 || textBefore[lastHashIdx - 1] === ' ')) {
+                    const afterHash = textBefore.substring(lastHashIdx + 1);
+                    if (!afterHash.includes(' ')) {
+                        this.showTagMention = true;
+                        this.tagMentionFilter = afterHash;
+                        this.showDocMention = false;
+                        this.docMentionFilter = '';
+                        return;
+                    }
                 }
-            }
 
-            const lastAtIdx = textBefore.lastIndexOf('@');
-            if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ')) {
-                const afterAt = textBefore.substring(lastAtIdx + 1);
-                if (!afterAt.includes(' ')) {
-                    this.showDocMention = true;
-                    this.docMentionFilter = afterAt;
-                    this.showTagMention = false;
-                    this.tagMentionFilter = '';
-                    return;
+                const lastAtIdx = textBefore.lastIndexOf('@');
+                if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ')) {
+                    const afterAt = textBefore.substring(lastAtIdx + 1);
+                    if (!afterAt.includes(' ')) {
+                        this.showDocMention = true;
+                        this.docMentionFilter = afterAt;
+                        this.showTagMention = false;
+                        this.tagMentionFilter = '';
+                        return;
+                    }
                 }
-            }
 
-            this.showTagMention = false;
-            this.tagMentionFilter = '';
-            this.showDocMention = false;
-            this.docMentionFilter = '';
+                this.showTagMention = false;
+                this.tagMentionFilter = '';
+                this.showDocMention = false;
+                this.docMentionFilter = '';
+            });
         },
         async selectTagMention(tag) {
             const lastHashIdx = this.input.lastIndexOf('#');
