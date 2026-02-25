@@ -323,7 +323,7 @@ async def create_conversation(
 ):
     conv = Conversation(title=body.title, owner_id=user.id)
     db.add(conv)
-    await db.flush()
+    await db.commit()
     return ConversationInfo(
         id=conv.id,
         title=conv.title,
