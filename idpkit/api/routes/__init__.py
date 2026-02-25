@@ -17,6 +17,7 @@ from .settings import router as settings_router
 from .tags import router as tags_router
 from .youtube import router as youtube_router
 from .skills import router as skills_router
+from .verifier import router as verifier_router
 
 __all__ = [
     "auth_router",
@@ -36,4 +37,5 @@ __all__ = [
     "tags_router",
     "youtube_router",
     "skills_router",
+    "verifier_router",
 ]

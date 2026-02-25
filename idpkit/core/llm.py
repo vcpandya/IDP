@@ -56,19 +56,25 @@ class LLMClient:
 
     def _get_completion_kwargs(
         self,
-        prompt: str,
+        prompt,
         model: Optional[str] = None,
         chat_history: Optional[list] = None,
         **kwargs,
     ) -> dict:
-        """Build kwargs dict for litellm.completion/acompletion."""
+        """Build kwargs dict for litellm.completion/acompletion.
+
+        ``prompt`` may be a plain string **or** a list of content blocks
+        for multimodal messages (e.g. ``[{"type": "text", ...}, {"type": "image_url", ...}]``).
+        """
         model = model or self.default_model
+
+        content = prompt if isinstance(prompt, list) else prompt
 
         if chat_history:
             messages = list(chat_history)
-            messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "user", "content": content})
         else:
-            messages = [{"role": "user", "content": prompt}]
+            messages = [{"role": "user", "content": content}]
 
         completion_kwargs = {
             "model": model,
