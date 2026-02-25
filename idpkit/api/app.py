@@ -99,17 +99,36 @@ async def _load_rate_limits(session_factory) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and load plugins on startup."""
+    import asyncio
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     from idpkit.db.session import init_db, async_session
     from idpkit.db.seed import seed_default_admin
     from idpkit.plugins import plugin_manager
 
-    await init_db()
-    await seed_default_admin(async_session)
-    await _migrate_admin_to_superadmin(async_session)
-    await _load_rate_limits(async_session)
-    await _recover_stale_jobs(async_session)
-    plugin_manager.load_entry_points()
+    app.state.startup_complete = False
+    app.state.startup_error = None
+
+    async def _background_init():
+        try:
+            await init_db()
+            await seed_default_admin(async_session)
+            await _migrate_admin_to_superadmin(async_session)
+            await _load_rate_limits(async_session)
+            await _recover_stale_jobs(async_session)
+            plugin_manager.load_entry_points()
+            app.state.startup_complete = True
+            logger.info("Startup initialization completed successfully")
+        except Exception as exc:
+            logger.error("Startup initialization failed: %s", exc, exc_info=True)
+            app.state.startup_error = str(exc)
+            app.state.startup_complete = True
+
+    _init_task = asyncio.create_task(_background_init())
     yield
+    _init_task.cancel()
 
 
 def create_app() -> FastAPI:
@@ -138,6 +157,23 @@ def create_app() -> FastAPI:
 
     from idpkit.api.deps import limiter, decode_token
     app.state.limiter = limiter
+
+    @app.middleware("http")
+    async def startup_gate(request: Request, call_next):
+        path = request.url.path
+        if path in ("/health", "/docs", "/redoc", "/openapi.json"):
+            return await call_next(request)
+        if not getattr(app.state, "startup_complete", False):
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Service is starting up, please retry shortly"},
+            )
+        if getattr(app.state, "startup_error", None):
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Service startup failed", "error": app.state.startup_error},
+            )
+        return await call_next(request)
 
     @app.middleware("http")
     async def inject_user_role(request: Request, call_next):
@@ -173,10 +209,16 @@ def create_app() -> FastAPI:
     static_dir = Path(__file__).parent.parent / "web" / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-    # Health check
     @app.get("/health")
     async def health_check():
-        return {"status": "ok", "version": __version__}
+        ready = getattr(app.state, "startup_complete", False)
+        error = getattr(app.state, "startup_error", None)
+        return {
+            "status": "ok" if ready and not error else "starting",
+            "version": __version__,
+            "ready": ready,
+            **({"error": error} if error else {}),
+        }
 
     # API info
     @app.get("/api")
