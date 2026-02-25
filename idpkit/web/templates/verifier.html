@@ -64,27 +64,42 @@
                 </button>
             </div>
 
-            <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <div style="flex:1;min-width:200px">
-                    <label style="font-size:0.85rem;font-weight:600">Model</label>
-                    <select x-model="model" class="verifier-select">
-                        <option value="">Default (GPT-4o)</option>
-                        <option value="gpt-4o">GPT-4o</option>
-                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                        <option value="gpt-4.1">GPT-4.1</option>
-                        <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+            <div class="card">
+                <label style="font-size:0.85rem;font-weight:600"><i class="fas fa-robot"></i> AI Model</label>
+                <div class="bp-model-row" style="margin-top:8px">
+                    <select x-model="selectedProvider" @change="onProviderChange()" class="verifier-select">
+                        <option value="">Provider...</option>
+                        <template x-for="p in providers" :key="p.id">
+                            <option :value="p.id" x-text="p.name + (p.configured ? '' : ' (N/A)')"></option>
+                        </template>
                     </select>
+                    <div style="position:relative;flex:1;">
+                        <select x-model="model" :disabled="!selectedProvider || loadingModels" class="verifier-select">
+                            <option value="" x-text="loadingModels ? 'Loading...' : (selectedProvider ? 'Select model...' : 'Select provider first')"></option>
+                            <template x-for="m in models" :key="m.id">
+                                <option :value="m.id" x-text="m.name"></option>
+                            </template>
+                        </select>
+                        <i x-show="loadingModels" class="fas fa-spinner fa-spin" style="position:absolute;right:28px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:.75rem;"></i>
+                    </div>
                 </div>
-                <button class="btn btn-primary btn-lg" @click="verify()"
-                        :disabled="loading || files.length === 0 || !hasValidExpectations()"
-                        style="margin-top:auto">
-                    <template x-if="!loading">
-                        <span><i class="fas fa-shield-alt"></i> Verify Documents</span>
-                    </template>
-                    <template x-if="loading">
-                        <span><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
-                    </template>
-                </button>
+                <div x-show="model" style="margin-top:6px;">
+                    <span style="font-size:.75rem;background:var(--primary-light);color:var(--primary);padding:2px 8px;border-radius:8px;font-weight:600;">
+                        <i class="fas fa-microchip"></i> <span x-text="model"></span>
+                    </span>
+                </div>
+                <div style="margin-top:12px;">
+                    <button class="btn btn-primary btn-lg" @click="verify()"
+                            :disabled="loading || files.length === 0 || !hasValidExpectations()"
+                            style="width:100%">
+                        <template x-if="!loading">
+                            <span><i class="fas fa-shield-alt"></i> Verify Documents</span>
+                        </template>
+                        <template x-if="loading">
+                            <span><i class="fas fa-spinner fa-spin"></i> Verifying...</span>
+                        </template>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -157,8 +172,50 @@ function verifierPage() {
         results: [],
         summary: null,
         dragOver: false,
+        providers: [],
+        selectedProvider: '',
+        models: [],
+        loadingModels: false,
 
-        init() {},
+        async init() {
+            await this.loadProviders();
+            const savedProvider = localStorage.getItem('idpkit_provider');
+            if (savedProvider) {
+                this.selectedProvider = savedProvider;
+                await this.fetchModels();
+            }
+        },
+
+        async loadProviders() {
+            try {
+                const res = await fetch('/api/settings/providers');
+                if (res.ok) this.providers = await res.json();
+            } catch(e) {
+                console.error('Error loading providers:', e);
+            }
+        },
+
+        async onProviderChange() {
+            this.models = [];
+            this.model = '';
+            if (this.selectedProvider) {
+                localStorage.setItem('idpkit_provider', this.selectedProvider);
+                await this.fetchModels();
+            }
+        },
+
+        async fetchModels() {
+            if (!this.selectedProvider) return;
+            this.loadingModels = true;
+            try {
+                const res = await fetch('/api/settings/models?provider=' + encodeURIComponent(this.selectedProvider));
+                if (res.ok) this.models = await res.json();
+            } catch(e) {
+                console.error('Error fetching models:', e);
+            } finally {
+                this.loadingModels = false;
+            }
+        },
 
         handleFiles(e) {
             const newFiles = Array.from(e.target.files);
