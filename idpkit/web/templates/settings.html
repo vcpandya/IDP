@@ -58,6 +58,22 @@
             <button @click="generateKey()" class="btn btn-primary">
                 <i class="fas fa-sync"></i> Generate New API Key
             </button>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+                <a href="#api-docs-section" @click.prevent="document.getElementById('api-docs-section').scrollIntoView({behavior:'smooth'})"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-book"></i> View API Documentation
+                </a>
+                <span style="margin:0 8px;color:var(--text-muted);">&middot;</span>
+                <a href="/docs" target="_blank"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-external-link-alt"></i> Swagger UI
+                </a>
+                <span style="margin:0 8px;color:var(--text-muted);">&middot;</span>
+                <a href="/redoc" target="_blank"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-external-link-alt"></i> ReDoc
+                </a>
+            </div>
         </div>
         <div class="settings-card">
             <h3><i class="fas fa-brain"></i> LLM Settings</h3>
@@ -140,7 +156,7 @@
         </div>
     </div>
 
-    <div class="settings-card" style="margin-top:20px;" x-data="{ apiDocsOpen: false }">
+    <div id="api-docs-section" class="settings-card" style="margin-top:20px;" x-data="{ apiDocsOpen: false }">
         <h3 @click="apiDocsOpen = !apiDocsOpen" style="cursor:pointer;user-select:none;">
             <i class="fas fa-book"></i> API Documentation
             <i :class="apiDocsOpen ? 'fas fa-chevron-up' : 'fas fa-chevron-down'" style="margin-left:auto;font-size:.75rem;color:var(--text-muted);"></i>
@@ -267,6 +283,16 @@
                     </table>
                 </div>
 
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-check-double"></i> Verifier</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/verify</td><td style="padding:3px 6px;color:var(--text-secondary);">Verify documents (SSE for multi-file)</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/verify/single</td><td style="padding:3px 6px;color:var(--text-secondary);">Verify a single document (JSON)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
             </div>
 
             <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-top:16px;">
@@ -288,10 +314,16 @@
   -d '{"query": "What are the key findings?"}'</pre>
 
                 <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Execute a Smart Tool:</p>
-                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;">curl -X POST /api/tools/smart_summary \
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/tools/smart_summary \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"document_id": "DOC_ID", "options": {}}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Verify a document:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;">curl -X POST /api/verify/single \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -F "file=@aadhaar_card.jpg" \
+  -F 'expectations=["This should be an Aadhaar card"]'</pre>
             </div>
 
         </div>
