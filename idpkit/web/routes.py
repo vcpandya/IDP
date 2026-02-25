@@ -90,6 +90,13 @@ async def templates_page(request: Request, user=Depends(get_current_user_optiona
     return templates.TemplateResponse("templates.html", {"request": request, "user": user})
 
 
+@router.get("/skills", response_class=HTMLResponse)
+async def skills_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("skills.html", {"request": request, "user": user})
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:

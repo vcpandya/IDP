@@ -500,6 +500,7 @@ async def agent_chat(
             llm=llm,
             db=db,
             conversation=memory,
+            user_id=user.id,
         )
     except Exception as exc:
         logger.error("Agent chat failed for user %s: %s", user.id, exc)

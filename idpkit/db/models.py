@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -80,6 +81,7 @@ class User(Base):
     processing_templates = relationship("ProcessingTemplate", back_populates="owner", cascade="all, delete-orphan")
     batch_jobs = relationship("BatchJob", back_populates="owner", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="owner", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -292,6 +294,28 @@ class SystemSetting(Base):
     key = Column(String(100), primary_key=True)
     value = Column(Text, nullable=False)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Skill(Base):
+    """User-uploaded agent skill following the Anthropic Agent Skills spec."""
+
+    __tablename__ = "skills"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(64), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    skill_content = Column(Text, nullable=False)
+    scripts = Column(JSON, nullable=True)
+    is_active = Column(Integer, default=1)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", back_populates="skills")
+
+    __table_args__ = (
+        Index("ix_skills_owner_name", "owner_id", "name", unique=True),
+    )
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.
