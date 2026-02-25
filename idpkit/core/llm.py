@@ -23,6 +23,33 @@ logger = logging.getLogger(__name__)
 litellm.suppress_debug_info = True
 
 
+def _resolve_api_key_for_model(model: str) -> Optional[str]:
+    """Return the correct API key for a model based on its provider prefix.
+
+    LiteLLM expects specific env var names per provider, but users may have
+    differently-named keys (e.g. GOOGLE_API_KEY instead of GEMINI_API_KEY).
+    This function bridges that gap.
+    """
+    m = model.lower()
+
+    if m.startswith("gemini/") or m.startswith("google/"):
+        return (
+            os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+
+    if m.startswith("openrouter/"):
+        return os.getenv("OPENROUTER_API_KEY")
+
+    if any(m.startswith(p) for p in ("claude-", "anthropic/")):
+        return os.getenv("ANTHROPIC_API_KEY")
+
+    if any(m.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-", "openai/", "ft:gpt-")):
+        return os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY")
+
+    return None
+
+
 @dataclass
 class LLMClient:
     """Unified LLM client wrapping LiteLLM for multi-provider support.
@@ -82,9 +109,12 @@ class LLMClient:
             "temperature": kwargs.get("temperature", self.temperature),
         }
 
-        # Pass API key if explicitly set
         if self.api_key:
             completion_kwargs["api_key"] = self.api_key
+        else:
+            resolved_key = _resolve_api_key_for_model(model)
+            if resolved_key:
+                completion_kwargs["api_key"] = resolved_key
         if self.api_base:
             completion_kwargs["api_base"] = self.api_base
 
@@ -146,6 +176,11 @@ class LLMClient:
             try:
                 response = litellm.completion(**completion_kwargs)
                 return self._parse_response(response, used_model)
+            except litellm.AuthenticationError as e:
+                logger.error(f"Authentication error for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Authentication failed for {used_model}: {e}"
+                ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
@@ -156,7 +191,6 @@ class LLMClient:
                         f"Max retries ({self.max_retries}) reached: {e}"
                     ) from e
 
-        # Should not reach here, but just in case
         raise LLMMaxRetriesError("Max retries reached")
 
     async def acomplete(
@@ -179,6 +213,11 @@ class LLMClient:
             try:
                 response = await litellm.acompletion(**completion_kwargs)
                 return self._parse_response(response, used_model)
+            except litellm.AuthenticationError as e:
+                logger.error(f"Authentication error for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Authentication failed for {used_model}: {e}"
+                ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
