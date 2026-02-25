@@ -422,6 +422,7 @@ class InsightsFollowupRequest(BaseModel):
     question: str
     document_ids: List[str] = []
     previous_context: str = ""
+    entity_context: Optional[dict] = None
 
 
 class SmartFocusRequest(BaseModel):
@@ -803,6 +804,12 @@ Rules:
     if "overview" not in insights:
         insights["overview"] = ""
 
+    deep_analysis = await _generate_deep_analysis(
+        llm, context_text, insights, entities, multi_doc_entities
+    )
+    if deep_analysis:
+        insights["deep_analysis"] = deep_analysis
+
     return {
         "insights": insights,
         "analytics": analytics,
@@ -817,6 +824,132 @@ Rules:
     }
 
 
+async def _generate_deep_analysis(llm, context_text, initial_insights, entities, multi_doc_entities):
+    from idpkit.core.web_search import web_search
+    import asyncio
+
+    search_queries = []
+    top_entities = sorted(entities, key=lambda e: e.document_count or 1, reverse=True)[:5]
+    for e in top_entities[:3]:
+        search_queries.append(f"{e.canonical_name} {e.entity_type} analysis significance")
+
+    if multi_doc_entities:
+        cross_doc_names = [e.canonical_name for e in multi_doc_entities[:3]]
+        search_queries.append(f"{' '.join(cross_doc_names)} connections relationships")
+
+    hidden = initial_insights.get("hidden_connections", [])
+    if hidden and isinstance(hidden, list) and len(hidden) > 0:
+        first_hidden = hidden[0]
+        if isinstance(first_hidden, dict):
+            finding = first_hidden.get("finding", "")
+            ents = first_hidden.get("entities", [])
+            if finding or ents:
+                search_queries.append(f"{finding} {' '.join(ents[:2])}")
+
+    search_queries = search_queries[:3]
+
+    web_results = []
+    if search_queries:
+        tasks = [web_search(q, max_results=3) for q in search_queries]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                continue
+            if result.get("error"):
+                continue
+            for r in result.get("results", []):
+                web_results.append({
+                    "query": search_queries[i],
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "content": r.get("content", r.get("description", ""))[:2000],
+                })
+
+    web_context = ""
+    if web_results:
+        web_parts = ["## External Web Research"]
+        for wr in web_results[:8]:
+            web_parts.append(f"### {wr['title']}\nSearch query: {wr['query']}\nSource: {wr['url']}\n{wr['content']}")
+        web_context = "\n\n".join(web_parts)
+
+    overview = initial_insights.get("overview", "")
+    hidden_summary = json.dumps(initial_insights.get("hidden_connections", [])[:3], default=str)
+    cross_doc_summary = json.dumps(initial_insights.get("cross_document_patterns", [])[:3], default=str)
+
+    deep_prompt = f"""You are an expert investigative analyst. You have been given knowledge graph data from a document collection AND external web research. Your job is to produce a DEEP ANALYSIS that goes beyond surface-level observations.
+
+## Knowledge Graph Data
+{context_text[:5000]}
+
+## Initial Insights Summary
+Overview: {overview}
+Hidden Connections Found: {hidden_summary}
+Cross-Document Patterns: {cross_doc_summary}
+
+{web_context}
+
+## Your Task: Deep Analysis
+
+Produce hard-hitting, non-obvious findings. Go beyond what's obvious. Think like an investigative journalist or intelligence analyst. Focus on:
+
+1. **Contradictions & Inconsistencies**: Claims in the documents that contradict each other OR contradict external sources. Where do the documents tell different stories?
+2. **Hidden Power Dynamics**: Entities whose real-world significance is larger/different than the documents suggest. Who/what has more influence than explicitly stated?
+3. **Unexplored Connections**: Connections only visible when combining document data with external knowledge. What links exist that the documents don't explicitly state?
+4. **Strategic Implications**: What do these documents collectively imply that no single document states? What's the bigger picture?
+5. **Information Gaps & Blind Spots**: What's conspicuously absent? What should be discussed but isn't? What questions do these documents avoid?
+
+Return a JSON object (no markdown fences):
+{{
+  "findings": [
+    {{
+      "title": "Short punchy title",
+      "category": "contradiction|power_dynamic|hidden_connection|strategic_implication|blind_spot",
+      "severity": "high|medium|low",
+      "analysis": "2-4 sentences of hard-hitting analysis. Be specific — name entities, cite documents.",
+      "evidence": "What evidence supports this finding (from documents and/or web sources)",
+      "web_enriched": true/false
+    }}
+  ],
+  "web_sources": [
+    {{ "title": "Source title", "url": "source url" }}
+  ],
+  "meta_observation": "One paragraph: the single most important thing someone reading these documents needs to understand that isn't explicitly stated anywhere."
+}}
+
+Rules:
+- Produce 5-8 findings, each genuinely insightful. No generic observations.
+- At least 2 findings must be web-enriched (combining document data with external sources).
+- Be bold but evidence-based. Every claim must reference specific entities or document content.
+- The meta_observation should be something that would make the reader pause and reconsider.
+- Return ONLY valid JSON."""
+
+    try:
+        response = await llm.acomplete(deep_prompt)
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        result = json.loads(raw)
+        if not isinstance(result, dict):
+            result = {"findings": [], "web_sources": [], "meta_observation": str(result)}
+        if "findings" not in result:
+            result["findings"] = []
+        if "web_sources" not in result:
+            result["web_sources"] = []
+        if "meta_observation" not in result:
+            result["meta_observation"] = ""
+        return result
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.error("Deep analysis generation failed: %s", exc)
+        try:
+            return {
+                "findings": [],
+                "web_sources": [],
+                "meta_observation": response.content if 'response' in dir() else f"Deep analysis failed: {exc}",
+            }
+        except Exception:
+            return None
+
+
 @router.post(
     "/insights/followup",
     summary="Ask a follow-up question about knowledge graph insights",
@@ -827,7 +960,9 @@ async def insights_followup(
     db: AsyncSession = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ):
-    """Answer a follow-up question using graph data context and previous insights."""
+    """Answer a follow-up question using graph data context, entity details, document content, and optional web enrichment."""
+    from idpkit.core.web_search import web_search
+
     data = await _load_graph_data(db, user, body.document_ids)
     if not data:
         return {"answer": "No graph data available to answer this question.", "suggested_questions": []}
@@ -842,25 +977,68 @@ async def insights_followup(
     context_text, _, _, _, _ = _build_graph_context_text(entities, edges, doc_rows)
     context_text_truncated = context_text[:6000]
 
-    prompt = f"""You are a knowledge graph analyst helping a user explore their document knowledge base.
+    entity_context_text = ""
+    matched_entities = _match_entities_in_question(body.question, entities)
+    if body.entity_context:
+        ec = body.entity_context
+        entity_context_text += f"\n## Focused Entity: {ec.get('name', '')} ({ec.get('type', '')})\n"
+        if ec.get("description"):
+            entity_context_text += f"Description: {ec['description']}\n"
+        if ec.get("mentions"):
+            entity_context_text += "Mentions in documents:\n"
+            for m in ec["mentions"][:10]:
+                entity_context_text += f"- [{m.get('document_filename', '?')}] Section: {m.get('node_title', '?')} (pages {m.get('start_page', '?')}-{m.get('end_page', '?')})\n"
+        if ec.get("relationships"):
+            entity_context_text += "Relationships:\n"
+            for r in ec["relationships"][:10]:
+                entity_context_text += f"- {r.get('relation_type', '?')} → {r.get('target_name', r.get('source_name', '?'))} ({r.get('target_type', r.get('source_type', '?'))})\n"
+
+    if matched_entities and not body.entity_context:
+        entity_context_text += await _build_entity_detail_context(db, matched_entities, data["doc_ids"])
+
+    doc_content_text = ""
+    if matched_entities:
+        doc_content_text = await _extract_document_content_for_entities(db, matched_entities, data["doc_ids"])
+
+    web_context_text = ""
+    web_sources = []
+    search_result = await web_search(body.question, max_results=3)
+    if not search_result.get("error") and search_result.get("results"):
+        web_parts = ["\n## Web Search Results"]
+        for r in search_result["results"]:
+            snippet = r.get("content", r.get("description", ""))[:1500]
+            web_parts.append(f"### {r['title']}\nSource: {r['url']}\n{snippet}")
+            web_sources.append({"title": r["title"], "url": r["url"]})
+        web_context_text = "\n\n".join(web_parts)
+
+    prompt = f"""You are a knowledge graph analyst helping a user explore their document knowledge base. You have access to the graph data, relevant document content, and web search results.
 
 ## Graph Data Summary
 {context_text_truncated}
+{entity_context_text}
+{doc_content_text}
 
 ## Previous Insights Context
 {body.previous_context[:3000] if body.previous_context else "No previous context."}
+{web_context_text}
 
 ## User's Question
 {body.question}
 
-Answer the user's question thoroughly based on the graph data. Be specific — reference actual entity names and relationships. If the question asks about something not in the data, say so clearly.
+Answer the user's question thoroughly. Follow these rules:
+1. Be specific — reference actual entity names, relationships, and document sections.
+2. When using web search results, clearly indicate which information comes from the documents vs. external sources.
+3. If the web results add useful context (definitions, background, recent developments), incorporate them naturally.
+4. If the question is about a specific entity, provide deep analysis using the entity's mentions, relationships, and document context.
+5. If the question asks about something not in the data, say so clearly but use web results to provide helpful external context.
 
 After your answer, suggest 2-3 natural follow-up questions the user might ask next.
 
 Return a JSON object (no markdown fences):
 {{
   "answer": "Your detailed answer in markdown format...",
-  "suggested_questions": ["Follow-up question 1?", "Follow-up question 2?"]
+  "suggested_questions": ["Follow-up question 1?", "Follow-up question 2?"],
+  "web_sources_used": true/false
 }}"""
 
     try:
@@ -872,13 +1050,156 @@ Return a JSON object (no markdown fences):
         return {
             "answer": result.get("answer", response.content),
             "suggested_questions": result.get("suggested_questions", []),
+            "web_sources": web_sources if result.get("web_sources_used") else [],
         }
     except (json.JSONDecodeError, Exception):
         try:
-            return {"answer": response.content, "suggested_questions": []}
+            return {"answer": response.content, "suggested_questions": [], "web_sources": web_sources}
         except Exception as exc:
             logger.error("Insights followup failed: %s", exc)
-            return {"answer": f"Failed to process your question: {exc}", "suggested_questions": []}
+            return {"answer": f"Failed to process your question: {exc}", "suggested_questions": [], "web_sources": []}
+
+
+def _match_entities_in_question(question: str, entities) -> list:
+    question_lower = question.lower()
+    matched = []
+    for e in entities:
+        name = (e.canonical_name or "").lower()
+        if len(name) >= 3 and name in question_lower:
+            matched.append(e)
+    matched.sort(key=lambda e: len(e.canonical_name or ""), reverse=True)
+    return matched[:5]
+
+
+async def _build_entity_detail_context(db: AsyncSession, matched_entities, doc_ids: list[str]) -> str:
+    parts = ["\n## Matched Entity Details"]
+    for entity in matched_entities[:3]:
+        parts.append(f"\n### {entity.canonical_name} ({entity.entity_type})")
+        if entity.description:
+            parts.append(f"Description: {entity.description}")
+        parts.append(f"Appears in {entity.document_count or 1} document(s)")
+
+        mentions = list((await db.execute(
+            select(EntityMention)
+            .where(
+                EntityMention.entity_id == entity.id,
+                EntityMention.document_id.in_(doc_ids),
+            )
+            .limit(10)
+        )).scalars().all())
+
+        if mentions:
+            doc_names = {}
+            doc_ids_needed = list(set(m.document_id for m in mentions))
+            if doc_ids_needed:
+                rows = (await db.execute(
+                    select(Document.id, Document.filename).where(Document.id.in_(doc_ids_needed))
+                )).all()
+                doc_names = {r[0]: r[1] for r in rows}
+
+            parts.append("Mentions:")
+            for m in mentions:
+                fname = doc_names.get(m.document_id, "unknown")
+                parts.append(f"- [{fname}] Section: {m.node_title or '?'} (pages {m.start_page or '?'}-{m.end_page or '?'}), text: \"{m.mention_text or ''}\"")
+
+        entity_edges = list((await db.execute(
+            select(GraphEdge).where(
+                or_(
+                    GraphEdge.source_entity_id == entity.id,
+                    GraphEdge.target_entity_id == entity.id,
+                )
+            ).limit(15)
+        )).scalars().all())
+
+        if entity_edges:
+            all_entity_ids = set()
+            for edge in entity_edges:
+                all_entity_ids.add(edge.source_entity_id)
+                all_entity_ids.add(edge.target_entity_id)
+            all_entity_ids.discard(entity.id)
+            related_entities = {}
+            if all_entity_ids:
+                rows = (await db.execute(
+                    select(EntityModel).where(EntityModel.id.in_(list(all_entity_ids)))
+                )).scalars().all()
+                related_entities = {e.id: e for e in rows}
+
+            parts.append("Relationships:")
+            for edge in entity_edges:
+                if edge.source_entity_id == entity.id:
+                    other = related_entities.get(edge.target_entity_id)
+                    direction = "→"
+                else:
+                    other = related_entities.get(edge.source_entity_id)
+                    direction = "←"
+                other_name = other.canonical_name if other else "?"
+                other_type = other.entity_type if other else "?"
+                ctx = f" [{edge.context_snippet[:80]}]" if edge.context_snippet else ""
+                parts.append(f"- {direction} {edge.relation_type} {other_name} ({other_type}){ctx}")
+
+    return "\n".join(parts)
+
+
+async def _extract_document_content_for_entities(db: AsyncSession, matched_entities, doc_ids: list[str]) -> str:
+    mention_node_map: dict[str, set[str]] = {}
+    for entity in matched_entities[:3]:
+        mentions = list((await db.execute(
+            select(EntityMention.document_id, EntityMention.node_id)
+            .where(
+                EntityMention.entity_id == entity.id,
+                EntityMention.document_id.in_(doc_ids),
+            )
+            .limit(8)
+        )).all())
+        for doc_id, node_id in mentions:
+            mention_node_map.setdefault(doc_id, set()).add(node_id)
+
+    if not mention_node_map:
+        return ""
+
+    doc_ids_needed = list(mention_node_map.keys())
+    docs = list((await db.execute(
+        select(Document).where(Document.id.in_(doc_ids_needed))
+    )).scalars().all())
+
+    parts = ["\n## Relevant Document Content"]
+    total_chars = 0
+    max_chars = 8000
+
+    for doc in docs:
+        if not doc.tree_index or total_chars >= max_chars:
+            break
+        target_node_ids = mention_node_map.get(doc.id, set())
+        if not target_node_ids:
+            continue
+
+        parts.append(f"\n### From: {doc.filename}")
+        nodes = _flatten_tree_nodes(doc.tree_index)
+        for node in nodes:
+            nid = node.get("node_id", node.get("id", ""))
+            if nid in target_node_ids:
+                title = node.get("title", "Untitled")
+                text = node.get("text", node.get("summary", ""))[:2000]
+                if text:
+                    chunk = f"**{title}**\n{text}\n"
+                    if total_chars + len(chunk) > max_chars:
+                        break
+                    parts.append(chunk)
+                    total_chars += len(chunk)
+
+    return "\n".join(parts) if len(parts) > 1 else ""
+
+
+def _flatten_tree_nodes(tree_index) -> list[dict]:
+    nodes = []
+    if isinstance(tree_index, dict):
+        nodes.append(tree_index)
+        for child in tree_index.get("nodes", []):
+            nodes.extend(_flatten_tree_nodes(child))
+    elif isinstance(tree_index, list):
+        for item in tree_index:
+            nodes.extend(_flatten_tree_nodes(item))
+    return nodes
 
 
 @router.post(
