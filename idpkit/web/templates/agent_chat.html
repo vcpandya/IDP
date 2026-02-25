@@ -123,28 +123,6 @@
                     </span>
                 </template>
             </div>
-            <div class="tag-mention-dropdown" x-show="showTagMention" x-cloak>
-                <div style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Tags</div>
-                <template x-for="tag in filteredMentionTags()" :key="tag.id">
-                    <div class="tag-mention-item" @click="selectTagMention(tag)">
-                        <span class="tag-dot" :style="'background:' + tag.color"></span>
-                        <span x-text="tag.name"></span>
-                        <span style="font-size:0.7rem;color:var(--text-muted);margin-left:auto" x-text="(tag.document_count || 0) + ' docs'"></span>
-                    </div>
-                </template>
-                <div x-show="filteredMentionTags().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching tags</div>
-            </div>
-            <div class="tag-mention-dropdown" x-show="showDocMention" x-cloak>
-                <div style="padding:4px 10px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Documents</div>
-                <template x-for="doc in filteredMentionDocs()" :key="doc.id">
-                    <div class="tag-mention-item" @click="selectDocMention(doc)">
-                        <i class="fas fa-file-alt" style="color:var(--primary,#4f46e5);font-size:0.75rem;width:10px;text-align:center"></i>
-                        <span x-text="doc.filename"></span>
-                        <span style="font-size:0.7rem;color:var(--text-muted);margin-left:auto" x-text="doc.format || ''"></span>
-                    </div>
-                </template>
-                <div x-show="filteredMentionDocs().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching documents</div>
-            </div>
             <div class="chat-input">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
                 <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
@@ -192,6 +170,48 @@
                 </template>
             </div>
         </template>
+    </div>
+
+    <!-- Mention Popup: Tags (#) -->
+    <div class="mention-popup-overlay" x-show="showTagMention" x-cloak @click.self="showTagMention = false" x-transition.opacity>
+        <div class="mention-popup" @click.stop>
+            <div class="mention-popup-header">
+                <span><i class="fas fa-hashtag"></i> Select a Tag</span>
+                <button class="mention-popup-close" @click="showTagMention = false">&times;</button>
+            </div>
+            <input type="text" class="mention-popup-search" x-model="tagMentionFilter" placeholder="Filter tags..." x-ref="tagSearchInput">
+            <div class="mention-popup-list">
+                <template x-for="tag in filteredMentionTags()" :key="tag.id">
+                    <div class="mention-popup-item" @click="selectTagMention(tag)">
+                        <span class="tag-dot" :style="'background:' + tag.color"></span>
+                        <span x-text="tag.name"></span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto" x-text="(tag.document_count || 0) + ' docs'"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionTags().length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No matching tags</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mention Popup: Documents (@) -->
+    <div class="mention-popup-overlay" x-show="showDocMention" x-cloak @click.self="showDocMention = false" x-transition.opacity>
+        <div class="mention-popup" @click.stop>
+            <div class="mention-popup-header">
+                <span><i class="fas fa-file-alt"></i> Select a Document</span>
+                <button class="mention-popup-close" @click="showDocMention = false">&times;</button>
+            </div>
+            <input type="text" class="mention-popup-search" x-model="docMentionFilter" placeholder="Filter documents..." x-ref="docSearchInput">
+            <div class="mention-popup-list">
+                <template x-for="doc in filteredMentionDocs()" :key="doc.id">
+                    <div class="mention-popup-item" @click="selectDocMention(doc)">
+                        <i class="fas fa-file-alt" style="color:var(--primary);font-size:0.8rem;width:16px;text-align:center"></i>
+                        <span x-text="doc.filename" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                        <span style="font-size:0.75rem;color:var(--text-muted)" x-text="doc.format || ''"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionDocs().length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No matching documents</div>
+            </div>
+        </div>
     </div>
 
     <!-- Source Detail Modal -->
