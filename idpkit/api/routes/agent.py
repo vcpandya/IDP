@@ -50,14 +50,16 @@ class ToolCallInfo(BaseModel):
 
 
 class ChatSourceInfo(BaseModel):
-    document_id: str
-    filename: str
+    document_id: str = ""
+    filename: str = ""
     node_id: Optional[str] = None
     title: Optional[str] = None
     start_page: Optional[int] = None
     end_page: Optional[int] = None
     summary: Optional[str] = None
     text_preview: Optional[str] = None
+    url: Optional[str] = None
+    source_kind: str = "document"
 
 
 class SearchAttemptInfo(BaseModel):
@@ -178,6 +180,34 @@ def _extract_sources(tool_call_log: list[dict]) -> list[ChatSourceInfo]:
                          m.get("end_page"),
                          m.get("mention_text"))
 
+        elif name == "web_search":
+            for item in result.get("results", []):
+                item_url = item.get("url", "")
+                if not item_url:
+                    continue
+                key = ("web", item_url)
+                if key in seen:
+                    continue
+                seen.add(key)
+                sources.append(ChatSourceInfo(
+                    title=item.get("title", ""),
+                    summary=(item.get("description", "") or "")[:200] or None,
+                    url=item_url,
+                    source_kind="web",
+                ))
+
+        elif name == "fetch_url":
+            item_url = result.get("url", "")
+            if item_url:
+                key = ("web", item_url)
+                if key not in seen:
+                    seen.add(key)
+                    sources.append(ChatSourceInfo(
+                        title=result.get("title", "") or item_url,
+                        url=item_url,
+                        source_kind="web",
+                    ))
+
     return sources
 
 
@@ -199,14 +229,13 @@ def _classify_source_type(
     tool_call_log: list[dict], requested_doc_ids: list[str],
 ) -> str:
     """Classify whether the response is based on documents, general knowledge, or mixed."""
-    if not requested_doc_ids:
-        return "general_knowledge"
-
     search_doc_ids: set[str] = set()
     found_doc_ids: set[str] = set()
+    used_web = False
 
     for tc in tool_call_log:
-        if tc.get("name") == "search_document":
+        name = tc.get("name", "")
+        if name == "search_document":
             doc_id = tc.get("args", {}).get("document_id", "")
             if doc_id:
                 search_doc_ids.add(doc_id)
@@ -214,13 +243,24 @@ def _classify_source_type(
             results = result.get("results", [])
             if results and doc_id:
                 found_doc_ids.add(doc_id)
+        elif name in ("web_search", "fetch_url"):
+            result = tc.get("result") or {}
+            if name == "web_search" and result.get("results"):
+                used_web = True
+            elif name == "fetch_url" and result.get("url"):
+                used_web = True
 
-    if not search_doc_ids:
-        return "general_knowledge"
-    if found_doc_ids:
-        if found_doc_ids == search_doc_ids:
-            return "documents"
+    has_docs = bool(found_doc_ids)
+    if has_docs and used_web:
         return "mixed"
+    if has_docs:
+        return "documents"
+    if used_web:
+        return "web"
+    if not requested_doc_ids:
+        return "general_knowledge"
+    if search_doc_ids and not found_doc_ids:
+        return "general_knowledge"
     return "general_knowledge"
 
 

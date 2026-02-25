@@ -2483,6 +2483,11 @@ tbody tr:hover { background: var(--border-light); }
     color: var(--warning);
 }
 
+.banner-web {
+    background: #ede9fe;
+    color: #7c3aed;
+}
+
 /* ========== Search Attempt Cards ========== */
 .search-attempt-card {
     padding: 8px 10px;
