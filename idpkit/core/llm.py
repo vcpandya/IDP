@@ -115,6 +115,10 @@ class LLMClient:
             resolved_key = _resolve_api_key_for_model(model)
             if resolved_key:
                 completion_kwargs["api_key"] = resolved_key
+                logger.debug("Resolved API key for model %s: %s...%s (len=%d)",
+                             model, resolved_key[:4], resolved_key[-4:], len(resolved_key))
+            else:
+                logger.debug("No API key resolved for model %s, relying on LiteLLM env defaults", model)
         if self.api_base:
             completion_kwargs["api_base"] = self.api_base
 
@@ -268,12 +272,11 @@ def get_default_client(
     global _default_client
 
     if _default_client is None or api_key or model:
-        resolved_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY")
         resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-4o-2024-11-20")
 
         client = LLMClient(
             default_model=resolved_model,
-            api_key=resolved_key,
+            api_key=api_key,
         )
 
         if not api_key and not model:
