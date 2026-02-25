@@ -327,6 +327,87 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "execute_python",
+            "description": (
+                "Execute Python code in a secure E2B cloud sandbox. Use this for "
+                "mathematical computations, data analysis, statistics, code verification, "
+                "generating charts/plots, or any task requiring code execution. "
+                "The sandbox has access to common Python packages (numpy, pandas, "
+                "matplotlib, scipy, etc.). Returns stdout, stderr, results, and any "
+                "generated charts/images."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The Python code to execute.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 60, max: 300).",
+                    },
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "install_package",
+            "description": (
+                "Install a Python pip package in the E2B sandbox before running code. "
+                "Use this when the code you need to execute requires a package that "
+                "may not be pre-installed in the sandbox."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_name": {
+                        "type": "string",
+                        "description": "The pip package name to install (e.g. 'scikit-learn', 'requests').",
+                    },
+                },
+                "required": ["package_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browse_web",
+            "description": (
+                "Browse a web page using a real browser in an E2B sandbox. "
+                "Navigates to the URL, renders JavaScript, extracts page content, "
+                "links, metadata, and takes a screenshot. Use this for interactive "
+                "web content, dynamic pages that require JavaScript rendering, "
+                "or when you need a screenshot of a page. For simple lookups, "
+                "prefer web_search or fetch_url instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to browse (e.g. 'https://example.com').",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Optional: describe what to extract or do on the page.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 120).",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": (
                 "Search the web for real-time information using Jina Search API. "
@@ -369,6 +450,29 @@ TOOL_DEFINITIONS: list[dict] = [
                     },
                 },
                 "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_skill",
+            "description": (
+                "Load and activate a custom user skill by name. Returns the full "
+                "SKILL.md content with detailed instructions to follow. Use this "
+                "when a task matches one of the user's available skills listed in "
+                "the system prompt. After loading the skill, follow its instructions "
+                "carefully. If the skill includes scripts, execute them using execute_python."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The name of the skill to load (as listed in available skills).",
+                    },
+                },
+                "required": ["skill_name"],
             },
         },
     },
@@ -1227,6 +1331,9 @@ async def _execute_compose_with_context(
 
 from idpkit.core.web_search import web_search as _shared_web_search
 from idpkit.core.web_search import fetch_url as _shared_fetch_url
+from idpkit.agent.e2b_tools import execute_python as _e2b_execute_python
+from idpkit.agent.e2b_tools import install_package as _e2b_install_package
+from idpkit.agent.e2b_tools import browse_web as _e2b_browse_web
 
 
 async def _execute_web_search(
@@ -1242,6 +1349,43 @@ async def _execute_fetch_url(
     args: dict, llm: LLMClient, db: AsyncSession
 ) -> dict:
     return await _shared_fetch_url(url=args.get("url", ""))
+
+
+async def _execute_execute_python(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    timeout = min(args.get("timeout", 60), 300)
+    return await _e2b_execute_python(code=args.get("code", ""), timeout=timeout)
+
+
+async def _execute_install_package(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    return await _e2b_install_package(package_name=args.get("package_name", ""))
+
+
+async def _execute_browse_web(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    timeout = min(args.get("timeout", 120), 300)
+    return await _e2b_browse_web(
+        url=args.get("url", ""),
+        task=args.get("task", ""),
+        timeout=timeout,
+    )
+
+
+async def _execute_use_skill(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    from idpkit.agent.skills import get_skill_content
+    skill_name = args.get("skill_name", "").strip()
+    user_id = args.get("_user_id", "")
+    if not skill_name:
+        return {"error": "skill_name is required."}
+    if not user_id:
+        return {"error": "User context not available for skill loading."}
+    return await get_skill_content(db, user_id, skill_name)
 
 
 # ======================================================================
@@ -1261,6 +1405,10 @@ _EXECUTORS: dict[str, Any] = {
     "compose_with_context": _execute_compose_with_context,
     "web_search": _execute_web_search,
     "fetch_url": _execute_fetch_url,
+    "execute_python": _execute_execute_python,
+    "install_package": _execute_install_package,
+    "browse_web": _execute_browse_web,
+    "use_skill": _execute_use_skill,
 }
 
 

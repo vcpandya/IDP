@@ -105,6 +105,30 @@ When the user has document IDs in scope, you MUST:
 3. If some documents had results and others didn't, state which contributed and which didn't.
 Never silently skip searching an in-scope document.
 
+### Code Execution (E2B Sandbox)
+- **execute_python**: Execute Python code in a secure cloud sandbox. Use for:
+  - Mathematical computations and data analysis
+  - Processing data extracted from documents (statistics, charts, calculations)
+  - Running code the user provides or asks about
+  - Generating visualizations or plots
+  - Validating or testing code snippets
+- **install_package**: Install a pip package in the sandbox before using it in execute_python.
+
+### Browser Automation (E2B Sandbox)
+- **browse_web**: Browse a web page using a real headless browser in a sandbox. Use for:
+  - Interactive web content that requires JavaScript rendering
+  - Pages behind complex layouts that web_search/fetch_url can't handle well
+  - Taking screenshots of web pages
+  - Extracting content from dynamic single-page applications
+  Prefer web_search for simple lookups and fetch_url for static pages.
+
+### Skills System
+- **use_skill**: Load a custom user skill by name. Skills are user-uploaded extensions
+  that provide specialized instructions for specific tasks. When a task matches an
+  available skill (listed below in the prompt), call use_skill to load the full
+  instructions, then follow them carefully. If a skill includes scripts, execute
+  them using execute_python.
+
 ## Guidelines
 1. Always be helpful, accurate, and concise. You are IDA — professional and capable.
 2. When the user asks about a specific document, use search_document to find relevant
@@ -122,6 +146,10 @@ Never silently skip searching an in-scope document.
     documents, use web_search to find it. Use fetch_url to read full page content.
 12. Always distinguish between information from the user's documents vs. web search results.
     Clearly label web-sourced information with the source URL.
+13. For mathematical computations, data analysis, or code tasks, use execute_python.
+    Install required packages with install_package first if needed.
+14. For interactive web browsing, use browse_web. For simple lookups, prefer web_search.
+15. When a task matches an available skill, call use_skill to load and follow its instructions.
 """
 
 
@@ -154,6 +182,7 @@ class IDPAgent:
         llm: LLMClient,
         db: AsyncSession,
         conversation: Optional[ConversationMemory] = None,
+        user_id: Optional[str] = None,
     ) -> dict:
         """Process a user message through the tool-calling loop.
 
@@ -187,11 +216,20 @@ class IDPAgent:
             except Exception:
                 pass  # Proceed without names
 
+        skills_section = ""
+        if user_id and db:
+            try:
+                from idpkit.agent.skills import load_active_skills, build_skills_prompt_section
+                active_skills = await load_active_skills(db, user_id)
+                skills_section = build_skills_prompt_section(active_skills)
+            except Exception:
+                logger.debug("Could not load skills", exc_info=True)
+
         # Record the user message
         conversation.add_message("user", message)
 
         # Build the messages list for the LLM
-        messages = self._build_messages(conversation, document_ids, document_names)
+        messages = self._build_messages(conversation, document_ids, document_names, skills_section=skills_section)
 
         tool_call_log: list[dict] = []
 
@@ -234,6 +272,9 @@ class IDPAgent:
                         tool_name,
                         json.dumps(tool_args, default=str)[:200],
                     )
+
+                    if tool_name == "use_skill" and user_id:
+                        tool_args["_user_id"] = user_id
 
                     # Execute the tool
                     try:
@@ -292,6 +333,7 @@ class IDPAgent:
         conversation: ConversationMemory,
         document_ids: list[str],
         document_names: dict[str, str] | None = None,
+        skills_section: str = "",
     ) -> list[dict]:
         """Build the full messages list including system prompt and history."""
         doc_context = ""
@@ -308,7 +350,7 @@ class IDPAgent:
 
         system_msg = {
             "role": "system",
-            "content": self._system_prompt + doc_context,
+            "content": self._system_prompt + doc_context + skills_section,
         }
 
         # Get conversation history (only role + content for LLM compatibility)

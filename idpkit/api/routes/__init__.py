@@ -16,6 +16,7 @@ from .admin import router as admin_router
 from .settings import router as settings_router
 from .tags import router as tags_router
 from .youtube import router as youtube_router
+from .skills import router as skills_router
 
 __all__ = [
     "auth_router",
@@ -34,4 +35,5 @@ __all__ = [
     "settings_router",
     "tags_router",
     "youtube_router",
+    "skills_router",
 ]
