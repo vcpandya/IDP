@@ -73,6 +73,8 @@ class User(Base):
     api_key = Column(String(64), unique=True, nullable=True, index=True)
     is_active = Column(Integer, default=1)
     created_at = Column(TZDateTime, default=utcnow)
+    default_provider = Column(String(50), nullable=True)
+    default_model = Column(String(200), nullable=True)
 
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     tags = relationship("Tag", back_populates="owner", cascade="all, delete-orphan")

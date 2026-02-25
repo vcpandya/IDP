@@ -179,6 +179,14 @@ async def run_batch_job(batch_id: str, db_url: str | None = None) -> dict:
         owner_id = batch.owner_id
         reference_doc_ids = batch.reference_doc_ids or []
 
+    if not batch_model and owner_id:
+        from idpkit.db.models import User
+        async with session_factory() as session:
+            user_result = await session.execute(select(User).where(User.id == owner_id))
+            owner = user_result.scalar_one_or_none()
+            if owner and owner.default_model:
+                batch_model = owner.default_model
+
     # ------------------------------------------------------------------
     # 2. Load template if referenced
     # ------------------------------------------------------------------

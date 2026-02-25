@@ -385,7 +385,7 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
+def get_page_tokens(pdf_path, model="gpt-5.2", pdf_parser="PyPDF2"):
     enc = tiktoken.encoding_for_model(model)
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)

@@ -53,8 +53,18 @@ async def init_db():
                 if "generated_schema" not in cols:
                     sync_conn.execute(text("ALTER TABLE batch_jobs ADD COLUMN generated_schema JSON"))
 
+        def _migrate_users(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "users" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("users")}
+                if "default_provider" not in cols:
+                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN default_provider VARCHAR(50)"))
+                if "default_model" not in cols:
+                    sync_conn.execute(text("ALTER TABLE users ADD COLUMN default_model VARCHAR(200)"))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
+        await conn.run_sync(_migrate_users)
         await conn.run_sync(Base.metadata.create_all)
 
 

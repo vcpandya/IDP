@@ -296,6 +296,44 @@ async def list_models(
 
 
 # ---------------------------------------------------------------------------
+# Default model preference
+# ---------------------------------------------------------------------------
+
+class DefaultModelRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.get("/default-model")
+async def get_default_model(
+    user: User = Depends(get_current_user),
+):
+    return {
+        "provider": user.default_provider,
+        "model": user.default_model,
+    }
+
+
+@router.post("/default-model")
+async def set_default_model(
+    body: DefaultModelRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.default_provider = body.provider
+    db_user.default_model = body.model
+    await db.commit()
+    return {
+        "provider": db_user.default_provider,
+        "model": db_user.default_model,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Prompt management
 # ---------------------------------------------------------------------------
 
