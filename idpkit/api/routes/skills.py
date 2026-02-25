@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from idpkit.api.deps import get_current_user, get_db
+from idpkit.api.deps import get_current_user, get_db, get_llm
+from idpkit.core.llm import LLMClient
 from idpkit.db.models import Skill, User
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ class SkillUpdate(BaseModel):
     skill_content: Optional[str] = None
     scripts: Optional[List[dict]] = None
     is_active: Optional[bool] = None
+
+
+class SkillGenerateRequest(BaseModel):
+    prompt: str
 
 
 def _parse_frontmatter(content: str) -> dict:
@@ -89,6 +94,63 @@ async def create_skill(
         "is_active": bool(skill.is_active),
         "created_at": skill.created_at.isoformat() if skill.created_at else None,
     }
+
+
+_SKILL_GEN_PROMPT = """\
+You are a skill specification writer. Generate a SKILL.md file following the Anthropic Agent Skills specification.
+
+The user wants a skill that does the following:
+{prompt}
+
+Generate a complete SKILL.md file with:
+1. YAML frontmatter between --- markers containing:
+   - name: a lowercase-kebab-case name (letters, numbers, hyphens only)
+   - description: a one-line summary of what the skill does (under 200 chars)
+2. After the frontmatter, write detailed Markdown instructions that an AI assistant (IDA) should follow when this skill is activated. Include:
+   - Clear step-by-step instructions
+   - What to look for in documents
+   - How to structure the output
+   - Specific domain knowledge and terminology
+   - Edge cases and best practices
+   - Example output format if applicable
+
+Output ONLY the SKILL.md content, nothing else. Do not wrap in code blocks."""
+
+
+@router.post("/generate", summary="AI-generate a skill from natural language")
+async def generate_skill(
+    body: SkillGenerateRequest,
+    user: User = Depends(get_current_user),
+    llm: LLMClient = Depends(get_llm),
+):
+    prompt = body.prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "Prompt is required")
+    if len(prompt) > 5000:
+        raise HTTPException(400, "Prompt too long (max 5000 characters)")
+
+    try:
+        response = await llm.acomplete(_SKILL_GEN_PROMPT.format(prompt=prompt))
+        content = response.content.strip()
+
+        if content.startswith("```"):
+            lines = content.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            content = "\n".join(lines)
+
+        if not content.startswith("---"):
+            raise HTTPException(500, "AI generated invalid skill format")
+
+        return {"skill_content": content}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Skill generation failed: %s", exc)
+        raise HTTPException(500, f"Skill generation failed: {exc}")
 
 
 @router.get("", summary="List user's skills")
