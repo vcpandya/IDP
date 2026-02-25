@@ -145,12 +145,12 @@
                 </template>
                 <div x-show="filteredMentionDocs().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching documents</div>
             </div>
-            <div class="chat-input" style="position:relative">
+            <div class="chat-input">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
                 <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
-                <textarea x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @input="handleInputChange($event)" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading" rows="1"></textarea>
+                <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @input="handleInputChange($event)" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -412,35 +412,26 @@ function agentChat() {
         },
         handleInputChange(event) {
             const el = event.target;
-            el.style.height = 'auto';
-            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-
             const val = el.value || '';
-            const cursorPos = el.selectionStart != null ? el.selectionStart : val.length;
+            const cursorPos = (el.selectionStart != null) ? el.selectionStart : val.length;
             const textBefore = val.substring(0, cursorPos);
 
-            const lastHashIdx = textBefore.lastIndexOf('#');
-            if (lastHashIdx !== -1 && (lastHashIdx === 0 || textBefore[lastHashIdx - 1] === ' ' || textBefore[lastHashIdx - 1] === '\n')) {
-                const afterHash = textBefore.substring(lastHashIdx + 1);
-                if (!afterHash.includes(' ') && !afterHash.includes('\n')) {
-                    this.showTagMention = true;
-                    this.tagMentionFilter = afterHash;
-                    this.showDocMention = false;
-                    this.docMentionFilter = '';
-                    return;
-                }
+            const hashMatch = textBefore.match(/(^|[ ])#([^ ]*)$/);
+            if (hashMatch) {
+                this.showTagMention = true;
+                this.tagMentionFilter = hashMatch[2];
+                this.showDocMention = false;
+                this.docMentionFilter = '';
+                return;
             }
 
-            const lastAtIdx = textBefore.lastIndexOf('@');
-            if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ' || textBefore[lastAtIdx - 1] === '\n')) {
-                const afterAt = textBefore.substring(lastAtIdx + 1);
-                if (!afterAt.includes(' ') && !afterAt.includes('\n')) {
-                    this.showDocMention = true;
-                    this.docMentionFilter = afterAt;
-                    this.showTagMention = false;
-                    this.tagMentionFilter = '';
-                    return;
-                }
+            const atMatch = textBefore.match(/(^|[ ])@([^ ]*)$/);
+            if (atMatch) {
+                this.showDocMention = true;
+                this.docMentionFilter = atMatch[2];
+                this.showTagMention = false;
+                this.tagMentionFilter = '';
+                return;
             }
 
             this.showTagMention = false;
@@ -565,8 +556,6 @@ function agentChat() {
             this.input = '';
             this.showTagMention = false;
             this.showDocMention = false;
-            const ta = this.$el.querySelector('.chat-input textarea');
-            if (ta) ta.style.height = '42px';
             this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null });
             this.loading = true;
             this.scrollToBottom();

@@ -1120,26 +1120,19 @@ tbody tr:hover { background: var(--border-light); }
 
 .chat-input {
     display: flex;
-    align-items: flex-end;
     gap: 8px;
 }
 
-.chat-input textarea {
+.chat-input input[type="text"] {
     flex: 1;
     padding: 10px 14px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     font-size: 0.9rem;
     background: var(--bg-white);
-    resize: none;
-    min-height: 42px;
-    max-height: 120px;
-    line-height: 1.4;
-    font-family: inherit;
-    overflow-y: auto;
 }
 
-.chat-input textarea:focus {
+.chat-input input[type="text"]:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(79,70,229,0.1);
