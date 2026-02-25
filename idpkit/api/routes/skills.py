@@ -96,6 +96,77 @@ async def create_skill(
     }
 
 
+@router.get("/library", summary="List pre-built skills available for installation")
+async def list_library_skills(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from idpkit.agent.skill_library import SKILL_LIBRARY
+
+    installed = (await db.execute(
+        select(Skill.name).where(Skill.owner_id == user.id)
+    )).scalars().all()
+    installed_set = set(installed)
+
+    return [
+        {
+            "id": s["id"],
+            "category": s["category"],
+            "icon": s["icon"],
+            "name": _parse_frontmatter(s["skill_content"]).get("name", s["id"]),
+            "description": _parse_frontmatter(s["skill_content"]).get("description", ""),
+            "installed": s["id"] in installed_set,
+            "skill_content": s["skill_content"],
+        }
+        for s in SKILL_LIBRARY
+    ]
+
+
+class LibraryInstallRequest(BaseModel):
+    skill_id: str
+
+
+@router.post("/library/install", summary="Install a pre-built skill from the library")
+async def install_library_skill(
+    body: LibraryInstallRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from idpkit.agent.skill_library import SKILL_LIBRARY
+
+    lib_skill = next((s for s in SKILL_LIBRARY if s["id"] == body.skill_id), None)
+    if not lib_skill:
+        raise HTTPException(404, f"Library skill '{body.skill_id}' not found")
+
+    frontmatter = _parse_frontmatter(lib_skill["skill_content"])
+    name = frontmatter.get("name", body.skill_id)
+
+    existing = (await db.execute(
+        select(Skill).where(Skill.owner_id == user.id, Skill.name == name)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, f"Skill '{name}' is already installed")
+
+    skill = Skill(
+        owner_id=user.id,
+        name=name,
+        description=frontmatter.get("description", "")[:1024],
+        skill_content=lib_skill["skill_content"],
+        is_active=1,
+    )
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description,
+        "is_active": bool(skill.is_active),
+        "created_at": skill.created_at.isoformat() if skill.created_at else None,
+    }
+
+
 _SKILL_GEN_PROMPT = """\
 You are a skill specification writer. Generate a SKILL.md file following the Anthropic Agent Skills specification.
 

@@ -3,74 +3,182 @@
 {% block content %}
 <div class="page-header">
     <h2><i class="fas fa-puzzle-piece"></i> Agent Skills</h2>
-    <p class="page-subtitle">Extend IDA with custom skills following the Anthropic Agent Skills specification</p>
+    <p class="page-subtitle">Extend IDA with custom skills — install from the library, generate with AI, or write your own</p>
 </div>
 
 <div x-data="skillsPage()" x-init="init()">
 
-    <div class="skills-actions">
-        <button class="btn btn-primary" @click="openCreate()">
-            <i class="fas fa-plus"></i> Create Skill
+    <div class="skills-tabs">
+        <button class="skills-tab" :class="{ active: tab === 'my' }" @click="tab='my'">
+            <i class="fas fa-puzzle-piece"></i> My Skills
+            <span class="tab-count" x-show="skills.length" x-text="skills.length"></span>
         </button>
-        <button class="btn btn-primary" @click="openAiCreate()" style="background:linear-gradient(135deg,var(--primary),#8b5cf6);">
-            <i class="fas fa-magic"></i> AI-Assisted Create
+        <button class="skills-tab" :class="{ active: tab === 'library' }" @click="tab='library'; loadLibrary()">
+            <i class="fas fa-store"></i> Skill Library
         </button>
-        <button class="btn" @click="loadSkills()">
-            <i class="fas fa-sync-alt"></i> Refresh
+        <button class="skills-tab" :class="{ active: tab === 'create' }" @click="tab='create'">
+            <i class="fas fa-plus-circle"></i> Create New
         </button>
     </div>
 
-    <template x-if="loading">
-        <div style="text-align:center;padding:40px;">
-            <i class="fas fa-spinner fa-spin fa-2x"></i>
-            <p style="margin-top:12px;color:var(--text-secondary);">Loading skills...</p>
-        </div>
-    </template>
-
-    <template x-if="!loading && skills.length === 0">
-        <div class="skills-empty">
-            <i class="fas fa-puzzle-piece"></i>
-            <h3>No Skills Yet</h3>
-            <p>Create custom skills to extend IDA's capabilities. Skills are SKILL.md files with YAML frontmatter that teach IDA new behaviors.</p>
-            <div class="skills-empty-btns">
-                <button class="btn btn-primary" @click="openCreate()">
-                    <i class="fas fa-plus"></i> Write a Skill Manually
-                </button>
-                <button class="btn btn-primary" @click="openAiCreate()" style="background:linear-gradient(135deg,var(--primary),#8b5cf6);">
-                    <i class="fas fa-magic"></i> Generate with AI
-                </button>
+    <!-- MY SKILLS TAB -->
+    <div x-show="tab === 'my'">
+        <template x-if="loading">
+            <div style="text-align:center;padding:40px;">
+                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                <p style="margin-top:12px;color:var(--text-secondary);">Loading skills...</p>
             </div>
-        </div>
-    </template>
+        </template>
 
-    <div class="skills-grid" x-show="!loading && skills.length > 0">
-        <template x-for="skill in skills" :key="skill.id">
-            <div class="skill-card">
-                <div class="skill-card-top">
-                    <div class="skill-card-info">
-                        <h3 x-text="skill.name"></h3>
-                        <p x-text="skill.description || 'No description'"></p>
-                    </div>
-                    <span class="skill-badge" :class="skill.is_active ? 'badge-active' : 'badge-inactive'"
-                          x-text="skill.is_active ? 'Active' : 'Inactive'"></span>
-                </div>
-                <div class="skill-card-meta">
-                    Created <span x-text="new Date(skill.created_at).toLocaleDateString()"></span>
-                </div>
-                <div class="skill-card-actions">
-                    <button class="btn btn-sm" @click="openEdit(skill)">
-                        <i class="fas fa-edit"></i> Edit
+        <template x-if="!loading && skills.length === 0">
+            <div class="skills-empty">
+                <i class="fas fa-puzzle-piece"></i>
+                <h3>No Skills Installed</h3>
+                <p>Install pre-built skills from the library, generate one with AI, or write your own SKILL.md file.</p>
+                <div class="skills-empty-btns">
+                    <button class="btn btn-primary" @click="tab='library'; loadLibrary()">
+                        <i class="fas fa-store"></i> Browse Library
                     </button>
-                    <button class="btn btn-sm" @click="toggleSkill(skill)"
-                            x-text="skill.is_active ? 'Deactivate' : 'Activate'"></button>
-                    <button class="btn btn-sm btn-danger" @click="deleteSkill(skill)">
-                        <i class="fas fa-trash"></i>
+                    <button class="btn btn-primary" @click="tab='create'" style="background:linear-gradient(135deg,var(--primary),#8b5cf6);">
+                        <i class="fas fa-magic"></i> Create with AI
                     </button>
                 </div>
             </div>
         </template>
+
+        <div class="skills-grid" x-show="!loading && skills.length > 0">
+            <template x-for="skill in skills" :key="skill.id">
+                <div class="skill-card">
+                    <div class="skill-card-top">
+                        <div class="skill-card-info">
+                            <h3 x-text="skill.name"></h3>
+                            <p x-text="skill.description || 'No description'"></p>
+                        </div>
+                        <span class="skill-badge" :class="skill.is_active ? 'badge-active' : 'badge-inactive'"
+                              x-text="skill.is_active ? 'Active' : 'Inactive'"></span>
+                    </div>
+                    <div class="skill-card-meta">
+                        Created <span x-text="new Date(skill.created_at).toLocaleDateString()"></span>
+                        <template x-if="skill.updated_at && skill.updated_at !== skill.created_at">
+                            <span> &middot; Updated <span x-text="new Date(skill.updated_at).toLocaleDateString()"></span></span>
+                        </template>
+                    </div>
+                    <div class="skill-card-actions">
+                        <button class="btn btn-sm" @click="viewSkill(skill)">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                        <button class="btn btn-sm" @click="openEdit(skill)">
+                            <i class="fas fa-edit"></i> Edit
+                        </button>
+                        <button class="btn btn-sm" @click="duplicateSkill(skill)">
+                            <i class="fas fa-copy"></i> Duplicate
+                        </button>
+                        <button class="btn btn-sm" :class="skill.is_active ? '' : 'btn-success-sm'" @click="toggleSkill(skill)">
+                            <i :class="skill.is_active ? 'fas fa-pause' : 'fas fa-play'"></i>
+                            <span x-text="skill.is_active ? 'Deactivate' : 'Activate'"></span>
+                        </button>
+                        <button class="btn btn-sm btn-danger" @click="deleteSkill(skill)">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
     </div>
 
+    <!-- SKILL LIBRARY TAB -->
+    <div x-show="tab === 'library'">
+        <p class="library-intro">
+            Pre-built skills curated for common workflows. Install with one click and customize as needed.
+        </p>
+
+        <template x-if="libraryLoading">
+            <div style="text-align:center;padding:40px;">
+                <i class="fas fa-spinner fa-spin fa-2x"></i>
+            </div>
+        </template>
+
+        <div class="skills-grid" x-show="!libraryLoading">
+            <template x-for="lib in librarySkills" :key="lib.id">
+                <div class="skill-card library-card">
+                    <div class="skill-card-top">
+                        <div class="skill-card-info">
+                            <h3><i :class="'fas ' + lib.icon" style="margin-right:6px;opacity:0.7;"></i> <span x-text="lib.name"></span></h3>
+                            <p x-text="lib.description"></p>
+                        </div>
+                        <span class="skill-category" x-text="lib.category"></span>
+                    </div>
+                    <div class="skill-card-actions" style="margin-top:14px;">
+                        <template x-if="!lib.installed">
+                            <button class="btn btn-sm btn-primary" @click="installLibrarySkill(lib)" :disabled="lib.installing">
+                                <i :class="lib.installing ? 'fas fa-spinner fa-spin' : 'fas fa-download'"></i>
+                                <span x-text="lib.installing ? 'Installing...' : 'Install'"></span>
+                            </button>
+                        </template>
+                        <template x-if="lib.installed">
+                            <span class="installed-badge"><i class="fas fa-check"></i> Installed</span>
+                        </template>
+                        <button class="btn btn-sm" @click="previewLibrarySkill(lib)">
+                            <i class="fas fa-eye"></i> Preview
+                        </button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- CREATE TAB -->
+    <div x-show="tab === 'create'">
+        <div class="create-options">
+            <div class="create-option" @click="openAiCreate()">
+                <div class="create-option-icon" style="background:linear-gradient(135deg,var(--primary),#8b5cf6);">
+                    <i class="fas fa-magic"></i>
+                </div>
+                <h3>AI-Assisted</h3>
+                <p>Describe what you want in plain language. IDA generates a complete SKILL.md with proper frontmatter and instructions.</p>
+                <span class="create-option-tag">Recommended</span>
+            </div>
+            <div class="create-option" @click="openCreate()">
+                <div class="create-option-icon">
+                    <i class="fas fa-code"></i>
+                </div>
+                <h3>Write Manually</h3>
+                <p>Write your own SKILL.md with YAML frontmatter and Markdown instructions. Full control over every detail.</p>
+            </div>
+            <div class="create-option" @click="openImport()">
+                <div class="create-option-icon" style="background:linear-gradient(135deg,#10b981,#059669);">
+                    <i class="fas fa-file-upload"></i>
+                </div>
+                <h3>Import File</h3>
+                <p>Upload an existing SKILL.md file from your computer. Supports any valid Anthropic Agent Skills format.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- VIEW MODAL -->
+    <div class="modal-overlay" x-show="showViewModal" x-cloak x-transition.opacity
+         @click.self="showViewModal=false" @keydown.escape.window="showViewModal=false">
+        <div class="modal skill-modal" @click.stop>
+            <div class="modal-header">
+                <h3><i class="fas fa-eye" style="margin-right:8px;"></i> <span x-text="viewingSkillName"></span></h3>
+                <button @click="showViewModal=false" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre class="skill-view-content" x-text="viewingSkillContent"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="copySkillContent()">
+                    <i class="fas fa-copy"></i> Copy
+                </button>
+                <button class="btn" @click="exportSkill()">
+                    <i class="fas fa-download"></i> Export .md
+                </button>
+                <button class="btn btn-primary" @click="showViewModal=false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- EDIT/CREATE MODAL -->
     <div class="modal-overlay" x-show="showModal" x-cloak x-transition.opacity
          @click.self="showModal=false" @keydown.escape.window="showModal=false">
         <div class="modal skill-modal" @click.stop>
@@ -81,9 +189,9 @@
             <div class="modal-body">
                 <div class="skill-format-hint">
                     <i class="fas fa-info-circle"></i>
-                    <strong>SKILL.md Format:</strong> Start with YAML frontmatter between <code>---</code> markers.
-                    Required: <code>name</code>, <code>description</code>.
-                    Optional: <code>license</code>, <code>metadata</code>. Body after frontmatter contains instructions for IDA.
+                    <strong>SKILL.md Format:</strong> YAML frontmatter between <code>---</code> markers.
+                    Required: <code>name</code> (kebab-case), <code>description</code>.
+                    Body contains Markdown instructions for IDA.
                 </div>
 
                 <label class="skill-label">SKILL.md Content</label>
@@ -108,6 +216,7 @@
         </div>
     </div>
 
+    <!-- AI CREATE MODAL -->
     <div class="modal-overlay" x-show="showAiModal" x-cloak x-transition.opacity
          @click.self="showAiModal=false" @keydown.escape.window="showAiModal && (showAiModal=false)">
         <div class="modal skill-modal" @click.stop>
@@ -117,35 +226,40 @@
             </div>
             <div class="modal-body">
                 <p class="ai-skill-intro">
-                    Describe what you want the skill to do in plain language. IDA will generate a proper SKILL.md
-                    file with correct YAML frontmatter and detailed instructions.
+                    Describe what you want the skill to do in plain language. The AI will generate a complete SKILL.md
+                    with correct YAML frontmatter and detailed instructions.
                 </p>
 
                 <label class="skill-label">What should this skill do?</label>
-                <textarea x-model="aiPrompt" rows="5" class="skill-textarea" style="font-family:inherit;"
-                    placeholder="Example: Create a skill that helps IDA analyze financial statements. It should know how to read balance sheets, income statements, and cash flow statements. It should calculate key ratios like P/E, debt-to-equity, and current ratio. Output should be structured with sections for each financial metric."></textarea>
+                <textarea x-model="aiPrompt" rows="4" class="skill-textarea" style="font-family:inherit;"
+                    placeholder="Example: Create a skill that helps analyze financial statements — balance sheets, income statements, cash flows. Calculate key ratios and flag anomalies."></textarea>
 
                 <div class="ai-examples">
                     <div class="ai-examples-label">Quick ideas:</div>
                     <div class="ai-example-chips">
-                        <button class="chip" @click="aiPrompt='Create a skill for analyzing legal contracts — identify key clauses, obligations, deadlines, and potential risks'">Legal Contract Analysis</button>
-                        <button class="chip" @click="aiPrompt='Create a skill for writing technical documentation — consistent structure, code examples, API reference format'">Technical Docs Writer</button>
+                        <button class="chip" @click="aiPrompt='Create a skill for analyzing legal contracts — identify key clauses, obligations, deadlines, and potential risks'">Legal Contracts</button>
+                        <button class="chip" @click="aiPrompt='Create a skill for writing technical documentation — consistent structure, code examples, API reference format'">Tech Docs</button>
                         <button class="chip" @click="aiPrompt='Create a skill for competitive analysis — compare products, features, pricing, SWOT analysis'">Competitive Analysis</button>
-                        <button class="chip" @click="aiPrompt='Create a skill for data analysis — statistical summaries, chart descriptions, trend identification, outlier detection'">Data Analyst</button>
+                        <button class="chip" @click="aiPrompt='Create a skill for creating executive summaries from long reports — BLUF format, key decisions, actions'">Exec Summaries</button>
+                        <button class="chip" @click="aiPrompt='Create a skill for medical/clinical document analysis — patient data, diagnoses, treatment plans, medication interactions'">Medical Docs</button>
+                        <button class="chip" @click="aiPrompt='Create a skill for real estate document analysis — leases, purchase agreements, property valuations, due diligence'">Real Estate</button>
                     </div>
                 </div>
 
                 <template x-if="aiGenerating">
                     <div class="ai-generating">
                         <i class="fas fa-spinner fa-spin"></i>
-                        <span>Generating skill with AI... This may take a moment.</span>
+                        <span>Generating skill... This may take a moment.</span>
                     </div>
                 </template>
 
                 <template x-if="aiResult">
                     <div>
-                        <label class="skill-label" style="margin-top:16px;">Generated SKILL.md <span style="font-weight:400;color:var(--text-muted);">(review and edit before saving)</span></label>
-                        <textarea x-model="aiResult" rows="18" class="skill-textarea"></textarea>
+                        <label class="skill-label" style="margin-top:16px;">
+                            Generated SKILL.md
+                            <span style="font-weight:400;color:var(--text-muted);">— review and edit before saving</span>
+                        </label>
+                        <textarea x-model="aiResult" rows="16" class="skill-textarea"></textarea>
                         <template x-if="aiParsedPreview">
                             <div class="skill-preview">
                                 <div class="skill-preview-label">PARSED PREVIEW</div>
@@ -167,7 +281,7 @@
                 </template>
                 <template x-if="aiResult">
                     <div style="display:flex;gap:8px;">
-                        <button class="btn" @click="aiResult=null;aiPrompt=''">
+                        <button class="btn" @click="aiResult=null">
                             <i class="fas fa-redo"></i> Regenerate
                         </button>
                         <button class="btn btn-primary" @click="saveAiSkill()" :disabled="saving">
@@ -179,41 +293,95 @@
             </div>
         </div>
     </div>
+
+    <!-- IMPORT MODAL -->
+    <div class="modal-overlay" x-show="showImportModal" x-cloak x-transition.opacity
+         @click.self="showImportModal=false" @keydown.escape.window="showImportModal=false">
+        <div class="modal skill-modal" @click.stop>
+            <div class="modal-header">
+                <h3><i class="fas fa-file-upload" style="margin-right:8px;"></i> Import SKILL.md</h3>
+                <button @click="showImportModal=false" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="import-dropzone" @dragover.prevent="importDragOver=true" @dragleave="importDragOver=false"
+                     @drop.prevent="handleFileDrop($event)" :class="{ 'drag-over': importDragOver }">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                    <p>Drag & drop a SKILL.md file here</p>
+                    <span>or</span>
+                    <label class="btn btn-sm btn-primary" style="margin-top:8px;cursor:pointer;">
+                        <i class="fas fa-folder-open"></i> Browse Files
+                        <input type="file" accept=".md,.txt,.yaml,.yml" @change="handleFileSelect($event)" style="display:none;">
+                    </label>
+                </div>
+                <template x-if="importContent">
+                    <div style="margin-top:16px;">
+                        <label class="skill-label">Imported Content</label>
+                        <textarea x-model="importContent" rows="14" class="skill-textarea"></textarea>
+                        <template x-if="_parseFrontmatter(importContent)">
+                            <div class="skill-preview">
+                                <div class="skill-preview-label">PARSED PREVIEW</div>
+                                <div class="skill-preview-name" x-text="_parseFrontmatter(importContent).name || '(no name)'"></div>
+                                <div class="skill-preview-desc" x-text="_parseFrontmatter(importContent).description || '(no description)'"></div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showImportModal=false">Cancel</button>
+                <button class="btn btn-primary" @click="saveImportedSkill()" :disabled="saving || !importContent">
+                    <i class="fas fa-save"></i>
+                    <span x-text="saving ? 'Saving...' : 'Import & Save'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <style>
-.skills-actions {
+.skills-tabs {
     display: flex;
-    gap: 12px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 24px;
+    border-bottom: 2px solid var(--border-color);
+    padding-bottom: 0;
+}
+.skills-tab {
+    padding: 10px 20px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.skills-tab:hover { color: var(--text-primary); }
+.skills-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+.tab-count {
+    background: var(--primary);
+    color: #fff;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-weight: 600;
 }
 .skills-empty {
     text-align: center;
     padding: 60px 20px;
 }
-.skills-empty i {
-    font-size: 48px;
-    color: var(--text-muted);
-    margin-bottom: 16px;
-    display: block;
-}
-.skills-empty h3 {
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-.skills-empty p {
-    color: var(--text-muted);
-    max-width: 500px;
-    margin: 0 auto 24px;
-    line-height: 1.6;
-}
-.skills-empty-btns {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
-}
+.skills-empty i { font-size: 48px; color: var(--text-muted); margin-bottom: 16px; display: block; }
+.skills-empty h3 { color: var(--text-secondary); margin-bottom: 8px; }
+.skills-empty p { color: var(--text-muted); max-width: 500px; margin: 0 auto 24px; line-height: 1.6; }
+.skills-empty-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .skills-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
@@ -224,217 +392,160 @@
     border: 1px solid var(--border-color);
     border-radius: 10px;
     padding: 20px;
+    transition: box-shadow 0.2s;
 }
-.skill-card-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    margin-bottom: 12px;
-}
-.skill-card-info h3 {
-    margin: 0;
-    font-size: 16px;
-    color: var(--text-primary);
-}
-.skill-card-info p {
-    margin: 4px 0 0;
-    font-size: 13px;
+.skill-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.library-card { border-left: 3px solid var(--primary); }
+.skill-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.skill-card-info h3 { margin: 0; font-size: 15px; color: var(--text-primary); }
+.skill-card-info p { margin: 4px 0 0; font-size: 13px; color: var(--text-secondary); line-height: 1.4; }
+.skill-badge { padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.badge-active { background: #d4edda; color: #155724; }
+.badge-inactive { background: #fff3cd; color: #856404; }
+.skill-category {
+    background: var(--bg-light, #f0f0f5);
     color: var(--text-secondary);
-    line-height: 1.4;
-}
-.skill-badge {
     padding: 2px 10px;
     border-radius: 12px;
     font-size: 11px;
     font-weight: 600;
     flex-shrink: 0;
 }
-.badge-active {
-    background: #d4edda;
+.installed-badge {
     color: #155724;
-}
-.badge-inactive {
-    background: #fff3cd;
-    color: #856404;
-}
-.skill-card-meta {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-bottom: 14px;
-}
-.skill-card-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-.btn-sm {
-    padding: 5px 12px;
-    font-size: 12px;
-    border-radius: 6px;
-}
-.btn-danger {
-    background: #f8d7da !important;
-    color: #721c24 !important;
-    border-color: #f5c6cb !important;
-}
-.btn-danger:hover { opacity: 0.85; }
-.skill-modal {
-    max-width: 800px;
-    max-height: 85vh;
-    overflow-y: auto;
-}
-.modal-close {
-    background: none;
-    border: none;
-    font-size: 24px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    padding: 0 4px;
-    line-height: 1;
-}
-.modal-close:hover { color: var(--text-primary); }
-.modal-footer {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    padding: 16px 24px;
-    border-top: 1px solid var(--border-color);
-}
-.skill-format-hint {
-    padding: 12px 14px;
-    background: var(--bg-light, #f8f9fa);
-    border-radius: 8px;
     font-size: 13px;
-    line-height: 1.6;
-    color: var(--text-secondary);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.skill-card-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+.skill-card-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+.btn-danger { background: #f8d7da !important; color: #721c24 !important; border-color: #f5c6cb !important; }
+.btn-danger:hover { opacity: 0.85; }
+.btn-success-sm { background: #d4edda !important; color: #155724 !important; }
+.library-intro { color: var(--text-secondary); margin: 0 0 20px; font-size: 14px; }
+.create-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 8px;
+}
+.create-option {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 28px 24px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+}
+.create-option:hover {
+    border-color: var(--primary);
+    box-shadow: 0 4px 16px rgba(99, 102, 241, 0.1);
+    transform: translateY(-2px);
+}
+.create-option-icon {
+    width: 48px; height: 48px;
+    border-radius: 12px;
+    background: var(--primary);
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
     margin-bottom: 16px;
 }
-.skill-format-hint code {
-    background: rgba(0,0,0,0.06);
-    padding: 1px 5px;
-    border-radius: 3px;
-    font-size: 12px;
+.create-option h3 { margin: 0 0 8px; font-size: 16px; color: var(--text-primary); }
+.create-option p { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+.create-option-tag {
+    position: absolute;
+    top: 12px; right: 12px;
+    background: linear-gradient(135deg, var(--primary), #8b5cf6);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
-.skill-label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 600;
-    font-size: 13px;
-}
+.skill-modal { max-width: 800px; max-height: 85vh; overflow-y: auto; }
+.modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-secondary); padding: 0 4px; line-height: 1; }
+.modal-close:hover { color: var(--text-primary); }
+.modal-footer { display: flex; gap: 10px; justify-content: flex-end; padding: 16px 24px; border-top: 1px solid var(--border-color); }
+.skill-format-hint { padding: 12px 14px; background: var(--bg-light, #f8f9fa); border-radius: 8px; font-size: 13px; line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px; }
+.skill-format-hint code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+.skill-label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 13px; }
 .skill-textarea {
     width: 100%;
     font-family: 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-    font-size: 13px;
-    line-height: 1.5;
-    padding: 14px;
+    font-size: 13px; line-height: 1.5; padding: 14px;
+    border: 1px solid var(--border-color); border-radius: 8px;
+    background: var(--bg-white); color: var(--text-primary);
+    resize: vertical; tab-size: 2; box-sizing: border-box;
+}
+.skill-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
+.skill-view-content {
+    font-family: 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 13px; line-height: 1.6; padding: 16px;
+    background: var(--bg-light, #f8f9fa); border-radius: 8px;
+    white-space: pre-wrap; word-wrap: break-word;
+    max-height: 55vh; overflow-y: auto;
     border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-white);
-    color: var(--text-primary);
-    resize: vertical;
-    tab-size: 2;
-    box-sizing: border-box;
+    margin: 0;
 }
-.skill-textarea:focus {
-    outline: none;
-    border-color: var(--primary);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
-}
-.skill-preview {
-    margin-top: 12px;
-    padding: 12px 14px;
-    background: var(--bg-light, #f8f9fa);
-    border-radius: 8px;
-    border-left: 3px solid var(--primary);
-}
-.skill-preview-label {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-muted);
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-}
-.skill-preview-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-.skill-preview-desc {
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-}
-.ai-skill-intro {
-    color: var(--text-secondary);
-    font-size: 14px;
-    line-height: 1.6;
-    margin: 0 0 16px;
-}
-.ai-examples {
-    margin-top: 14px;
-    margin-bottom: 4px;
-}
-.ai-examples-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-}
-.ai-example-chips {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
+.skill-preview { margin-top: 12px; padding: 12px 14px; background: var(--bg-light, #f8f9fa); border-radius: 8px; border-left: 3px solid var(--primary); }
+.skill-preview-label { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 4px; }
+.skill-preview-name { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.skill-preview-desc { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+.ai-skill-intro { color: var(--text-secondary); font-size: 14px; line-height: 1.6; margin: 0 0 16px; }
+.ai-examples { margin-top: 14px; margin-bottom: 4px; }
+.ai-examples-label { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
+.ai-example-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
-    background: var(--bg-light, #f0f0f5);
-    border: 1px solid var(--border-color);
-    padding: 6px 14px;
-    border-radius: 20px;
-    font-size: 12px;
-    cursor: pointer;
-    color: var(--text-secondary);
-    transition: all 0.15s;
+    background: var(--bg-light, #f0f0f5); border: 1px solid var(--border-color);
+    padding: 6px 14px; border-radius: 20px; font-size: 12px;
+    cursor: pointer; color: var(--text-secondary); transition: all 0.15s;
 }
-.chip:hover {
-    background: var(--primary);
-    color: #fff;
-    border-color: var(--primary);
+.chip:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+.ai-generating { display: flex; align-items: center; gap: 10px; padding: 16px; background: var(--bg-light, #f8f9fa); border-radius: 8px; margin-top: 16px; color: var(--primary); font-size: 14px; }
+.import-dropzone {
+    border: 2px dashed var(--border-color); border-radius: 12px; padding: 40px 20px;
+    text-align: center; color: var(--text-muted); transition: all 0.2s;
 }
-.ai-generating {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 16px;
-    background: var(--bg-light, #f8f9fa);
-    border-radius: 8px;
-    margin-top: 16px;
-    color: var(--primary);
-    font-size: 14px;
-}
+.import-dropzone.drag-over { border-color: var(--primary); background: rgba(99, 102, 241, 0.04); }
+.import-dropzone i { font-size: 36px; margin-bottom: 12px; display: block; }
+.import-dropzone p { margin: 0 0 4px; font-size: 14px; }
+.import-dropzone span { font-size: 12px; color: var(--text-muted); }
 [x-cloak] { display: none !important; }
 </style>
 
 <script>
 function skillsPage() {
     return {
+        tab: 'my',
         skills: [],
         loading: true,
+        librarySkills: [],
+        libraryLoading: false,
+        libraryLoaded: false,
         showModal: false,
         showAiModal: false,
+        showViewModal: false,
+        showImportModal: false,
         editingSkill: null,
         formContent: '',
         saving: false,
         aiPrompt: '',
         aiResult: null,
         aiGenerating: false,
+        viewingSkillName: '',
+        viewingSkillContent: '',
+        importContent: '',
+        importDragOver: false,
 
-        get parsedPreview() {
-            return this._parseFrontmatter(this.formContent);
-        },
-
-        get aiParsedPreview() {
-            return this._parseFrontmatter(this.aiResult);
-        },
+        get parsedPreview() { return this._parseFrontmatter(this.formContent); },
+        get aiParsedPreview() { return this._parseFrontmatter(this.aiResult); },
 
         _parseFrontmatter(content) {
             if (!content) return null;
@@ -445,13 +556,13 @@ function skillsPage() {
             for (const line of lines) {
                 const idx = line.indexOf(':');
                 if (idx > 0) {
-                    const key = line.substring(0, idx).trim();
-                    const val = line.substring(idx + 1).trim();
-                    data[key] = val;
+                    data[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
                 }
             }
             return data.name ? data : null;
         },
+
+        _token() { return localStorage.getItem('access_token'); },
 
         async init() {
             await this.loadSkills();
@@ -460,18 +571,79 @@ function skillsPage() {
         async loadSkills() {
             this.loading = true;
             try {
-                const token = localStorage.getItem('access_token');
-                const res = await fetch('/api/skills', {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                const res = await fetch('/api/skills', { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                if (res.ok) this.skills = await res.json();
+            } catch (e) { console.error('Failed to load skills:', e); }
+            finally { this.loading = false; }
+        },
+
+        async loadLibrary() {
+            if (this.libraryLoaded) return;
+            this.libraryLoading = true;
+            try {
+                const res = await fetch('/api/skills/library', { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.librarySkills = data.map(s => ({ ...s, installing: false }));
+                    this.libraryLoaded = true;
+                }
+            } catch (e) { console.error('Failed to load library:', e); }
+            finally { this.libraryLoading = false; }
+        },
+
+        async installLibrarySkill(lib) {
+            lib.installing = true;
+            try {
+                const res = await fetch('/api/skills/library/install', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skill_id: lib.id })
                 });
                 if (res.ok) {
-                    this.skills = await res.json();
+                    lib.installed = true;
+                    await this.loadSkills();
+                } else {
+                    const err = await res.json();
+                    alert(err.detail || 'Installation failed');
                 }
-            } catch (e) {
-                console.error('Failed to load skills:', e);
-            } finally {
-                this.loading = false;
-            }
+            } catch (e) { alert('Error: ' + e.message); }
+            finally { lib.installing = false; }
+        },
+
+        previewLibrarySkill(lib) {
+            this.viewingSkillName = lib.name;
+            this.viewingSkillContent = lib.skill_content || `Skill: ${lib.name}\n\n${lib.description}`;
+            this.showViewModal = true;
+        },
+
+        async viewSkill(skill) {
+            try {
+                const res = await fetch(`/api/skills/${skill.id}`, { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.viewingSkillName = data.name;
+                    this.viewingSkillContent = data.skill_content || '';
+                    this.showViewModal = true;
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        copySkillContent() {
+            navigator.clipboard.writeText(this.viewingSkillContent);
+            const btn = event.target.closest('button');
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            setTimeout(() => btn.innerHTML = orig, 1500);
+        },
+
+        exportSkill() {
+            const blob = new Blob([this.viewingSkillContent], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${this.viewingSkillName || 'skill'}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
         },
 
         openCreate() {
@@ -483,7 +655,33 @@ function skillsPage() {
         openEdit(skill) {
             this.editingSkill = skill;
             this.formContent = skill.skill_content || '';
+            this.loadSkillContent(skill);
             this.showModal = true;
+        },
+
+        async loadSkillContent(skill) {
+            if (skill.skill_content) return;
+            try {
+                const res = await fetch(`/api/skills/${skill.id}`, { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                if (res.ok) {
+                    const data = await res.json();
+                    skill.skill_content = data.skill_content;
+                    this.formContent = data.skill_content || '';
+                }
+            } catch (e) { console.error(e); }
+        },
+
+        async duplicateSkill(skill) {
+            try {
+                const res = await fetch(`/api/skills/${skill.id}`, { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                if (!res.ok) return;
+                const data = await res.json();
+                let content = data.skill_content || '';
+                content = content.replace(/name:\s*(.+)/, (m, n) => `name: ${n.trim()}-copy`);
+                this.editingSkill = null;
+                this.formContent = content;
+                this.showModal = true;
+            } catch (e) { console.error(e); }
         },
 
         openAiCreate() {
@@ -493,18 +691,58 @@ function skillsPage() {
             this.showAiModal = true;
         },
 
+        openImport() {
+            this.importContent = '';
+            this.importDragOver = false;
+            this.showImportModal = true;
+        },
+
+        handleFileDrop(e) {
+            this.importDragOver = false;
+            const file = e.dataTransfer.files[0];
+            if (file) this._readFile(file);
+        },
+
+        handleFileSelect(e) {
+            const file = e.target.files[0];
+            if (file) this._readFile(file);
+        },
+
+        _readFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => { this.importContent = e.target.result; };
+            reader.readAsText(file);
+        },
+
+        async saveImportedSkill() {
+            if (!this.importContent) return;
+            this.saving = true;
+            try {
+                const res = await fetch('/api/skills', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ skill_content: this.importContent })
+                });
+                if (res.ok) {
+                    this.showImportModal = false;
+                    this.tab = 'my';
+                    await this.loadSkills();
+                } else {
+                    const err = await res.json();
+                    alert(err.detail || 'Import failed');
+                }
+            } catch (e) { alert('Error: ' + e.message); }
+            finally { this.saving = false; }
+        },
+
         async generateSkill() {
             if (!this.aiPrompt.trim()) return;
             this.aiGenerating = true;
             this.aiResult = null;
             try {
-                const token = localStorage.getItem('access_token');
                 const res = await fetch('/api/skills/generate', {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ prompt: this.aiPrompt })
                 });
                 if (res.ok) {
@@ -514,106 +752,80 @@ function skillsPage() {
                     const err = await res.json();
                     alert(err.detail || 'AI generation failed');
                 }
-            } catch (e) {
-                alert('Error generating skill: ' + e.message);
-            } finally {
-                this.aiGenerating = false;
-            }
+            } catch (e) { alert('Error: ' + e.message); }
+            finally { this.aiGenerating = false; }
         },
 
         async saveAiSkill() {
             if (!this.aiResult) return;
             this.saving = true;
             try {
-                const token = localStorage.getItem('access_token');
                 const res = await fetch('/api/skills', {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ skill_content: this.aiResult })
                 });
                 if (res.ok) {
                     this.showAiModal = false;
+                    this.tab = 'my';
                     await this.loadSkills();
                 } else {
                     const err = await res.json();
-                    alert(err.detail || 'Failed to save skill');
+                    alert(err.detail || 'Failed to save');
                 }
-            } catch (e) {
-                alert('Error saving skill: ' + e.message);
-            } finally {
-                this.saving = false;
-            }
+            } catch (e) { alert('Error: ' + e.message); }
+            finally { this.saving = false; }
         },
 
         async saveSkill() {
             this.saving = true;
             try {
-                const token = localStorage.getItem('access_token');
-                const headers = {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                };
+                const headers = { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' };
                 let res;
                 if (this.editingSkill) {
                     res = await fetch(`/api/skills/${this.editingSkill.id}`, {
-                        method: 'PUT',
-                        headers,
-                        body: JSON.stringify({ skill_content: this.formContent })
+                        method: 'PUT', headers, body: JSON.stringify({ skill_content: this.formContent })
                     });
                 } else {
                     res = await fetch('/api/skills', {
-                        method: 'POST',
-                        headers,
-                        body: JSON.stringify({ skill_content: this.formContent })
+                        method: 'POST', headers, body: JSON.stringify({ skill_content: this.formContent })
                     });
                 }
                 if (res.ok) {
                     this.showModal = false;
+                    this.tab = 'my';
                     await this.loadSkills();
                 } else {
                     const err = await res.json();
-                    alert(err.detail || 'Failed to save skill');
+                    alert(err.detail || 'Failed to save');
                 }
-            } catch (e) {
-                alert('Error saving skill: ' + e.message);
-            } finally {
-                this.saving = false;
-            }
+            } catch (e) { alert('Error: ' + e.message); }
+            finally { this.saving = false; }
         },
 
         async toggleSkill(skill) {
             try {
-                const token = localStorage.getItem('access_token');
                 const res = await fetch(`/api/skills/${skill.id}/toggle`, {
-                    method: 'PATCH',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    method: 'PATCH', headers: { 'Authorization': `Bearer ${this._token()}` }
                 });
                 if (res.ok) {
                     const updated = await res.json();
                     skill.is_active = updated.is_active;
                 }
-            } catch (e) {
-                console.error('Toggle failed:', e);
-            }
+            } catch (e) { console.error('Toggle failed:', e); }
         },
 
         async deleteSkill(skill) {
             if (!confirm(`Delete skill "${skill.name}"? This cannot be undone.`)) return;
             try {
-                const token = localStorage.getItem('access_token');
                 const res = await fetch(`/api/skills/${skill.id}`, {
-                    method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${token}` }
+                    method: 'DELETE', headers: { 'Authorization': `Bearer ${this._token()}` }
                 });
                 if (res.ok) {
                     await this.loadSkills();
+                    this.libraryLoaded = false;
                 }
-            } catch (e) {
-                console.error('Delete failed:', e);
-            }
+            } catch (e) { console.error('Delete failed:', e); }
         }
     };
 }
