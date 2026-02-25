@@ -115,22 +115,32 @@ async def _run_indexing_task(
             try:
                 from idpkit.engine.page_index import build_tree_index
 
-                await _update_job_progress(job_id, 10, "Extracting text content")
-
                 llm = get_llm()
                 storage = get_storage()
 
+                _STAGE_MAP = {
+                    5: "Loading document",
+                    10: "Extracting pages",
+                    15: "Parsing text content",
+                    20: "Analyzing document structure",
+                    70: "Building tree index",
+                    90: "Generating summaries",
+                    100: "Finalizing",
+                }
+
                 async def _progress_with_stage(pct):
-                    if pct < 30:
-                        stage = "Extracting text content"
-                    elif pct < 60:
-                        stage = "Analyzing document structure"
-                    elif pct < 80:
-                        stage = "Building tree index"
-                    elif pct < 95:
-                        stage = "Generating summaries"
-                    else:
-                        stage = "Finalizing index"
+                    stage = _STAGE_MAP.get(pct)
+                    if not stage:
+                        if pct <= 10:
+                            stage = "Loading document"
+                        elif pct <= 20:
+                            stage = "Parsing text content"
+                        elif pct <= 70:
+                            stage = "Analyzing document structure"
+                        elif pct <= 90:
+                            stage = "Building tree index"
+                        else:
+                            stage = "Generating summaries"
                     await _update_job_progress(job_id, pct, stage)
 
                 tree_result = await build_tree_index(
@@ -147,7 +157,7 @@ async def _run_indexing_task(
                     "build_tree_index not available; storing placeholder tree for doc %s",
                     doc_id,
                 )
-                await _update_job_progress(job_id, 50, "Extracting text content")
+                await _update_job_progress(job_id, 50, "Processing document")
                 tree_result = {
                     "doc_name": doc.filename,
                     "doc_description": None,

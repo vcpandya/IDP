@@ -929,7 +929,7 @@ function knowledgeBase() {
                 const entry = { filename: file.name, status: 'uploading', stage: 'Uploading file', progress: 0 };
                 this.uploadFiles.push(entry);
                 try {
-                    entry.progress = 5;
+                    entry.progress = 2;
                     const form = new FormData();
                     form.append('file', file);
                     const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
@@ -940,8 +940,8 @@ function knowledgeBase() {
                     }
                     const doc = await upRes.json();
                     entry.status = 'indexing';
-                    entry.stage = 'Uploaded — starting indexing';
-                    entry.progress = 15;
+                    entry.stage = 'File uploaded';
+                    entry.progress = 5;
 
                     if (tagId) {
                         entry.stage = 'Tagging document';
@@ -954,7 +954,7 @@ function knowledgeBase() {
                     }
 
                     entry.stage = 'Starting indexing';
-                    entry.progress = 20;
+                    entry.progress = 8;
                     const indexRes = await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
                     if (!indexRes.ok) {
                         entry.status = 'failed';
@@ -962,8 +962,11 @@ function knowledgeBase() {
                         continue;
                     }
 
+                    let lastServerProgress = 0;
+                    let ticksSinceChange = 0;
+
                     let attempts = 0;
-                    while (attempts < 60) {
+                    while (attempts < 120) {
                         await new Promise(r => setTimeout(r, 1500));
                         const statusRes = await fetch('/api/indexing/documents/' + doc.id + '/index/status');
                         if (statusRes.ok) {
@@ -972,10 +975,26 @@ function knowledgeBase() {
                             const serverProgress = statusData.progress || 0;
                             const serverStage = statusData.stage || '';
 
+                            if (serverProgress !== lastServerProgress) {
+                                lastServerProgress = serverProgress;
+                                ticksSinceChange = 0;
+                                entry.progress = serverProgress;
+                            } else {
+                                ticksSinceChange++;
+                                if (entry.progress < 95 && serverProgress < 95) {
+                                    const target = serverProgress < 20 ? 20 : (serverProgress < 70 ? 65 : 89);
+                                    const remaining = target - entry.progress;
+                                    if (remaining > 0) {
+                                        entry.progress = Math.min(target, entry.progress + Math.max(1, Math.floor(remaining / 8)));
+                                    }
+                                }
+                            }
+
                             if (serverStage) {
                                 entry.stage = serverStage;
+                            } else if (st === 'running' && !entry.stage) {
+                                entry.stage = 'Processing...';
                             }
-                            entry.progress = Math.max(entry.progress, 20 + Math.round(serverProgress * 0.8));
 
                             if (st === 'completed') {
                                 entry.status = 'ready';
@@ -992,7 +1011,7 @@ function knowledgeBase() {
                         }
                         attempts++;
                     }
-                    if (attempts >= 60 && entry.status === 'indexing') {
+                    if (attempts >= 120 && entry.status === 'indexing') {
                         entry.status = 'failed';
                         entry.stage = 'Timed out';
                     }

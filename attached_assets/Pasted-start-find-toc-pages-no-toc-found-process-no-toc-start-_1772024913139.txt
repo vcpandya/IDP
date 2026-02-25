@@ -1,0 +1,44 @@
+start find_toc_pages
+no toc found
+process_no_toc
+start_index: 1
+divide page_list to groups 5
+start generate_toc_init
+start generate_toc_continue
+start generate_toc_continue
+start generate_toc_continue
+start generate_toc_continue
+Document validation: 94 pages, max allowed index: 94
+start verify_toc
+check all items
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+accuracy: 87.18%
+start fix_incorrect_toc
+Fixing 15 incorrect results
+start fix_incorrect_toc with 15 incorrect results
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+Fixing 3 incorrect results
+start fix_incorrect_toc with 3 incorrect results
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+Processing item {'list_index': 38, 'title': 'Forward Rate Agreements/ Interest Rate Swaps', 'physical_index': 39} generated an exception: invalid literal for int() with base 10: 'X'
+Processing item {'list_index': 38, 'title': 'Exchange Traded Interest Rate Derivatives', 'physical_index': 39} generated an exception: invalid literal for int() with base 10: 'X'
+Fixing 1 incorrect results
+start fix_incorrect_toc with 1 incorrect results
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/indexing/documents/f0d1efc7-35cc-476c-b889-291fce3607cb/index/status HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/tags/ HTTP/1.1" 200 OK
+INFO:     172.31.74.194:45490 - "GET /api/documents/?limit=500 HTTP/1.1" 200 OK
