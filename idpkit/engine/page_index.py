@@ -36,13 +36,10 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     }}
     Directly return the final JSON structure. Do not output anything else."""
 
-    response = await ChatGPT_API_async(model=model, prompt=prompt)
-    response = extract_json(response)
-    if 'answer' in response:
-        answer = response['answer']
-    else:
-        answer = 'no'
-    return {'list_index': item['list_index'], 'answer': answer, 'title': title, 'page_number': page_number}
+    response = await ChatGPT_API_async(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    response = extract_json(response) or {}
+    answer = response.get('answer', 'no')
+    return {'list_index': item.get('list_index'), 'answer': answer, 'title': title, 'page_number': page_number}
 
 
 async def check_title_appearance_in_start(title, page_text, model=None, logger=None):    
@@ -64,8 +61,8 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
     }}
     Directly return the final JSON structure. Do not output anything else."""
 
-    response = await ChatGPT_API_async(model=model, prompt=prompt)
-    response = extract_json(response)
+    response = await ChatGPT_API_async(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    response = extract_json(response) or {}
     if logger:
         logger.info(f"Response: {response}")
     return response.get("start_begin", "no")
@@ -262,7 +259,7 @@ def toc_index_extractor(toc, content, model=None):
     prompt = tob_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
     response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
     json_content = extract_json(response)    
-    return json_content or []
+    return json_content if isinstance(json_content, list) else []
 
 
 
@@ -291,8 +288,8 @@ def toc_transformer(toc_content, model=None):
     last_complete, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
     if if_complete == "yes" and finish_reason == "finished":
-        last_complete = extract_json(last_complete)
-        cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+        last_complete = extract_json(last_complete) or {}
+        cleaned_response=convert_page_to_int(last_complete.get('table_of_contents', []))
         return cleaned_response
     
     last_complete = get_json_content(last_complete)
@@ -321,9 +318,12 @@ def toc_transformer(toc_content, model=None):
         if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
         
 
-    last_complete = json.loads(last_complete)
+    try:
+        last_complete = json.loads(last_complete)
+    except (json.JSONDecodeError, TypeError):
+        last_complete = extract_json(last_complete) or {}
 
-    cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+    cleaned_response=convert_page_to_int(last_complete.get('table_of_contents', []))
     return cleaned_response
     
 
@@ -474,7 +474,9 @@ def add_page_number_to_toc(part, structure, model=None):
 
     prompt = fill_prompt_seq + f"\n\nCurrent Partial Document:\n{part}\n\nGiven Structure\n{json.dumps(structure, indent=2)}\n"
     current_json_raw = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
-    json_result = extract_json(current_json_raw) or []
+    json_result = extract_json(current_json_raw)
+    if not isinstance(json_result, list):
+        json_result = []
     
     for item in json_result:
         if isinstance(item, dict) and 'start' in item:
@@ -523,9 +525,10 @@ def generate_toc_continue(toc_content, part, model="gpt-5.2"):
     Directly return the additional part of the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
-    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt, response_format=JSON_OUTPUT)
     if finish_reason == 'finished':
-        return extract_json(response)
+        result = extract_json(response)
+        return result if isinstance(result, list) else []
     else:
         raise Exception(f'finish reason: {finish_reason}')
     
@@ -557,10 +560,11 @@ def generate_toc_init(part, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\nGiven text\n:' + part
-    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+    response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt, response_format=JSON_OUTPUT)
 
     if finish_reason == 'finished':
-         return extract_json(response)
+         result = extract_json(response)
+         return result if isinstance(result, list) else []
     else:
         raise Exception(f'finish reason: {finish_reason}')
 

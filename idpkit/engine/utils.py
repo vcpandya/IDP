@@ -33,7 +33,7 @@ def count_tokens(text, model=None):
     tokens = enc.encode(text)
     return len(tokens)
 
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=None):
+def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=None, response_format=None):
     """Synchronous LLM completion returning (content, finish_reason).
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
@@ -42,10 +42,14 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=Non
     """
     try:
         client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         return client.complete_with_finish_reason(
             prompt=prompt,
             model=model,
             chat_history=chat_history,
+            **kwargs,
         )
     except Exception as e:
         logging.error(f"Max retries reached: {e}")
@@ -78,7 +82,7 @@ def ChatGPT_API(model, prompt, api_key=None, chat_history=None, response_format=
         return "Error"
 
 
-async def ChatGPT_API_async(model, prompt, api_key=None):
+async def ChatGPT_API_async(model, prompt, api_key=None, response_format=None):
     """Async LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
@@ -87,9 +91,13 @@ async def ChatGPT_API_async(model, prompt, api_key=None):
     """
     try:
         client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         response = await client.acomplete(
             prompt=prompt,
             model=model,
+            **kwargs,
         )
         return response.content
     except Exception as e:
