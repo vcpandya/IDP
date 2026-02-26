@@ -82,8 +82,21 @@ async def _run_indexing_task(
     database sessions for each DB operation to avoid connection timeouts
     during the long-running LLM indexing pipeline.
     """
+    import asyncio as _asyncio
     import os
     import threading
+
+    flush_task = None
+
+    async def _cancel_flush():
+        nonlocal flush_task
+        if flush_task:
+            flush_task.cancel()
+            try:
+                await flush_task
+            except _asyncio.CancelledError:
+                pass
+            flush_task = None
 
     try:
         async with async_session() as db:
@@ -114,6 +127,13 @@ async def _run_indexing_task(
             await db.commit()
 
         await _update_job_progress(job_id, 5, "Reading file from storage")
+
+        user_default_model = None
+        async with async_session() as db:
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user and user.default_model:
+                user_default_model = user.default_model
 
         log_buffer = []
         _log_lock = threading.Lock()
@@ -149,6 +169,13 @@ async def _run_indexing_task(
                 log_buffer.append({"ts": ts, "level": level, "msg": str(message)[:500]})
             await _flush_logs()
 
+        async def _periodic_flush():
+            while True:
+                await _asyncio.sleep(4)
+                await _flush_logs()
+
+        flush_task = _asyncio.create_task(_periodic_flush())
+
         tree_result = None
         try:
             from idpkit.engine.page_index import build_tree_index
@@ -156,8 +183,10 @@ async def _run_indexing_task(
             llm = get_llm()
             storage = get_storage()
 
-            model_name = params.get("model") or llm.default_model
-            await _append_log(f"Using model: {model_name}")
+            resolved_model = params.get("model") or user_default_model or llm.default_model
+            if not params.get("model"):
+                params["model"] = resolved_model
+            await _append_log(f"Using model: {resolved_model}")
             await _append_log(f"Document: {doc_filename}")
             await _append_log(f"Storage path: {storage_path}")
 
@@ -212,12 +241,14 @@ async def _run_indexing_task(
         except Exception as exc:
             logger.error("Indexing failed for document %s: %s", doc_id, exc)
             await _append_log(f"ERROR: {exc}", level="ERROR")
+            await _cancel_flush()
             with _log_lock:
                 remaining = list(log_buffer)
                 log_buffer.clear()
             await _mark_job_failed(job_id, doc_id, str(exc), logs=remaining)
             return
 
+        await _cancel_flush()
         await _append_log("Saving results to database...")
         await _update_job_progress(job_id, 95, "Saving results")
 
@@ -253,6 +284,7 @@ async def _run_indexing_task(
 
     except Exception as exc:
         logger.exception("Unexpected error in indexing background task: %s", exc)
+        await _cancel_flush()
         try:
             with _log_lock:
                 remaining = list(log_buffer)
