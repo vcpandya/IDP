@@ -76,7 +76,7 @@ class LLMClient:
         response = client.complete("Explain quantum computing")
     """
 
-    default_model: str = "gpt-5.2"
+    default_model: str = "gpt-4o-mini"
     temperature: float = 0
     max_retries: int = 10
     retry_delay: float = 1.0
@@ -284,7 +284,7 @@ def get_default_client(
     global _default_client
 
     if _default_client is None or api_key or model:
-        resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-5.2")
+        resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-4o-mini")
 
         client = LLMClient(
             default_model=resolved_model,
