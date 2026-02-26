@@ -76,13 +76,12 @@ async def _run_indexing_task(
 ) -> None:
     """Execute tree indexing in the background.
 
-    This function runs outside of the request lifecycle, so it creates its
-    own database session.  On completion it writes the tree_index JSON back
-    to the Document row and marks the Job as completed (or failed).
+    This function runs outside of the request lifecycle.  It uses short-lived
+    database sessions for each DB operation to avoid connection timeouts
+    during the long-running LLM indexing pipeline.
     """
-    async with async_session() as db:
-        try:
-            # Mark job as running
+    try:
+        async with async_session() as db:
             result = await db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
             if not job:
@@ -95,130 +94,136 @@ async def _run_indexing_task(
             db.add(job)
             await db.commit()
 
+        doc_filename = None
+        async with async_session() as db:
             result = await db.execute(select(Document).where(Document.id == doc_id))
             doc = result.scalar_one_or_none()
             if not doc:
-                job.status = "failed"
-                job.error = "Document not found"
-                job.completed_at = datetime.now(timezone.utc)
-                db.add(job)
-                await db.commit()
+                await _mark_job_failed(job_id, doc_id, "Document not found")
                 return
+            doc_filename = doc.filename
 
             doc.status = "indexing"
             db.add(doc)
             await db.commit()
 
-            await _update_job_progress(job_id, 5, "Reading file from storage")
+        await _update_job_progress(job_id, 5, "Reading file from storage")
 
-            tree_result = None
-            try:
-                from idpkit.engine.page_index import build_tree_index
+        tree_result = None
+        try:
+            from idpkit.engine.page_index import build_tree_index
 
-                llm = get_llm()
-                storage = get_storage()
+            llm = get_llm()
+            storage = get_storage()
 
-                _STAGE_MAP = {
-                    5: "Loading document",
-                    10: "Extracting pages",
-                    15: "Parsing text content",
-                    20: "Analyzing document structure",
-                    70: "Building tree index",
-                    90: "Generating summaries",
-                    100: "Finalizing",
-                }
+            _STAGE_MAP = {
+                5: "Loading document",
+                10: "Extracting pages",
+                15: "Parsing text content",
+                20: "Analyzing document structure",
+                70: "Building tree index",
+                90: "Generating summaries",
+                100: "Finalizing",
+            }
 
-                async def _progress_with_stage(pct):
-                    stage = _STAGE_MAP.get(pct)
-                    if not stage:
-                        if pct <= 10:
-                            stage = "Loading document"
-                        elif pct <= 20:
-                            stage = "Parsing text content"
-                        elif pct <= 70:
-                            stage = "Analyzing document structure"
-                        elif pct <= 90:
-                            stage = "Building tree index"
-                        else:
-                            stage = "Generating summaries"
-                    await _update_job_progress(job_id, pct, stage)
+            async def _progress_with_stage(pct):
+                stage = _STAGE_MAP.get(pct)
+                if not stage:
+                    if pct <= 10:
+                        stage = "Loading document"
+                    elif pct <= 20:
+                        stage = "Parsing text content"
+                    elif pct <= 70:
+                        stage = "Analyzing document structure"
+                    elif pct <= 90:
+                        stage = "Building tree index"
+                    else:
+                        stage = "Generating summaries"
+                await _update_job_progress(job_id, pct, stage)
 
-                tree_result = await build_tree_index(
-                    file_key=storage_path,
-                    storage=storage,
-                    llm=llm,
-                    model=params.get("model"),
-                    toc_check_pages=params.get("toc_check_pages"),
-                    max_pages_per_node=params.get("max_pages_per_node"),
-                    progress_callback=_progress_with_stage,
-                )
-            except ImportError:
-                logger.warning(
-                    "build_tree_index not available; storing placeholder tree for doc %s",
-                    doc_id,
-                )
-                await _update_job_progress(job_id, 50, "Processing document")
-                tree_result = {
-                    "doc_name": doc.filename,
-                    "doc_description": None,
-                    "structure": [],
-                    "_placeholder": True,
-                }
-            except Exception as exc:
-                logger.error("Indexing failed for document %s: %s", doc_id, exc)
-                job.status = "failed"
-                job.stage = "Failed"
-                job.error = str(exc)
-                job.completed_at = datetime.now(timezone.utc)
-                doc.status = "failed"
-                db.add(job)
+            tree_result = await build_tree_index(
+                file_key=storage_path,
+                storage=storage,
+                llm=llm,
+                model=params.get("model"),
+                toc_check_pages=params.get("toc_check_pages"),
+                max_pages_per_node=params.get("max_pages_per_node"),
+                progress_callback=_progress_with_stage,
+            )
+        except ImportError:
+            logger.warning(
+                "build_tree_index not available; storing placeholder tree for doc %s",
+                doc_id,
+            )
+            await _update_job_progress(job_id, 50, "Processing document")
+            tree_result = {
+                "doc_name": doc_filename,
+                "doc_description": None,
+                "structure": [],
+                "_placeholder": True,
+            }
+        except Exception as exc:
+            logger.error("Indexing failed for document %s: %s", doc_id, exc)
+            await _mark_job_failed(job_id, doc_id, str(exc))
+            return
+
+        await _update_job_progress(job_id, 95, "Saving results")
+
+        if isinstance(tree_result, dict):
+            tree_json = tree_result
+        elif hasattr(tree_result, "model_dump"):
+            tree_json = tree_result.model_dump()
+        else:
+            tree_json = {"raw": str(tree_result)}
+
+        async with async_session() as db:
+            result = await db.execute(select(Document).where(Document.id == doc_id))
+            doc = result.scalar_one_or_none()
+            if doc:
+                doc.tree_index = tree_json
+                doc.status = "indexed"
                 db.add(doc)
-                await db.commit()
-                return
 
-            await _update_job_progress(job_id, 95, "Saving results")
-
-            if isinstance(tree_result, dict):
-                tree_json = tree_result
-            elif hasattr(tree_result, "model_dump"):
-                tree_json = tree_result.model_dump()
-            else:
-                tree_json = {"raw": str(tree_result)}
-
-            doc.tree_index = tree_json
-            doc.status = "indexed"
-            db.add(doc)
-
-            job.status = "completed"
-            job.progress = 100
-            job.stage = "Complete"
-            job.result = tree_json
-            job.completed_at = datetime.now(timezone.utc)
-            db.add(job)
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                job.status = "completed"
+                job.progress = 100
+                job.stage = "Complete"
+                job.result = tree_json
+                job.completed_at = datetime.now(timezone.utc)
+                db.add(job)
 
             await db.commit()
-            logger.info("Indexing completed for document %s (job %s)", doc_id, job_id)
+        logger.info("Indexing completed for document %s (job %s)", doc_id, job_id)
 
-        except Exception as exc:
-            logger.exception("Unexpected error in indexing background task: %s", exc)
-            try:
-                result = await db.execute(select(Job).where(Job.id == job_id))
-                job = result.scalar_one_or_none()
-                if job:
-                    job.status = "failed"
-                    job.error = f"Unexpected error: {exc}"
-                    job.completed_at = datetime.now(timezone.utc)
-                    db.add(job)
+    except Exception as exc:
+        logger.exception("Unexpected error in indexing background task: %s", exc)
+        await _mark_job_failed(job_id, doc_id, f"Unexpected error: {exc}")
 
-                result = await db.execute(select(Document).where(Document.id == doc_id))
-                doc = result.scalar_one_or_none()
-                if doc:
-                    doc.status = "failed"
-                    db.add(doc)
 
-                await db.commit()
-            except Exception:
-                logger.exception("Failed to record error state for job %s", job_id)
+async def _mark_job_failed(job_id: str, doc_id: str, error: str) -> None:
+    """Mark a job and its document as failed using a fresh DB session."""
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(Job).where(Job.id == job_id))
+            job = result.scalar_one_or_none()
+            if job:
+                job.status = "failed"
+                job.stage = "Failed"
+                job.error = error
+                job.completed_at = datetime.now(timezone.utc)
+                db.add(job)
+
+            result = await db.execute(select(Document).where(Document.id == doc_id))
+            doc = result.scalar_one_or_none()
+            if doc:
+                doc.status = "failed"
+                db.add(doc)
+
+            await db.commit()
+    except Exception:
+        logger.exception("Failed to record error state for job %s", job_id)
 
 
 async def _update_job_progress(job_id: str, progress: int, stage: str | None = None) -> None:
