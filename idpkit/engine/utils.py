@@ -304,26 +304,29 @@ def get_pdf_name(pdf_path):
 
 
 class JsonLogger:
-    def __init__(self, file_path):
-        # Extract PDF name for logger name
+    def __init__(self, file_path, on_log=None):
         pdf_name = get_pdf_name(file_path)
             
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filename = f"{pdf_name}_{current_time}.json"
         os.makedirs("./logs", exist_ok=True)
-        # Initialize empty list to store all messages
         self.log_data = []
+        self._on_log = on_log
 
     def log(self, level, message, **kwargs):
+        ts = datetime.now().strftime("%H:%M:%S")
         if isinstance(message, dict):
-            self.log_data.append(message)
+            entry = {**message, "_level": level, "_ts": ts}
         else:
-            self.log_data.append({'message': message})
-        # Add new message to the log data
+            entry = {"message": str(message), "_level": level, "_ts": ts}
+        self.log_data.append(entry)
         
-        # Write entire log data to file
         with open(self._filepath(), "w") as f:
             json.dump(self.log_data, f, indent=2)
+
+        if self._on_log:
+            display = entry.get("message", json.dumps({k: v for k, v in entry.items() if not k.startswith("_")}, default=str)[:500])
+            self._on_log(level, display)
 
     def info(self, message, **kwargs):
         self.log("INFO", message, **kwargs)

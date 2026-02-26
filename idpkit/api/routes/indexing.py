@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +44,8 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    logs: Optional[list] = None
+    log_offset: int = 0
 
     class Config:
         from_attributes = True
@@ -80,6 +82,9 @@ async def _run_indexing_task(
     database sessions for each DB operation to avoid connection timeouts
     during the long-running LLM indexing pipeline.
     """
+    import os
+    import threading
+
     try:
         async with async_session() as db:
             result = await db.execute(select(Job).where(Job.id == job_id))
@@ -91,6 +96,7 @@ async def _run_indexing_task(
             job.status = "running"
             job.progress = 0
             job.stage = "Preparing document"
+            job.logs = []
             db.add(job)
             await db.commit()
 
@@ -109,12 +115,51 @@ async def _run_indexing_task(
 
         await _update_job_progress(job_id, 5, "Reading file from storage")
 
+        log_buffer = []
+        _log_lock = threading.Lock()
+
+        def _on_pipeline_log(level, message):
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            with _log_lock:
+                log_buffer.append({"ts": ts, "level": level, "msg": str(message)[:500]})
+
+        async def _flush_logs():
+            with _log_lock:
+                if not log_buffer:
+                    return
+                batch = list(log_buffer)
+                log_buffer.clear()
+            try:
+                async with async_session() as db:
+                    result = await db.execute(select(Job).where(Job.id == job_id))
+                    job = result.scalar_one_or_none()
+                    if job:
+                        existing = job.logs or []
+                        job.logs = existing + batch
+                        db.add(job)
+                        await db.commit()
+            except Exception as exc:
+                logger.warning("Failed to flush logs for job %s: %s", job_id, exc)
+                with _log_lock:
+                    log_buffer[:0] = batch
+
+        async def _append_log(message, level="INFO"):
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            with _log_lock:
+                log_buffer.append({"ts": ts, "level": level, "msg": str(message)[:500]})
+            await _flush_logs()
+
         tree_result = None
         try:
             from idpkit.engine.page_index import build_tree_index
 
             llm = get_llm()
             storage = get_storage()
+
+            model_name = params.get("model") or llm.default_model
+            await _append_log(f"Using model: {model_name}")
+            await _append_log(f"Document: {doc_filename}")
+            await _append_log(f"Storage path: {storage_path}")
 
             _STAGE_MAP = {
                 5: "Loading document",
@@ -140,6 +185,7 @@ async def _run_indexing_task(
                     else:
                         stage = "Generating summaries"
                 await _update_job_progress(job_id, pct, stage)
+                await _flush_logs()
 
             tree_result = await build_tree_index(
                 file_key=storage_path,
@@ -149,6 +195,7 @@ async def _run_indexing_task(
                 toc_check_pages=params.get("toc_check_pages"),
                 max_pages_per_node=params.get("max_pages_per_node"),
                 progress_callback=_progress_with_stage,
+                on_log=_on_pipeline_log,
             )
         except ImportError:
             logger.warning(
@@ -164,9 +211,14 @@ async def _run_indexing_task(
             }
         except Exception as exc:
             logger.error("Indexing failed for document %s: %s", doc_id, exc)
-            await _mark_job_failed(job_id, doc_id, str(exc))
+            await _append_log(f"ERROR: {exc}", level="ERROR")
+            with _log_lock:
+                remaining = list(log_buffer)
+                log_buffer.clear()
+            await _mark_job_failed(job_id, doc_id, str(exc), logs=remaining)
             return
 
+        await _append_log("Saving results to database...")
         await _update_job_progress(job_id, 95, "Saving results")
 
         if isinstance(tree_result, dict):
@@ -175,6 +227,8 @@ async def _run_indexing_task(
             tree_json = tree_result.model_dump()
         else:
             tree_json = {"raw": str(tree_result)}
+
+        await _append_log("Indexing complete!")
 
         async with async_session() as db:
             result = await db.execute(select(Document).where(Document.id == doc_id))
@@ -199,10 +253,16 @@ async def _run_indexing_task(
 
     except Exception as exc:
         logger.exception("Unexpected error in indexing background task: %s", exc)
-        await _mark_job_failed(job_id, doc_id, f"Unexpected error: {exc}")
+        try:
+            with _log_lock:
+                remaining = list(log_buffer)
+                log_buffer.clear()
+        except Exception:
+            remaining = []
+        await _mark_job_failed(job_id, doc_id, f"Unexpected error: {exc}", logs=remaining)
 
 
-async def _mark_job_failed(job_id: str, doc_id: str, error: str) -> None:
+async def _mark_job_failed(job_id: str, doc_id: str, error: str, logs: list | None = None) -> None:
     """Mark a job and its document as failed using a fresh DB session."""
     try:
         async with async_session() as db:
@@ -213,6 +273,9 @@ async def _mark_job_failed(job_id: str, doc_id: str, error: str) -> None:
                 job.stage = "Failed"
                 job.error = error
                 job.completed_at = datetime.now(timezone.utc)
+                if logs:
+                    existing = job.logs or []
+                    job.logs = existing + list(logs)
                 db.add(job)
 
             result = await db.execute(select(Document).where(Document.id == doc_id))
@@ -356,11 +419,11 @@ async def trigger_indexing(
 )
 async def get_indexing_status(
     doc_id: str,
+    last_log_index: int = Query(0, ge=0, description="Return only log entries after this index"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the most recent indexing job for the given document."""
-    # Verify document ownership
     doc_result = await db.execute(
         select(Document).where(Document.id == doc_id, Document.owner_id == user.id)
     )
@@ -383,7 +446,22 @@ async def get_indexing_status(
             detail="No indexing job found for this document",
         )
 
-    return job
+    all_logs = job.logs or []
+    sliced = all_logs[last_log_index:]
+
+    return JobStatusResponse(
+        id=job.id,
+        job_type=job.job_type,
+        status=job.status,
+        progress=job.progress or 0,
+        stage=job.stage,
+        result=job.result,
+        error=job.error,
+        created_at=job.created_at,
+        completed_at=job.completed_at,
+        logs=sliced,
+        log_offset=last_log_index,
+    )
 
 
 @router.get(

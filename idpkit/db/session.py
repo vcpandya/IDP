@@ -62,9 +62,17 @@ async def init_db():
                 if "default_model" not in cols:
                     sync_conn.execute(text("ALTER TABLE users ADD COLUMN default_model VARCHAR(200)"))
 
+        def _migrate_jobs(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "jobs" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("jobs")}
+                if "logs" not in cols:
+                    sync_conn.execute(text("ALTER TABLE jobs ADD COLUMN logs JSON"))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(_migrate_users)
+        await conn.run_sync(_migrate_jobs)
         await conn.run_sync(Base.metadata.create_all)
 
 
