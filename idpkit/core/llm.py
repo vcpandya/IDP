@@ -14,6 +14,8 @@ from typing import Optional
 
 import litellm
 
+litellm.drop_params = True
+
 from .exceptions import LLMError, LLMMaxRetriesError
 from .schemas import LLMResponse
 
@@ -185,6 +187,11 @@ class LLMClient:
                 raise LLMMaxRetriesError(
                     f"Authentication failed for {used_model}: {e}"
                 ) from e
+            except litellm.UnsupportedParamsError as e:
+                logger.error(f"Unsupported params for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Unsupported parameters for {used_model}: {e}"
+                ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
@@ -221,6 +228,11 @@ class LLMClient:
                 logger.error(f"Authentication error for model {used_model}: {e}")
                 raise LLMMaxRetriesError(
                     f"Authentication failed for {used_model}: {e}"
+                ) from e
+            except litellm.UnsupportedParamsError as e:
+                logger.error(f"Unsupported params for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Unsupported parameters for {used_model}: {e}"
                 ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
