@@ -52,7 +52,9 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=Non
         return "Error"
 
 
-def ChatGPT_API(model, prompt, api_key=None, chat_history=None):
+JSON_OUTPUT = {"type": "json_object"}
+
+def ChatGPT_API(model, prompt, api_key=None, chat_history=None, response_format=None):
     """Synchronous LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
@@ -61,10 +63,14 @@ def ChatGPT_API(model, prompt, api_key=None, chat_history=None):
     """
     try:
         client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         response = client.complete(
             prompt=prompt,
             model=model,
             chat_history=chat_history,
+            **kwargs,
         )
         return response.content
     except Exception as e:

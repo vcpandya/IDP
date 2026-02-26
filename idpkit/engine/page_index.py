@@ -116,10 +116,9 @@ def toc_detector_single_page(content, model=None):
     Directly return the final JSON structure. Do not output anything else.
     Please note: abstract,summary, notation list, figure list, table list, etc. are not table of contents."""
 
-    response = ChatGPT_API(model=model, prompt=prompt)
-    # print('response', response)
-    json_content = extract_json(response)    
-    return json_content['toc_detected']
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_content = extract_json(response) or {}
+    return json_content.get('toc_detected', 'no')
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -135,9 +134,9 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
-    response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)
-    return json_content['completed']
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_content = extract_json(response) or {}
+    return json_content.get('completed', 'no')
 
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
@@ -153,9 +152,9 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
-    response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)
-    return json_content['completed']
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_content = extract_json(response) or {}
+    return json_content.get('completed', 'no')
 
 def extract_toc_content(content, model=None):
     prompt = f"""
@@ -212,9 +211,9 @@ def detect_page_index(toc_content, model=None):
     }}
     Directly return the final JSON structure. Do not output anything else."""
 
-    response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)
-    return json_content['page_index_given_in_toc']
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_content = extract_json(response) or {}
+    return json_content.get('page_index_given_in_toc', 'no')
 
 def toc_extractor(page_list, toc_page_list, model):
     def transform_dots_to_colon(text):
@@ -261,9 +260,9 @@ def toc_index_extractor(toc, content, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = tob_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
-    response = ChatGPT_API(model=model, prompt=prompt)
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
     json_content = extract_json(response)    
-    return json_content
+    return json_content or []
 
 
 
@@ -474,11 +473,11 @@ def add_page_number_to_toc(part, structure, model=None):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = fill_prompt_seq + f"\n\nCurrent Partial Document:\n{part}\n\nGiven Structure\n{json.dumps(structure, indent=2)}\n"
-    current_json_raw = ChatGPT_API(model=model, prompt=prompt)
-    json_result = extract_json(current_json_raw)
+    current_json_raw = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_result = extract_json(current_json_raw) or []
     
     for item in json_result:
-        if 'start' in item:
+        if isinstance(item, dict) and 'start' in item:
             del item['start']
     return json_result
 
@@ -743,9 +742,12 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-5.2"):
     Directly return the final JSON structure. Do not output anything else."""
 
     prompt = tob_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
-    response = ChatGPT_API(model=model, prompt=prompt)
-    json_content = extract_json(response)    
-    return convert_physical_index_to_int(json_content['physical_index'])
+    response = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
+    json_content = extract_json(response) or {}
+    physical_index = json_content.get('physical_index')
+    if physical_index is None:
+        return None
+    return convert_physical_index_to_int(physical_index)
 
 
 
