@@ -18,10 +18,18 @@ from types import SimpleNamespace as config
 
 from idpkit.core.llm import get_default_client
 
+def _get_encoding(model=None):
+    if model:
+        try:
+            return tiktoken.encoding_for_model(model)
+        except KeyError:
+            pass
+    return tiktoken.get_encoding("o200k_base")
+
 def count_tokens(text, model=None):
     if not text:
         return 0
-    enc = tiktoken.encoding_for_model(model)
+    enc = _get_encoding(model)
     tokens = enc.encode(text)
     return len(tokens)
 
@@ -386,7 +394,7 @@ def add_preface_if_needed(data):
 
 
 def get_page_tokens(pdf_path, model="gpt-5.2", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
+    enc = _get_encoding(model)
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)
         page_list = []
