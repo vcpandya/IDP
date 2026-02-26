@@ -285,7 +285,10 @@ async def trigger_indexing(
             detail="Document has no stored file",
         )
 
-    # Prevent re-indexing while a job is already running
+    from datetime import timedelta
+
+    STALE_JOB_MINUTES = 10
+
     running_result = await db.execute(
         select(Job).where(
             Job.document_id == doc_id,
@@ -295,10 +298,30 @@ async def trigger_indexing(
     )
     running_job = running_result.scalar_one_or_none()
     if running_job:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"An indexing job is already in progress (job_id={running_job.id})",
-        )
+        age = datetime.now(timezone.utc) - running_job.created_at.replace(tzinfo=timezone.utc)
+        if age > timedelta(minutes=STALE_JOB_MINUTES):
+            logger.warning(
+                "Auto-resetting stale indexing job %s (age: %s)", running_job.id, age
+            )
+            running_job.status = "failed"
+            running_job.error = f"Auto-reset: job was stale for {age}"
+            running_job.completed_at = datetime.now(timezone.utc)
+            db.add(running_job)
+
+            doc_result = await db.execute(
+                select(Document).where(Document.id == doc_id, Document.status == "indexing")
+            )
+            stale_doc = doc_result.scalar_one_or_none()
+            if stale_doc:
+                stale_doc.status = "uploaded"
+                db.add(stale_doc)
+
+            await db.commit()
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An indexing job is already in progress (job_id={running_job.id})",
+            )
 
     # Create job record and commit immediately so the background task can find it
     params = body.model_dump(exclude_none=True)

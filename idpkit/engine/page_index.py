@@ -955,8 +955,8 @@ async def verify_toc(page_list, list_result, start_index=1, N=None, model=None):
 
 ################### main process #########################################################
 async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=None, start_index=1, opt=None, logger=None):
-    print(mode)
-    print(f'start_index: {start_index}')
+    _log = logging.getLogger(__name__)
+    _log.info("meta_processor: mode=%s, start_index=%s, pages=%d", mode, start_index, len(page_list))
     
     if mode == 'process_toc_with_page_numbers':
         toc_with_page_number = await asyncio.to_thread(process_toc_with_page_numbers, toc_content, toc_page_list, page_list, toc_check_page_num=opt.toc_check_page_num, model=opt.model, logger=logger)
@@ -964,6 +964,7 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         toc_with_page_number = await asyncio.to_thread(process_toc_no_page_numbers, toc_content, toc_page_list, page_list, model=opt.model, logger=logger)
     else:
         toc_with_page_number = await asyncio.to_thread(process_no_toc, page_list, start_index=start_index, model=opt.model, logger=logger)
+    _log.info("meta_processor: %s returned %d items", mode, len(toc_with_page_number) if toc_with_page_number else 0)
             
     toc_with_page_number = [item for item in toc_with_page_number if item.get('physical_index') is not None] 
     
@@ -1024,11 +1025,26 @@ async def process_large_node_recursively(node, page_list, opt=None, logger=None)
     
     return node
 
-async def tree_parser(page_list, opt, doc=None, logger=None):
+async def tree_parser(page_list, opt, doc=None, logger=None, progress_callback=None):
+    _log = logging.getLogger(__name__)
+
+    async def _report(pct):
+        if progress_callback:
+            cb = progress_callback(pct)
+            if asyncio.iscoroutine(cb) or asyncio.isfuture(cb):
+                await cb
+
+    _log.info("tree_parser: starting check_toc (%d pages)", len(page_list))
+    await _report(22)
     check_toc_result = await asyncio.to_thread(check_toc, page_list, opt)
     logger.info(check_toc_result)
+    _log.info("tree_parser: check_toc complete — toc_found=%s, page_index=%s",
+              bool(check_toc_result.get("toc_content")),
+              check_toc_result.get("page_index_given_in_toc"))
 
+    await _report(30)
     if check_toc_result.get("toc_content") and check_toc_result["toc_content"].strip() and check_toc_result["page_index_given_in_toc"] == "yes":
+        _log.info("tree_parser: running meta_processor (process_toc_with_page_numbers)")
         toc_with_page_number = await meta_processor(
             page_list, 
             mode='process_toc_with_page_numbers', 
@@ -1038,6 +1054,7 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
             opt=opt,
             logger=logger)
     else:
+        _log.info("tree_parser: running meta_processor (process_no_toc)")
         toc_with_page_number = await meta_processor(
             page_list, 
             mode='process_no_toc', 
@@ -1045,18 +1062,26 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
             opt=opt,
             logger=logger)
 
+    _log.info("tree_parser: meta_processor complete — %d items", len(toc_with_page_number) if toc_with_page_number else 0)
+    await _report(50)
+
     toc_with_page_number = add_preface_if_needed(toc_with_page_number)
+    _log.info("tree_parser: verifying title appearances")
     toc_with_page_number = await check_title_appearance_in_start_concurrent(toc_with_page_number, page_list, model=opt.model, logger=logger)
     
     # Filter out items with None physical_index before post_processings
     valid_toc_items = [item for item in toc_with_page_number if item.get('physical_index') is not None]
+    _log.info("tree_parser: %d valid items after filtering", len(valid_toc_items))
+    await _report(58)
     
     toc_tree = post_processing(valid_toc_items, len(page_list))
+    _log.info("tree_parser: processing %d large nodes", len(toc_tree))
     tasks = [
         process_large_node_recursively(node, page_list, opt, logger=logger)
         for node in toc_tree
     ]
     await asyncio.gather(*tasks)
+    _log.info("tree_parser: complete — %d top-level nodes", len(toc_tree))
     
     return toc_tree
 
@@ -1202,7 +1227,7 @@ async def build_tree_index(
 
     await _report(20)
 
-    structure = await tree_parser(page_list, opt, doc=pdf_stream, logger=logger)
+    structure = await tree_parser(page_list, opt, doc=pdf_stream, logger=logger, progress_callback=progress_callback)
 
     await _report(70)
 
