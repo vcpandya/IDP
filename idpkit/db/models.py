@@ -123,6 +123,7 @@ class Job(Base):
     params = Column(JSON, nullable=True)
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
+    logs = Column(JSON, nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
     completed_at = Column(TZDateTime, nullable=True)
 

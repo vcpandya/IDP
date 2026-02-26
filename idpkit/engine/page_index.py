@@ -1183,6 +1183,7 @@ async def build_tree_index(
     toc_check_pages: int = None,
     max_pages_per_node: int = None,
     progress_callback=None,
+    on_log=None,
 ):
     """Async bridge for the web API to call the PageIndex engine.
 
@@ -1206,11 +1207,14 @@ async def build_tree_index(
 
     page_list = get_page_tokens(pdf_stream, pdf_parser="PyMuPDF")
     total_pages = len(page_list)
+    total_tokens = sum(t for _, t in page_list)
     logging.getLogger(__name__).info(
         "build_tree_index: %d pages, %d tokens",
         total_pages,
-        sum(t for _, t in page_list),
+        total_tokens,
     )
+    if on_log:
+        on_log("INFO", f"Extracted {total_pages} pages, {total_tokens:,} tokens")
 
     await _report(15)
 
@@ -1223,7 +1227,10 @@ async def build_tree_index(
         user_opt["max_page_num_each_node"] = max_pages_per_node
 
     opt = ConfigLoader().load(user_opt)
-    logger = JsonLogger(pdf_stream)
+    if on_log:
+        on_log("INFO", f"Model: {opt.model}")
+        on_log("INFO", f"Config: toc_check_pages={opt.toc_check_page_num}, max_pages_per_node={opt.max_page_num_each_node}")
+    logger = JsonLogger(pdf_stream, on_log=on_log)
 
     await _report(20)
 
@@ -1231,16 +1238,24 @@ async def build_tree_index(
 
     await _report(70)
 
+    node_count = sum(1 for _ in _iter_nodes(structure)) if structure else 0
+    if on_log:
+        on_log("INFO", f"Tree structure built: {node_count} nodes")
+
     if opt.if_add_node_id == "yes":
         write_node_id(structure)
     if opt.if_add_node_text == "yes":
         add_node_text(structure, page_list)
     if opt.if_add_node_summary == "yes":
+        if on_log:
+            on_log("INFO", f"Generating summaries for {node_count} nodes...")
         if opt.if_add_node_text == "no":
             add_node_text(structure, page_list)
         await generate_summaries_for_structure(structure, model=opt.model)
         if opt.if_add_node_text == "no":
             remove_structure_text(structure)
+        if on_log:
+            on_log("INFO", "Summaries generated")
 
     await _report(90)
 
@@ -1252,8 +1267,22 @@ async def build_tree_index(
     }
 
     if getattr(opt, "if_add_doc_description", "no") == "yes":
+        if on_log:
+            on_log("INFO", "Generating document description...")
         clean = create_clean_structure_for_description(structure)
         result["doc_description"] = await asyncio.to_thread(generate_doc_description, clean, model=opt.model)
 
+    if on_log:
+        on_log("INFO", f"Indexing complete — {node_count} nodes, doc: {doc_name}")
+
     await _report(100)
     return result
+
+
+def _iter_nodes(structure):
+    if not structure:
+        return
+    for node in structure:
+        yield node
+        if node.get("nodes"):
+            yield from _iter_nodes(node["nodes"])

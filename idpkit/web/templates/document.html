@@ -41,6 +41,25 @@
         <span x-text="indexError"></span>
     </div>
 
+    <!-- Pipeline Output Log -->
+    <div x-show="indexLogs.length > 0" class="pipeline-log-card">
+        <div class="pipeline-log-header" @click="logPanelOpen = !logPanelOpen" style="cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
+            <i class="fas fa-terminal" style="color:var(--primary);font-size:0.85rem"></i>
+            <strong style="font-size:0.85rem;color:var(--text)">Pipeline Output</strong>
+            <span style="color:var(--text-muted);font-size:0.75rem" x-text="indexLogs.length + ' entries'"></span>
+            <i class="fas" :class="logPanelOpen ? 'fa-chevron-up' : 'fa-chevron-down'" style="margin-left:auto;font-size:0.7rem;color:var(--text-muted)"></i>
+        </div>
+        <div x-show="logPanelOpen" x-transition class="pipeline-log-body" x-ref="logScroll">
+            <template x-for="(entry, i) in indexLogs" :key="i">
+                <div class="log-entry" :class="'log-' + (entry.level || 'INFO').toLowerCase()">
+                    <span class="log-ts" x-text="entry.ts"></span>
+                    <span class="log-level" x-text="(entry.level || 'INFO')"></span>
+                    <span class="log-msg" x-text="entry.msg"></span>
+                </div>
+            </template>
+        </div>
+    </div>
+
     <!-- Document Info -->
     <div class="info-grid">
         <div class="info-card"><label>Format</label><span x-text="doc.format" class="badge"></span></div>
@@ -154,6 +173,7 @@ function documentView(docId) {
         doc: {}, viewMode: 'outline', query: '', answer: '', querying: false,
         indexing: false, indexProgress: 0, indexStatusText: '', indexError: '',
         jobs: [],
+        indexLogs: [], logPanelOpen: true, lastLogIndex: 0,
         init() {
             this.$watch('viewMode', (val) => {
                 if (val === 'tree' && this.doc.tree_index) {
@@ -167,6 +187,9 @@ function documentView(docId) {
             if (this.doc.status === 'indexing') {
                 this.indexing = true;
                 this.indexStatusText = 'Resuming indexing...';
+                this.indexLogs = [];
+                this.lastLogIndex = 0;
+                this.logPanelOpen = true;
                 this.pollStatus();
             }
             await this.loadJobs();
@@ -214,6 +237,9 @@ function documentView(docId) {
             this.indexProgress = 0;
             this.indexStatusText = 'Starting indexing...';
             this.indexing = true;
+            this.indexLogs = [];
+            this.lastLogIndex = 0;
+            this.logPanelOpen = true;
             const res = await fetch(`/api/indexing/documents/${this.doc.id}/index`, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'}
@@ -231,23 +257,29 @@ function documentView(docId) {
         async pollStatus() {
             const interval = setInterval(async () => {
                 try {
-                    const res = await fetch(`/api/indexing/documents/${this.doc.id}/index/status`);
+                    const url = `/api/indexing/documents/${this.doc.id}/index/status?last_log_index=${this.lastLogIndex}`;
+                    const res = await fetch(url);
                     if (res.ok) {
                         const job = await res.json();
                         this.indexProgress = job.progress || 0;
-                        if (job.status === 'running') {
-                            if (this.indexProgress < 20) this.indexStatusText = 'Extracting pages and detecting structure...';
-                            else if (this.indexProgress < 50) this.indexStatusText = 'Analyzing table of contents...';
-                            else if (this.indexProgress < 80) this.indexStatusText = 'Building document tree...';
-                            else this.indexStatusText = 'Finalizing index...';
+                        if (job.stage) {
+                            this.indexStatusText = job.stage;
                         } else if (job.status === 'pending') {
                             this.indexStatusText = 'Queued, waiting to start...';
+                        }
+                        if (job.logs && job.logs.length > 0) {
+                            this.indexLogs = this.indexLogs.concat(job.logs);
+                            this.lastLogIndex += job.logs.length;
+                            this.$nextTick(() => {
+                                const el = this.$refs.logScroll;
+                                if (el) el.scrollTop = el.scrollHeight;
+                            });
                         }
                         if (job.status === 'completed') {
                             clearInterval(interval);
                             this.indexProgress = 100;
                             this.indexStatusText = 'Indexing complete!';
-                            setTimeout(() => { this.indexing = false; this.load(); }, 800);
+                            setTimeout(() => { this.indexing = false; this.load(); }, 1500);
                         } else if (job.status === 'failed') {
                             clearInterval(interval);
                             this.indexing = false;
