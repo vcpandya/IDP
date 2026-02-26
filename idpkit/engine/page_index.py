@@ -1073,6 +1073,18 @@ async def tree_parser(page_list, opt, doc=None, logger=None, progress_callback=N
             toc_page_list=check_toc_result['toc_page_list'], 
             opt=opt,
             logger=logger)
+    elif toc_found and not has_page_nums:
+        _log.info("tree_parser: running meta_processor (process_toc_no_page_numbers)")
+        if logger:
+            logger.info('Using TOC structure to guide page number matching...')
+        toc_with_page_number = await meta_processor(
+            page_list,
+            mode='process_toc_no_page_numbers',
+            start_index=1,
+            toc_content=check_toc_result['toc_content'],
+            toc_page_list=check_toc_result['toc_page_list'],
+            opt=opt,
+            logger=logger)
     else:
         _log.info("tree_parser: running meta_processor (process_no_toc)")
         toc_with_page_number = await meta_processor(
