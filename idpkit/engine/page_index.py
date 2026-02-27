@@ -451,26 +451,26 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
 
 def add_page_number_to_toc(part, structure, model=None):
     fill_prompt_seq = """
-    You are given an JSON structure of a document and a partial part of the document. Your task is to check if the title that is described in the structure is started in the partial given document.
+    You are given a JSON structure of a document and a partial part of the document. Your task is to check if each section title in the structure starts within this partial document.
 
-    The provided text contains tags like <physical_index_X> and <physical_index_X> to indicate the physical location of the page X. 
+    The provided text contains tags like <physical_index_X> and <physical_index_X> to indicate the physical location of page X.
 
-    If the full target section starts in the partial given document, insert the given JSON structure with the "start": "yes", and "start_index": "<physical_index_X>".
+    For each item in the structure:
+    - If the section starts in this partial document, set "physical_index" to the tag where it starts (e.g. "<physical_index_5>") and set "start" to "yes".
+    - If the section does NOT start in this partial document, keep "physical_index" as its current value (null or a previously assigned tag) and set "start" to "no".
+    - Do NOT change any previously assigned physical_index values from earlier parts.
 
-    If the full target section does not start in the partial given document, insert "start": "no",  "start_index": None.
-
-    The response should be in the following format. 
+    The response should be in the following format:
         [
             {
-                "structure": <structure index, "x.x.x" or None> (string),
+                "structure": <structure index, "x.x.x" or null> (string),
                 "title": <title of the section>,
                 "start": "<yes or no>",
-                "physical_index": "<physical_index_X> (keep the format)" or None
+                "physical_index": "<physical_index_X> (keep the tag format)" or null
             },
             ...
-        ]    
-    The given structure contains the result of the previous part, you need to fill the result of the current part, do not change the previous result.
-    Directly return the final JSON structure. Do not output anything else."""
+        ]
+    Return the complete JSON array with ALL items. Directly return the final JSON structure. Do not output anything else."""
 
     prompt = fill_prompt_seq + f"\n\nCurrent Partial Document:\n{part}\n\nGiven Structure\n{json.dumps(structure, indent=2)}\n"
     current_json_raw = ChatGPT_API(model=model, prompt=prompt, response_format=JSON_OUTPUT)
@@ -606,9 +606,25 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
     logger.info(f'Adding page numbers to TOC — {len(group_texts)} page groups')
 
     toc_with_page_number=copy.deepcopy(toc_content)
+    for item in toc_with_page_number:
+        if isinstance(item, dict):
+            item.pop('page', None)
+            if 'physical_index' not in item:
+                item['physical_index'] = None
+
+    total_groups = len(group_texts)
+    bail_out_after = max(3, total_groups // 2)
     for i, group_text in enumerate(group_texts, 1):
-        logger.info(f'Matching TOC to page group {i} of {len(group_texts)}...')
+        logger.info(f'Matching TOC to page group {i} of {total_groups}...')
         toc_with_page_number = add_page_number_to_toc(group_text, toc_with_page_number, model)
+
+        if i == bail_out_after:
+            matched = sum(1 for item in toc_with_page_number
+                          if isinstance(item, dict) and item.get('physical_index') is not None)
+            if matched == 0:
+                logger.info(f'No matches found after {i} of {total_groups} groups — skipping remaining groups')
+                break
+
     logger.info(f'Page number assignment complete — {len(toc_with_page_number)} items')
 
     toc_with_page_number = convert_physical_index_to_int(toc_with_page_number)
@@ -680,11 +696,13 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
                     continue
 
             item_copy = copy.deepcopy(item)
-            del item_copy['page']
-            result = add_page_number_to_toc(page_contents, item_copy, model)
-            if isinstance(result[0]['physical_index'], str) and result[0]['physical_index'].startswith('<physical_index'):
+            item_copy.pop('page', None)
+            if 'physical_index' not in item_copy:
+                item_copy['physical_index'] = None
+            result = add_page_number_to_toc(page_contents, [item_copy], model)
+            if result and isinstance(result[0].get('physical_index'), str) and result[0]['physical_index'].startswith('<physical_index'):
                 item['physical_index'] = int(result[0]['physical_index'].split('_')[-1].rstrip('>').strip())
-                del item['page']
+                item.pop('page', None)
     
     return toc_items
 
