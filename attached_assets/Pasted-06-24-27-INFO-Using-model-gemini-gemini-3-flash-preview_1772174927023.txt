@@ -1,0 +1,114 @@
+06:24:27
+INFO
+Using model: gemini/gemini-3-flash-preview
+06:24:27
+INFO
+Document: Energy and Civilization- A History -- Vaclav Smil -- ( WeLib.org ).pdf
+06:24:28
+INFO
+Storage path: 6a2c2c65-99a5-490c-bcfa-82ef59d561ab/261cb8cd-39d0-40f6-a8ac-4442ea9b297f/original.pdf
+06:24:37
+INFO
+Extracted 776 pages, 310,443 tokens
+06:24:38
+INFO
+Model: gemini/gemini-3-flash-preview
+06:24:38
+INFO
+Config: toc_check_pages=20, max_pages_per_node=10
+06:24:39
+INFO
+Checking for table of contents (scanning first 20 pages)...
+06:26:11
+INFO
+{"toc_content": "Table of Contents\nTitle page\nCopyright page\nPreface and Acknowledgments\n1 Energy and Society\n2 Energy in Prehistory\n3 Traditional Farming\n4 Preindustrial Prime Movers and Fuels\n5 Fossil Fuels, Primary Electricity, and Renewables\n6 Fossil-Fueled Civilization\n7 Energy in World History\nAddenda\nBibliographical Notes\nReferences\nName Index\nSubject Index\n", "toc_page_list": [4], "page_index_given_in_toc": "no"}
+06:26:11
+INFO
+TOC found on pages [4], page numbers: no
+06:26:13
+INFO
+Using TOC structure to guide page number matching...
+06:26:13
+INFO
+Processing TOC without page numbers (776 pages)...
+06:26:13
+INFO
+Transforming TOC structure...
+06:26:30
+INFO
+TOC transformed — 15 items
+06:26:35
+INFO
+Adding page numbers to TOC — 17 page groups
+06:26:35
+INFO
+Matching TOC to page group 1 of 17...
+06:26:55
+INFO
+Matching TOC to page group 2 of 17...
+06:27:13
+INFO
+Matching TOC to page group 3 of 17...
+06:28:43
+INFO
+Matching TOC to page group 4 of 17...
+06:29:04
+INFO
+Matching TOC to page group 5 of 17...
+06:30:01
+INFO
+Matching TOC to page group 6 of 17...
+06:30:43
+INFO
+Matching TOC to page group 7 of 17...
+06:31:39
+INFO
+Matching TOC to page group 8 of 17...
+06:32:28
+INFO
+Matching TOC to page group 9 of 17...
+06:32:57
+INFO
+Matching TOC to page group 10 of 17...
+06:34:24
+INFO
+Matching TOC to page group 11 of 17...
+06:34:56
+INFO
+Matching TOC to page group 12 of 17...
+06:35:57
+INFO
+Matching TOC to page group 13 of 17...
+06:36:16
+INFO
+Matching TOC to page group 14 of 17...
+06:36:34
+INFO
+Matching TOC to page group 15 of 17...
+06:37:33
+INFO
+Matching TOC to page group 16 of 17...
+06:43:24
+INFO
+Matching TOC to page group 17 of 17...
+06:45:02
+INFO
+Page number assignment complete — 15 items
+06:45:02
+INFO
+convert_physical_index_to_int: [{'structure': None, 'title': 'Title page', 'physical_index': None}, {'structure': None, 'title': 'Copyright page', 'physical_index': None}, {'structure': None, 'title': 'Preface and Acknowledgments', 'physical_index': None}, {'structure': '1', 'title': 'Energy and Society', 'physical_index': None}, {'structure': '2', 'title': 'Energy in Prehistory', 'physical_index': None}, {'structure': '3', 'title': 'Traditional Farming', 'physical_index': None}, {'structure': '
+06:45:02
+INFO
+Verification: 0% accuracy, 0 incorrect items
+06:45:03
+INFO
+Low accuracy — falling back to no-TOC mode...
+06:45:03
+INFO
+No TOC detected — generating structure from content (776 pages)...
+06:45:35
+INFO
+Generating structure without TOC — 17 page groups from 776 pages
+06:45:35
+INFO
+Processing page group 1 of 17 (initial structure)...
