@@ -12,46 +12,93 @@ from slowapi.errors import RateLimitExceeded
 from idpkit.version import __version__
 
 
-async def _recover_stale_jobs(session_factory) -> None:
-    """Reset any jobs/documents stuck in pending/running from a prior crash."""
+async def _recover_stale_jobs(session_factory) -> list:
+    """Find jobs stuck in pending/running from a prior crash and prepare them for auto-resume.
+
+    Uses SELECT ... FOR UPDATE SKIP LOCKED to prevent multiple Gunicorn workers
+    from claiming the same job. Returns a list of dicts with the info needed to
+    re-queue each indexing job. Non-indexing jobs are simply marked as failed.
+    """
     from sqlalchemy import select, update
     from idpkit.db.models import Job, Document
     from datetime import datetime, timezone
+    import logging
+
+    _log = logging.getLogger(__name__)
+    resumable = []
 
     async with session_factory() as db:
         stuck = await db.execute(
-            select(Job).where(Job.status.in_(["pending", "running"]))
+            select(Job)
+            .where(Job.status.in_(["pending", "running"]))
+            .with_for_update(skip_locked=True)
         )
         stuck_jobs = stuck.scalars().all()
         if not stuck_jobs:
-            return
+            return []
 
-        job_ids = [j.id for j in stuck_jobs]
-        doc_ids = [j.document_id for j in stuck_jobs if j.document_id]
+        for job in stuck_jobs:
+            if job.job_type == "index" and job.document_id:
+                doc_result = await db.execute(
+                    select(Document).where(Document.id == job.document_id)
+                )
+                doc = doc_result.scalar_one_or_none()
+                if doc and doc.file_path and doc.status != "indexed":
+                    restart_log = {
+                        "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                        "level": "WARN",
+                        "msg": "Resuming after server restart...",
+                    }
+                    job.status = "resuming"
+                    job.progress = 0
+                    job.stage = "Resuming after restart"
+                    job.error = None
+                    job.result = None
+                    job.completed_at = None
+                    existing_logs = job.logs or []
+                    job.logs = existing_logs + [restart_log]
+                    db.add(job)
 
-        await db.execute(
-            update(Job)
-            .where(Job.id.in_(job_ids))
-            .values(
-                status="failed",
-                error="Server restarted while job was in progress",
-                completed_at=datetime.now(timezone.utc),
-            )
-        )
+                    if doc.status == "indexing":
+                        doc.status = "uploaded"
+                        db.add(doc)
 
-        if doc_ids:
-            await db.execute(
-                update(Document)
-                .where(Document.id.in_(doc_ids), Document.status == "indexing")
-                .values(status="uploaded")
-            )
+                    resumable.append({
+                        "job_id": job.id,
+                        "doc_id": job.document_id,
+                        "user_id": doc.owner_id,
+                        "storage_path": doc.file_path,
+                        "params": job.params or {},
+                    })
+                    _log.info("Will auto-resume indexing job %s for doc %s", job.id, job.document_id)
+                    continue
+
+            job.status = "failed"
+            job.error = "Server restarted while job was in progress"
+            job.completed_at = datetime.now(timezone.utc)
+            db.add(job)
+
+            if job.document_id:
+                doc_result = await db.execute(
+                    select(Document).where(
+                        Document.id == job.document_id,
+                        Document.status == "indexing",
+                    )
+                )
+                stale_doc = doc_result.scalar_one_or_none()
+                if stale_doc:
+                    stale_doc.status = "uploaded"
+                    db.add(stale_doc)
 
         await db.commit()
 
-        import logging
-        logging.getLogger(__name__).info(
-            "Recovered %d stale jobs on startup: %s", len(job_ids), job_ids
+        total = len(stuck_jobs)
+        _log.info(
+            "Recovered %d stale jobs on startup (%d will auto-resume)",
+            total, len(resumable),
         )
+
+    return resumable
 
 
 async def _migrate_admin_to_superadmin(session_factory) -> None:
@@ -99,6 +146,7 @@ async def _load_rate_limits(session_factory) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize database and load plugins on startup."""
+    import asyncio
     from idpkit.db.session import init_db, async_session
     from idpkit.db.seed import seed_default_admin
     from idpkit.plugins import plugin_manager
@@ -107,8 +155,23 @@ async def lifespan(app: FastAPI):
     await seed_default_admin(async_session)
     await _migrate_admin_to_superadmin(async_session)
     await _load_rate_limits(async_session)
-    await _recover_stale_jobs(async_session)
+    resumable = await _recover_stale_jobs(async_session)
     plugin_manager.load_entry_points()
+
+    if resumable:
+        import logging
+        from idpkit.api.routes.indexing import _run_indexing_task
+        _log = logging.getLogger(__name__)
+        for info in resumable:
+            _log.info("Auto-resuming indexing job %s", info["job_id"])
+            asyncio.create_task(_run_indexing_task(
+                job_id=info["job_id"],
+                doc_id=info["doc_id"],
+                user_id=info["user_id"],
+                storage_path=info["storage_path"],
+                params=info["params"],
+            ))
+
     yield
 
 

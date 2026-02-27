@@ -87,6 +87,7 @@ async def _run_indexing_task(
     import threading
 
     flush_task = None
+    keepalive_task = None
 
     async def _cancel_flush():
         nonlocal flush_task
@@ -98,6 +99,16 @@ async def _run_indexing_task(
                 pass
             flush_task = None
 
+    async def _cancel_keepalive():
+        nonlocal keepalive_task
+        if keepalive_task:
+            keepalive_task.cancel()
+            try:
+                await keepalive_task
+            except _asyncio.CancelledError:
+                pass
+            keepalive_task = None
+
     try:
         async with async_session() as db:
             result = await db.execute(select(Job).where(Job.id == job_id))
@@ -106,10 +117,12 @@ async def _run_indexing_task(
                 logger.error("Indexing background task: job %s not found", job_id)
                 return
 
+            is_resume = job.status == "resuming"
             job.status = "running"
             job.progress = 0
             job.stage = "Preparing document"
-            job.logs = []
+            if not is_resume:
+                job.logs = []
             db.add(job)
             await db.commit()
 
@@ -175,6 +188,22 @@ async def _run_indexing_task(
                 await _flush_logs()
 
         flush_task = _asyncio.create_task(_periodic_flush())
+
+        async def _keepalive_loop():
+            import urllib.request
+            port = os.environ.get("IDP_PORT", "5000")
+            url = f"http://127.0.0.1:{port}/health"
+            while True:
+                await _asyncio.sleep(60)
+                try:
+                    await _asyncio.to_thread(
+                        lambda: urllib.request.urlopen(url, timeout=5).read()
+                    )
+                    logger.debug("Keep-alive ping OK")
+                except Exception:
+                    logger.debug("Keep-alive ping failed (non-critical)")
+
+        keepalive_task = _asyncio.create_task(_keepalive_loop())
 
         tree_result = None
         try:
@@ -242,6 +271,7 @@ async def _run_indexing_task(
             logger.error("Indexing failed for document %s: %s", doc_id, exc)
             await _append_log(f"ERROR: {exc}", level="ERROR")
             await _cancel_flush()
+            await _cancel_keepalive()
             with _log_lock:
                 remaining = list(log_buffer)
                 log_buffer.clear()
@@ -249,6 +279,7 @@ async def _run_indexing_task(
             return
 
         await _cancel_flush()
+        await _cancel_keepalive()
         await _append_log("Saving results to database...")
         await _update_job_progress(job_id, 95, "Saving results")
 
@@ -285,6 +316,7 @@ async def _run_indexing_task(
     except Exception as exc:
         logger.exception("Unexpected error in indexing background task: %s", exc)
         await _cancel_flush()
+        await _cancel_keepalive()
         try:
             with _log_lock:
                 remaining = list(log_buffer)
@@ -388,7 +420,7 @@ async def trigger_indexing(
         select(Job).where(
             Job.document_id == doc_id,
             Job.job_type == "index",
-            Job.status.in_(["pending", "running"]),
+            Job.status.in_(["pending", "running", "resuming"]),
         )
     )
     running_job = running_result.scalar_one_or_none()
