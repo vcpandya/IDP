@@ -61,7 +61,7 @@ Content-Type: application/json
 {
   "access_token": "eyJhbGciOi...",
   "token_type": "bearer",
-  "expires_in": 1800
+  "expires_in": 86400
 }
 ```
 
@@ -157,7 +157,8 @@ Certain endpoints enforce per-user rate limits to protect system resources. When
 |---|---|
 | `POST /api/agent/chat` | 30 requests per minute |
 | `POST /api/batch/` | 10 requests per minute |
-| All other endpoints | 60 requests per minute |
+
+Other endpoints do not currently enforce explicit rate limits, but integrators should still implement reasonable request pacing to avoid overloading the server.
 
 **Handling 429 responses:**
 
@@ -617,9 +618,9 @@ GET /api/tools/
 {
   "tools": [
     {
-      "name": "summary",
-      "display_name": "Document Summary",
-      "description": "Generate a concise summary of the document",
+      "name": "smart_summary",
+      "display_name": "Smart Summary",
+      "description": "Generates hierarchical summaries using the document tree structure",
       "options_schema": { /* JSON Schema for tool-specific options */ }
     }
   ],
@@ -630,7 +631,7 @@ GET /api/tools/
 ### 9.2 Execute a Tool
 
 ```
-POST /api/tools/{tool_name}
+POST /api/tools/smart_summary
 Content-Type: application/json
 
 {
@@ -648,7 +649,7 @@ The `options` object varies by tool. Refer to the `options_schema` returned by t
 
 ```json
 {
-  "tool_name": "summary",
+  "tool_name": "smart_summary",
   "status": "success",
   "data": {
     "summary": "This document covers..."
@@ -684,9 +685,10 @@ GET /api/graph/entities?name=Acme&entity_type=Organization&limit=50
 [
   {
     "id": "entity-uuid",
-    "name": "Acme Corporation",
+    "canonical_name": "Acme Corporation",
     "entity_type": "Organization",
-    "mention_count": 12
+    "description": "A multinational technology company",
+    "aliases": ["Acme Corp", "ACME"]
   }
 ]
 ```
@@ -990,7 +992,7 @@ Below is the recommended sequence for a system integrating with IDP Kit end to e
 
 6.  Run a smart tool
       GET  /api/tools/                      → list available tools
-      POST /api/tools/{tool_name}           → execute on a document
+      POST /api/tools/smart_summary         → execute on a document (example)
 
 7.  Build & explore the knowledge graph
       POST /api/graph/documents/{doc_id}/build
@@ -1004,3 +1006,5 @@ Below is the recommended sequence for a system integrating with IDP Kit end to e
 ```
 
 Each step builds on the previous one. Documents must be uploaded before indexing, and indexed before querying, graph building, or tool execution.
+
+> **Note:** The examples in this guide are illustrative. For the authoritative response schemas and field types, consult the auto-generated OpenAPI documentation at `/docs` (Swagger UI) or `/redoc` on your IDP Kit instance.
