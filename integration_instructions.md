@@ -207,6 +207,7 @@ For large files, request a signed upload URL and upload directly to cloud storag
 
 ```
 POST /api/documents/upload-url
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
@@ -233,12 +234,14 @@ Content-Type: application/json
 
 ```
 POST /api/documents/{doc_id}/confirm-upload
+Authorization: Bearer <token>
 ```
 
 If `uses_signed_url` is `false`, upload the file content to the fallback endpoint instead:
 
 ```
 POST /api/documents/{doc_id}/upload-content
+Authorization: Bearer <token>
 ```
 
 ### 4.3 List Documents
@@ -526,7 +529,9 @@ The document must have status `indexed` (i.e., indexing must be completed first)
 
 The agent is a conversational AI that can search documents, query the knowledge graph, perform web searches, and use smart tools.
 
-### 8.1 Send a Message
+### 8.1 Send a Message (Stateless)
+
+Send a one-off message without conversation history:
 
 ```
 POST /api/agent/chat
@@ -534,8 +539,7 @@ Content-Type: application/json
 
 {
   "message": "Summarise the key findings from my uploaded reports",
-  "document_ids": ["doc-uuid-1", "doc-uuid-2"],
-  "conversation_id": null
+  "document_ids": ["doc-uuid-1", "doc-uuid-2"]
 }
 ```
 
@@ -546,7 +550,7 @@ You may also pass `tag_ids` to include all documents with specific tags.
 ```json
 {
   "response": "Based on your reports, the key findings are...",
-  "conversation_id": "conv-uuid",
+  "conversation_id": null,
   "tool_calls": [
     {
       "name": "search_document",
@@ -580,7 +584,16 @@ You may also pass `tag_ids` to include all documents with specific tags.
 
 ### 8.2 Continue a Conversation
 
-Pass the `conversation_id` from a previous response to maintain context:
+To persist messages across turns, first create a conversation, then pass its ID:
+
+```
+POST /api/agent/conversations
+Content-Type: application/json
+
+{ "title": "Revenue Analysis" }
+```
+
+**Response (201)** returns the new conversation object including its `id`. Use that ID in subsequent chat requests:
 
 ```json
 {
@@ -589,6 +602,8 @@ Pass the `conversation_id` from a previous response to maintain context:
   "document_ids": ["doc-uuid-1"]
 }
 ```
+
+The agent will load all prior messages from the conversation for context. If `conversation_id` is omitted or `null`, the chat is stateless and no messages are persisted.
 
 ### 8.3 Conversation Management
 
@@ -765,7 +780,7 @@ Content-Type: application/json
 {
   "name": "Invoice Extraction",
   "description": "Extract line items from invoices",
-  "tool_name": "extract",
+  "tool_name": "smart_extract",
   "tool_options": { "fields": ["vendor", "total", "date"] },
   "output_format": "json",
   "model": "gpt-4o"
