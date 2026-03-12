@@ -20,18 +20,17 @@ This document describes how an external system can integrate with the IDP Kit RE
 12. [Jobs](#12-jobs)
 13. [Error Reference](#13-error-reference)
 14. [Typical Integration Workflow](#14-typical-integration-workflow)
+15. [Document Verification](#15-document-verification)
 
 ---
 
 ## 1. Base URL
 
-All endpoints are prefixed with the deployment host, for example:
+All endpoints are relative to the production base URL:
 
 ```
-https://your-idpkit-instance.example.com
+https://idpai.replit.app
 ```
-
-Replace this with the actual URL of the IDP Kit deployment you are integrating with.
 
 ---
 
@@ -176,7 +175,7 @@ Other endpoints do not currently enforce explicit rate limits, but integrators s
 Upload a file directly via multipart form data.
 
 ```bash
-curl -X POST https://host/api/documents/ \
+curl -X POST https://idpai.replit.app/api/documents/ \
   -H "X-API-Key: YOUR_KEY" \
   -F "file=@/path/to/report.pdf"
 ```
@@ -798,7 +797,7 @@ Content-Type: application/json
 **AI-generated template from a sample document**
 
 ```bash
-curl -X POST https://host/api/batch/templates/analyze \
+curl -X POST https://idpai.replit.app/api/batch/templates/analyze \
   -H "X-API-Key: YOUR_KEY" \
   -F "sample_file=@/path/to/sample-invoice.pdf" \
   -F "template_name=Invoice Template"
@@ -952,7 +951,7 @@ The stream closes automatically when the job reaches `completed` or `failed` sta
 **cURL example:**
 
 ```bash
-curl -N -H "X-API-Key: YOUR_KEY" https://host/api/jobs/JOB_ID/stream
+curl -N -H "X-API-Key: YOUR_KEY" https://idpai.replit.app/api/jobs/JOB_ID/stream
 ```
 
 > **Note:** The native browser `EventSource` API does not support custom headers. For browser-based SSE, authenticate via the session cookie (set automatically on login). For server-to-server integrations, use an HTTP client that supports streaming with custom headers (e.g., `fetch`, `axios`, or `curl`).
@@ -1022,4 +1021,52 @@ Below is the recommended sequence for a system integrating with IDP Kit end to e
 
 Each step builds on the previous one. Documents must be uploaded before indexing, and indexed before querying, graph building, or tool execution.
 
-> **Note:** The examples in this guide are illustrative. For the authoritative response schemas and field types, consult the auto-generated OpenAPI documentation at `/docs` (Swagger UI) or `/redoc` on your IDP Kit instance.
+> **Note:** The examples in this guide are illustrative. For the authoritative response schemas and field types, consult the auto-generated OpenAPI documentation at `https://idpai.replit.app/docs` (Swagger UI) or `https://idpai.replit.app/redoc`.
+
+---
+
+## 15. Document Verification
+
+The Document Verification API checks whether uploaded documents satisfy a set of natural-language expectations using multimodal LLM analysis. This is useful for automated compliance checks, intake validation, and document screening workflows.
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/verify/single` | Verify one document — returns a JSON result |
+| `POST /api/verify` | Verify one or more documents — single file returns JSON; multiple files stream results via SSE |
+
+**Quick example:**
+
+```bash
+curl -X POST https://idpai.replit.app/api/verify/single \
+  -H "X-API-Key: YOUR_KEY" \
+  -F "file=@/path/to/contract.pdf" \
+  -F 'expectations=["document is a signed NDA", "effective date is in 2025"]'
+```
+
+**Response (200)**
+
+```json
+{
+  "filename": "contract.pdf",
+  "status": "ok",
+  "matches": [
+    {
+      "expected": "document is a signed NDA",
+      "result": "ok",
+      "confidence": "high",
+      "details": "The document is a Non-Disclosure Agreement with signatures present."
+    },
+    {
+      "expected": "effective date is in 2025",
+      "result": "ok",
+      "confidence": "high",
+      "details": "The effective date listed is January 15, 2025."
+    }
+  ],
+  "summary": "All expectations met."
+}
+```
+
+**Key constraints:** 20 MB per file, max 20 files per batch, supported formats include PDF, images, DOCX, TXT, MD, HTML, and CSV.
+
+For the full endpoint reference including multi-file SSE streaming, response field details, processing methods, and error handling, see **[verify_integration.md](verify_integration.md)**.
