@@ -149,6 +149,23 @@ Returns the authenticated user's profile.
 | **Errors** | JSON body with a `detail` field describing the error (see [Error Reference](#12-error-reference)). |
 | **File size limit** | 50 MB per upload. |
 
+### Rate Limiting
+
+Certain endpoints enforce per-user rate limits to protect system resources. When a limit is exceeded, the server responds with HTTP `429 Too Many Requests`.
+
+| Endpoint | Default Limit |
+|---|---|
+| `POST /api/agent/chat` | 30 requests per minute |
+| `POST /api/batch/` | 10 requests per minute |
+| All other endpoints | 60 requests per minute |
+
+**Handling 429 responses:**
+
+- Inspect the `Retry-After` header (if present) for the number of seconds to wait before retrying.
+- If no `Retry-After` header is returned, implement exponential backoff starting at 1 second (1s → 2s → 4s → ...).
+- Rate limits are applied per authenticated user. Different users have independent quotas.
+- Administrators can adjust these limits via the admin settings API.
+
 ---
 
 ## 4. Documents
@@ -786,7 +803,7 @@ Content-Type: application/json
 
 Alternatively, specify `tool_name`, `prompt`, and `options` directly instead of `template_id`.
 
-**Response (201)**
+**Response (202)**
 
 ```json
 {
@@ -943,6 +960,7 @@ All error responses follow the same shape:
 | `404` | Not found — resource does not exist or does not belong to the authenticated user. |
 | `409` | Conflict — duplicate resource (e.g., username taken) or operation already in progress (e.g., indexing already running). |
 | `413` | Payload too large — file exceeds 50 MB limit. |
+| `429` | Too many requests — rate limit exceeded. Back off and retry (see [Rate Limiting](#rate-limiting)). |
 | `500` | Internal server error — unexpected failure; contact the system administrator. |
 
 ---
