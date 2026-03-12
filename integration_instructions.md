@@ -146,7 +146,7 @@ Returns the authenticated user's profile.
 | **IDs** | All resource IDs are UUIDs (strings). |
 | **Pagination** | List endpoints accept `skip` (offset, default 0) and `limit` (max rows, default 20). |
 | **Timestamps** | ISO 8601 format, UTC. |
-| **Errors** | JSON body with a `detail` field describing the error (see [Error Reference](#12-error-reference)). |
+| **Errors** | JSON body with a `detail` field describing the error (see [Error Reference](#13-error-reference)). |
 | **File size limit** | 50 MB per upload. |
 
 ### Rate Limiting
