@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "YcUu-OI1YUzsfKePG1JB2"
+uri = "file://integration_instructions.md"
+type = "text"
+title = "API Integration Guide"
