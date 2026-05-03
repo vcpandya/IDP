@@ -90,6 +90,17 @@ async def init_db():
                     sync_conn.execute(text(
                         "ALTER TABLE envelope_audit_events ADD COLUMN user_agent VARCHAR(1000)"
                     ))
+            # signature_fields — bulk-apply group identifier (one drag → many cloned fields share a group)
+            if "signature_fields" in tables:
+                cols = {c["name"] for c in insp.get_columns("signature_fields")}
+                if "bulk_group_id" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE signature_fields ADD COLUMN bulk_group_id VARCHAR(36)"
+                    ))
+                    sync_conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_signature_fields_bulk_group_id "
+                        "ON signature_fields (bulk_group_id)"
+                    ))
 
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)

@@ -511,7 +511,7 @@ function esignSign() {
         dataUrl = this.uploadedSigPreview;
       }
       if (dataUrl && this.activeField) {
-        this.fieldValues[this.activeField.id] = dataUrl;
+        this._applyValueWithBulk(this.activeField, dataUrl);
         this.closeModal();
         this.autoAdvance();
       }
@@ -521,11 +521,25 @@ function esignSign() {
       if (!this.activeField) return;
       const val = this.activeField.field_type === 'date' ? this.dateValue : this.textValue.trim();
       if (!val) return;
-      this.fieldValues[this.activeField.id] = this.activeField.field_type === 'date'
+      const finalVal = this.activeField.field_type === 'date'
         ? new Date(this.dateValue + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
         : val;
+      this._applyValueWithBulk(this.activeField, finalVal);
       this.closeModal();
       this.autoAdvance();
+    },
+
+    // Mirror the value to every sibling field that shares the same bulk_group_id so
+    // the signer sees all cloned fields fill in at once. The server-side
+    // submit_signature handler also enforces this propagation as defense-in-depth.
+    _applyValueWithBulk(field, value) {
+      this.fieldValues[field.id] = value;
+      if (!field.bulk_group_id) return;
+      for (const sib of this.fields) {
+        if (sib.bulk_group_id === field.bulk_group_id && sib.id !== field.id) {
+          this.fieldValues[sib.id] = value;
+        }
+      }
     },
 
     autoAdvance() {

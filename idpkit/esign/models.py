@@ -108,6 +108,7 @@ class SignatureField(Base):
     label = Column(String(200), nullable=True)
     value = Column(Text, nullable=True)
     is_required = Column(Integer, default=1)
+    bulk_group_id = Column(String(36), nullable=True, index=True)
     created_at = Column(TZDateTime, default=utcnow)
 
     envelope = relationship("SignatureEnvelope", back_populates="fields")

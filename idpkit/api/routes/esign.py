@@ -59,6 +59,7 @@ class FieldIn(BaseModel):
     h_pct: float = 5.0
     label: Optional[str] = None
     is_required: int = 1
+    bulk_group_id: Optional[str] = None
 
 
 class CreateEnvelopeIn(BaseModel):
@@ -226,6 +227,7 @@ def _envelope_response(env: SignatureEnvelope) -> dict:
                 "h_pct": f.h_pct,
                 "label": f.label,
                 "is_required": f.is_required,
+                "bulk_group_id": f.bulk_group_id,
                 "has_value": bool(f.value),
             }
             for f in (env.fields or [])
@@ -511,6 +513,7 @@ async def update_fields(
             h_pct=f.h_pct,
             label=f.label,
             is_required=f.is_required,
+            bulk_group_id=f.bulk_group_id,
         )
         db.add(field)
 
@@ -899,6 +902,7 @@ async def get_signing_context(
                 "h_pct": f.h_pct,
                 "label": f.label,
                 "is_required": f.is_required,
+                "bulk_group_id": f.bulk_group_id,
             }
             for f in my_fields
         ],
@@ -1022,8 +1026,30 @@ async def submit_signature(
     ua_info = _parse_ua(ua_str)
     geo = await _geo_lookup(ip)
 
-    # Server-side required field enforcement: all required fields for this signer must be present and non-empty
     field_map = {f.id: f for f in (env.fields or []) if f.signer_id == signer.id}
+
+    # Bulk-apply expansion (must run BEFORE the required-field check so that a single
+    # value submitted for one field in a bulk group satisfies the requirement on every
+    # cloned sibling). Pure server-side enforcement — clients don't have to know.
+    bulk_groups_seen: dict[str, int] = {}
+    for submitted in list(body.fields):
+        fid = submitted.get("id")
+        value = submitted.get("value", "")
+        if not (fid and fid in field_map):
+            continue
+        group_id = field_map[fid].bulk_group_id
+        if not group_id or group_id in bulk_groups_seen:
+            continue
+        siblings = [
+            f for f in field_map.values()
+            if f.bulk_group_id == group_id and f.id != fid
+        ]
+        for sib in siblings:
+            if not any(s.get("id") == sib.id for s in body.fields):
+                body.fields.append({"id": sib.id, "value": value})
+        bulk_groups_seen[group_id] = 1 + len(siblings)
+
+    # Server-side required field enforcement: all required fields for this signer must be present and non-empty
     submitted_values = {s.get("id"): s.get("value", "") for s in body.fields}
     missing_required = [
         f.id for f in field_map.values()
@@ -1054,6 +1080,24 @@ async def submit_signature(
         session_id=body.session_id,
         notes="ESIGN Act electronic signature consent acknowledged by signer",
     ))
+
+    # Emit a single audit event per bulk group that was propagated above
+    for group_id, total_count in bulk_groups_seen.items():
+        if total_count > 1:
+            db.add(EnvelopeAuditEvent(
+                envelope_id=env.id,
+                actor_email=signer.email,
+                event_type="bulk_apply_propagated",
+                ip_address=ip,
+                user_agent=ua_str[:500],
+                browser_name=ua_info.get("browser_name"),
+                browser_version=ua_info.get("browser_version"),
+                os_name=ua_info.get("os_name"),
+                geo_country=geo.get("geo_country", ""),
+                geo_city=geo.get("geo_city", ""),
+                session_id=body.session_id,
+                notes=f"bulk_group_id={group_id} cloned_to={total_count} fields",
+            ))
 
     # Store field values and emit a per-field audit event for each completed field
     for submitted in body.fields:
