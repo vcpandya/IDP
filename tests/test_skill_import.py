@@ -114,6 +114,13 @@ def test_normalize_github_blob_to_raw():
     assert out == "https://raw.githubusercontent.com/owner/repo/main/SKILL.md"
 
 
+def test_parse_github_tree_url():
+    assert si._parse_github_tree("https://github.com/o/r/tree/main/skills/x") == ("o", "r", "main", "skills/x")
+    assert si._parse_github_tree("https://github.com/o/r") == ("o", "r", "HEAD", "")
+    assert si._parse_github_tree("https://github.com/o/r/blob/main/x.md") is None
+    assert si._parse_github_tree("https://example.com/o/r/tree/main") is None
+
+
 def test_import_from_md_bytes_round_trip():
     parsed = si.import_from_md_bytes(_VALID_MD)
     assert parsed.name == "test-skill"
@@ -235,3 +242,115 @@ async def test_api_community_install_uses_url_resolver(auth_client, monkeypatch)
     )
     assert res.status_code == 200
     assert res.json()["name"] == "from-catalog"
+
+
+@pytest.mark.asyncio
+async def test_api_community_install_by_id(auth_client, monkeypatch):
+    sample = [{
+        "id": "the-id",
+        "name": "By Id",
+        "description": "d",
+        "url": "https://example.com/skill.md",
+        "category": "demo",
+    }]
+    si._CATALOG_CACHE.update({"ts": 9_999_999_999, "data": sample})
+
+    async def _fake(url: str):
+        assert url == "https://example.com/skill.md"
+        return si.parse_files_to_skill({"SKILL.md": b"---\nname: id-installed\ndescription: c\n---\n\nbody"})
+    monkeypatch.setattr("idpkit.api.routes.skills.import_from_url", _fake)
+    res = await auth_client.post(
+        "/api/skills/community/install",
+        json={"id": "the-id"},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "id-installed"
+
+
+@pytest.mark.asyncio
+async def test_api_community_install_unknown_id(auth_client):
+    si._CATALOG_CACHE.update({"ts": 9_999_999_999, "data": []})
+    res = await auth_client.post(
+        "/api/skills/community/install",
+        json={"id": "nope"},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_api_community_search_and_category(auth_client):
+    sample = [
+        {"id": "a", "name": "Alpha", "description": "first", "url": "https://e.com/a.md", "category": "x"},
+        {"id": "b", "name": "Beta", "description": "second", "url": "https://e.com/b.md", "category": "y"},
+        {"id": "c", "name": "Gamma", "description": "alpha-ish", "url": "https://e.com/c.md", "category": "x"},
+    ]
+    si._CATALOG_CACHE.update({"ts": 9_999_999_999, "data": sample})
+
+    res = await auth_client.get("/api/skills/community?q=alpha")
+    body = res.json()
+    names = sorted(item["name"] for item in body["items"])
+    assert names == ["Alpha", "Gamma"]
+    assert "x" in body["categories"] and "y" in body["categories"]
+
+    res = await auth_client.get("/api/skills/community?category=y")
+    assert [i["name"] for i in res.json()["items"]] == ["Beta"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_bytes_streaming_size_cap(monkeypatch):
+    """A server that lies about Content-Length must still be cut off mid-stream."""
+    monkeypatch.setattr(si, "_resolve_host_safe", lambda h: True)
+
+    class _FakeResp:
+        status_code = 200
+        headers = {}
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def aiter_bytes(self, chunk_size):
+            for _ in range(100):
+                yield b"x" * (64 * 1024)
+
+    class _FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        def stream(self, method, url): return _FakeResp()
+
+    monkeypatch.setattr(si.httpx, "AsyncClient", _FakeClient)
+    with pytest.raises(si.SkillImportError, match="exceeded"):
+        await si.fetch_bytes("https://example.com/x", max_size=128 * 1024)
+
+
+@pytest.mark.asyncio
+async def test_zip_extraction_uses_temp_dir_and_cleans_up(monkeypatch):
+    """Verify safe_extract_zip creates a temp dir and removes it on success."""
+    seen: list[str] = []
+    real_mkdtemp = si.tempfile.mkdtemp
+
+    def _spy(prefix=""):
+        path = real_mkdtemp(prefix=prefix)
+        seen.append(path)
+        return path
+
+    monkeypatch.setattr(si.tempfile, "mkdtemp", _spy)
+    z = _make_zip({"k/SKILL.md": _VALID_MD, "k/run.py": b"print(1)"})
+    si.safe_extract_zip(z)
+    assert seen, "temp dir was not created"
+    for p in seen:
+        assert not si.Path(p).exists(), f"temp dir not cleaned up: {p}"
+
+
+@pytest.mark.asyncio
+async def test_import_from_github_tree_uses_contents_api(monkeypatch):
+    """import_from_url with a tree URL should walk the GitHub Contents API."""
+    calls = []
+
+    async def _fake_fetch_tree(owner, repo, branch, path):
+        calls.append((owner, repo, branch, path))
+        return {"SKILL.md": _VALID_MD, "run.py": b"print(1)"}
+
+    monkeypatch.setattr(si, "_fetch_github_tree", _fake_fetch_tree)
+    parsed = await si.import_from_url("https://github.com/o/r/tree/main/skills/x")
+    assert parsed.name == "test-skill"
+    assert any(s["path"] == "run.py" for s in parsed.scripts)
+    assert calls == [("o", "r", "main", "skills/x")]

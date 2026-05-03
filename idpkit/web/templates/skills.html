@@ -178,6 +178,19 @@
             Skills shared by the community on <a href="https://agentskills.io" target="_blank" rel="noopener">agentskills.io</a>.
             Each skill is fetched on demand and validated before installation.
         </p>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+            <input x-model="communityQuery" @input.debounce.300ms="loadCommunity(false)"
+                   placeholder="Search community skills..." class="skill-textarea"
+                   style="flex:1;min-width:200px;height:auto;padding:8px 12px;font-family:inherit;">
+            <select x-model="communityCategory" @change="loadCommunity(false)" class="skill-textarea"
+                    style="height:auto;padding:8px 12px;font-family:inherit;width:auto;">
+                <option value="">All categories</option>
+                <template x-for="cat in communityCategories" :key="cat">
+                    <option :value="cat" x-text="cat"></option>
+                </template>
+            </select>
+            <button class="btn btn-sm" @click="loadCommunity(true)"><i class="fas fa-sync"></i> Refresh</button>
+        </div>
         <template x-if="communityLoading">
             <div style="text-align:center;padding:40px;">
                 <i class="fas fa-spinner fa-spin fa-2x"></i>
@@ -186,8 +199,8 @@
         <template x-if="!communityLoading && communitySkills.length === 0">
             <div class="skills-empty">
                 <i class="fas fa-cloud-meatball"></i>
-                <h3>Catalog unavailable</h3>
-                <p>Couldn't reach the community catalog. Try again, or use Import from URL with a direct link.</p>
+                <h3>No matching skills</h3>
+                <p>Couldn't reach the catalog or no entries match your filter. Try adjusting your search or use Import from URL with a direct link.</p>
                 <button class="btn btn-primary" @click="loadCommunity(true)"><i class="fas fa-sync"></i> Retry</button>
             </div>
         </template>
@@ -205,10 +218,20 @@
                         by <span x-text="c.author"></span>
                     </div>
                     <div class="skill-card-actions" style="margin-top:12px;">
-                        <button class="btn btn-sm btn-primary" @click="installCommunity(c)" :disabled="c.installing">
-                            <i :class="c.installing ? 'fas fa-spinner fa-spin' : 'fas fa-download'"></i>
-                            <span x-text="c.installing ? 'Installing...' : 'Install'"></span>
-                        </button>
+                        <template x-if="!c.installed">
+                            <button class="btn btn-sm btn-primary" @click="installCommunity(c, false)" :disabled="c.installing">
+                                <i :class="c.installing ? 'fas fa-spinner fa-spin' : 'fas fa-download'"></i>
+                                <span x-text="c.installing ? 'Installing...' : 'Install'"></span>
+                            </button>
+                        </template>
+                        <template x-if="c.installed">
+                            <span class="installed-badge"><i class="fas fa-check"></i> Installed</span>
+                        </template>
+                        <template x-if="c.installed">
+                            <button class="btn btn-sm" @click="installCommunity(c, true)" :disabled="c.installing">
+                                <i :class="c.installing ? 'fas fa-spinner fa-spin' : 'fas fa-sync'"></i> Update
+                            </button>
+                        </template>
                         <a class="btn btn-sm" :href="c.url" target="_blank" rel="noopener">
                             <i class="fas fa-external-link-alt"></i> Source
                         </a>
@@ -453,12 +476,35 @@
                         <input type="checkbox" x-model="importOverwrite"> Overwrite if a skill with the same name already exists
                     </label>
                 </div>
+                <template x-if="importPreview">
+                    <div class="skill-preview" style="margin-top:14px;">
+                        <div class="skill-preview-label">PREVIEW</div>
+                        <div class="skill-preview-name" x-text="importPreview.name"></div>
+                        <div class="skill-preview-desc" x-text="importPreview.description"></div>
+                        <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
+                            <span x-text="(importPreview.scripts || []).length"></span> bundled file(s)
+                            <template x-if="(importPreview.warnings || []).length">
+                                · <span style="color:#b45309;"><span x-text="importPreview.warnings.length"></span> warning(s)</span>
+                            </template>
+                        </div>
+                        <template x-if="(importPreview.scripts || []).length">
+                            <ul style="margin:6px 0 0;padding-left:20px;font-size:12px;color:var(--text-secondary);">
+                                <template x-for="s in importPreview.scripts.slice(0,10)" :key="s.path">
+                                    <li><code x-text="s.path"></code> <span style="color:var(--text-muted);">(<span x-text="s.kind"></span>, <span x-text="s.size"></span>b)</span></li>
+                                </template>
+                            </ul>
+                        </template>
+                    </div>
+                </template>
                 <template x-if="importError">
                     <div style="margin-top:12px;padding:10px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:13px;" x-text="importError"></div>
                 </template>
             </div>
             <div class="modal-footer">
                 <button class="btn" @click="showImportModal=false">Cancel</button>
+                <button class="btn" @click="previewImportedSkill()" :disabled="saving || (!importContent && !importFile)">
+                    <i class="fas fa-eye"></i> Preview
+                </button>
                 <button class="btn btn-primary" @click="saveImportedSkill()" :disabled="saving || (!importContent && !importFile)">
                     <i class="fas fa-save"></i>
                     <span x-text="saving ? 'Saving...' : 'Import & Save'"></span>
@@ -684,8 +730,12 @@ function skillsPage() {
         urlImportError: '',
         urlImporting: false,
         communitySkills: [],
+        communityCategories: [],
         communityLoading: false,
         communityLoaded: false,
+        communityQuery: '',
+        communityCategory: '',
+        importPreview: null,
 
         get parsedPreview() { return this._parseFrontmatter(this.formContent); },
         get aiParsedPreview() { return this._parseFrontmatter(this.aiResult); },
@@ -840,8 +890,29 @@ function skillsPage() {
             this.importFileMeta = null;
             this.importOverwrite = false;
             this.importError = '';
+            this.importPreview = null;
             this.importDragOver = false;
             this.showImportModal = true;
+        },
+
+        async previewImportedSkill() {
+            if (!this.importFile && !this.importContent) return;
+            this.importError = '';
+            this.importPreview = null;
+            try {
+                const fd = new FormData();
+                if (this.importFile) fd.append('file', this.importFile);
+                else fd.append('file', new Blob([this.importContent], { type: 'text/markdown' }), 'SKILL.md');
+                fd.append('preview', 'true');
+                const res = await fetch('/api/skills/import', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${this._token()}` },
+                    body: fd,
+                });
+                const body = await res.json();
+                if (res.ok) this.importPreview = body.preview;
+                else this.importError = body.detail || 'Preview failed';
+            } catch (e) { this.importError = 'Error: ' + e.message; }
         },
 
         openUrlImport() {
@@ -958,33 +1029,37 @@ function skillsPage() {
         },
 
         async loadCommunity(force = false) {
-            if (this.communityLoaded && !force) return;
             this.communityLoading = true;
             try {
-                const url = '/api/skills/community' + (force ? '?refresh=true' : '');
-                const res = await fetch(url, { headers: { 'Authorization': `Bearer ${this._token()}` } });
+                const params = new URLSearchParams();
+                if (force) params.set('refresh', 'true');
+                if (this.communityQuery.trim()) params.set('q', this.communityQuery.trim());
+                if (this.communityCategory) params.set('category', this.communityCategory);
+                const qs = params.toString() ? '?' + params.toString() : '';
+                const res = await fetch('/api/skills/community' + qs, { headers: { 'Authorization': `Bearer ${this._token()}` } });
                 if (res.ok) {
                     const data = await res.json();
                     this.communitySkills = (data.items || []).map(c => ({ ...c, installing: false }));
+                    if (data.categories) this.communityCategories = data.categories;
                     this.communityLoaded = true;
                 }
             } catch (e) { console.error('Community load failed:', e); }
             finally { this.communityLoading = false; }
         },
 
-        async installCommunity(c) {
+        async installCommunity(c, overwrite = false) {
             c.installing = true;
             try {
                 const res = await fetch('/api/skills/community/install', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${this._token()}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: c.url }),
+                    body: JSON.stringify({ id: c.id, overwrite: overwrite }),
                 });
                 const body = await res.json();
                 if (res.ok) {
+                    c.installed = true;
                     await this.loadSkills();
-                    if ((body.warnings || []).length) alert('Installed with warnings:\n\n' + body.warnings.join('\n'));
-                    else alert(`Installed "${body.name}"`);
+                    if ((body.warnings || []).length) alert((overwrite ? 'Updated' : 'Installed') + ' with warnings:\n\n' + body.warnings.join('\n'));
                 } else {
                     alert(body.detail || 'Install failed');
                 }
