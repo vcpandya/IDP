@@ -538,6 +538,7 @@ function esignSign() {
       const fieldData = this.fields.map(f => ({ id: f.id, value: this.fieldValues[f.id] || '' }));
       const payload = {
         fields: fieldData,
+        consent_accepted: true,
         canvas_fingerprint_hash: this.canvasFp,
         screen_resolution: `${screen.width}x${screen.height}`,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
