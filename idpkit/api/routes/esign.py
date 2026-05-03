@@ -815,13 +815,13 @@ async def get_signing_context(
         if any(s.status != SignerStatus.SIGNED.value for s in prev_signers):
             raise HTTPException(status_code=400, detail="Waiting for previous signers to complete first")
 
-    # Log viewed event
+    # Log a document_viewed event on every access (not just first) for full audit trail
     if not signer.viewed_at:
         signer.viewed_at = now
         signer.status = SignerStatus.VIEWED.value
         db.add(signer)
-        await _log_event(db, env.id, "document_viewed", actor_email=signer.email, request=request)
-        await db.commit()
+    await _log_event(db, env.id, "document_viewed", actor_email=signer.email, request=request)
+    await db.commit()
 
     my_fields = [f for f in (env.fields or []) if f.signer_id == signer.id]
 
@@ -951,7 +951,7 @@ async def submit_signature(
     ua_info = _parse_ua(ua_str)
     geo = await _geo_lookup(ip)
 
-    # Store field values
+    # Store field values and emit a per-field audit event for each completed field
     field_map = {f.id: f for f in (env.fields or []) if f.signer_id == signer.id}
     for submitted in body.fields:
         fid = submitted.get("id")
@@ -959,6 +959,26 @@ async def submit_signature(
         if fid and fid in field_map:
             field_map[fid].value = value
             db.add(field_map[fid])
+            # Per-field signed event (evidentiary granularity)
+            field_obj = field_map[fid]
+            db.add(EnvelopeAuditEvent(
+                envelope_id=env.id,
+                actor_email=signer.email,
+                event_type="field_signed",
+                ip_address=ip,
+                user_agent=ua_str[:500],
+                browser_name=ua_info.get("browser_name"),
+                browser_version=ua_info.get("browser_version"),
+                os_name=ua_info.get("os_name"),
+                geo_country=geo.get("geo_country", ""),
+                geo_city=geo.get("geo_city", ""),
+                canvas_fingerprint_hash=body.canvas_fingerprint_hash,
+                screen_resolution=body.screen_resolution,
+                timezone=body.timezone,
+                language=body.language,
+                session_id=body.session_id,
+                notes=f"field_id={fid} type={field_obj.field_type} page={field_obj.page}",
+            ))
 
     # Mark signer complete
     signer.signed_at = now
@@ -967,7 +987,7 @@ async def submit_signature(
     signer.user_agent = ua_str[:500]
     db.add(signer)
 
-    # Audit event with forensic data
+    # Document-level signed audit event with full forensic data
     ev = EnvelopeAuditEvent(
         envelope_id=env.id,
         actor_email=signer.email,
