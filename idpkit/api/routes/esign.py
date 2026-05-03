@@ -247,38 +247,68 @@ def _load_envelope_pdf(env: SignatureEnvelope, storage: StorageBackend) -> bytes
 
 @router.post("/envelopes", status_code=201)
 async def create_envelope(
-    body: CreateEnvelopeIn,
+    title: str = fastapi_Form(...),
+    message: Optional[str] = fastapi_Form(None),
+    signing_order: str = fastapi_Form("parallel"),
+    document_id: Optional[str] = fastapi_Form(None),
+    signers_json: Optional[str] = fastapi_Form(None),
+    file: Optional[UploadFile] = File(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ):
-    """Create a new envelope from an existing document."""
+    """Create a new envelope from either an uploaded PDF file or an existing document_id."""
     from idpkit.esign.pdf_utils import compute_sha256, get_page_count
+    import json as _json
 
-    if not body.document_id:
-        raise HTTPException(status_code=400, detail="document_id is required")
+    if not title or not title.strip():
+        raise HTTPException(status_code=400, detail="title is required")
 
-    result = await db.execute(
-        select(Document).where(Document.id == body.document_id, Document.owner_id == user.id)
-    )
-    doc = result.scalar_one_or_none()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
-    if not doc.file_path:
-        raise HTTPException(status_code=400, detail="Document has no stored file")
-
-    pdf_bytes = storage.load(doc.file_path)
-    sha = compute_sha256(pdf_bytes)
-    pages = get_page_count(pdf_bytes)
+    # Determine PDF source
+    if file and file.filename:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are supported for e-signature")
+        content = await file.read()
+        if len(content) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large (max 50MB)")
+        sha = compute_sha256(content)
+        try:
+            pages = get_page_count(content)
+        except Exception:
+            pages = 1
+        env_id = str(uuid.uuid4())
+        file_key = f"esign/{user.id}/{env_id}/original.pdf"
+        storage.save(file_key, content)
+        doc_ref_id = None
+        effective_title = title or file.filename
+    elif document_id:
+        doc_result = await db.execute(
+            select(Document).where(Document.id == document_id, Document.owner_id == user.id)
+        )
+        doc = doc_result.scalar_one_or_none()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if not doc.file_path:
+            raise HTTPException(status_code=400, detail="Document has no stored file")
+        content = storage.load(doc.file_path)
+        sha = compute_sha256(content)
+        pages = get_page_count(content)
+        env_id = str(uuid.uuid4())
+        file_key = doc.file_path
+        doc_ref_id = doc.id
+        effective_title = title or doc.filename
+    else:
+        raise HTTPException(status_code=400, detail="Either file or document_id is required")
 
     env = SignatureEnvelope(
+        id=env_id,
         owner_id=user.id,
-        document_id=doc.id,
-        title=body.title or doc.filename,
-        message=body.message,
-        signing_order=body.signing_order,
+        document_id=doc_ref_id,
+        title=effective_title,
+        message=message,
+        signing_order=signing_order,
         doc_sha256=sha,
-        original_file_key=doc.file_path,
+        original_file_key=file_key,
         page_count=pages,
         status=EnvelopeStatus.DRAFT.value,
         expires_at=datetime.now(timezone.utc) + timedelta(days=ESIGN_EXPIRY_DAYS),
@@ -286,15 +316,20 @@ async def create_envelope(
     db.add(env)
     await db.flush()
 
-    for s in body.signers:
-        signer = EnvelopeSigner(
-            envelope_id=env.id,
-            name=s.name,
-            email=s.email,
-            order_index=s.order_index,
-            download_token=secrets.token_urlsafe(32),
-        )
-        db.add(signer)
+    # Parse optional inline signers (JSON string)
+    if signers_json:
+        try:
+            signers_list = _json.loads(signers_json)
+        except Exception:
+            signers_list = []
+        for s in signers_list:
+            db.add(EnvelopeSigner(
+                envelope_id=env.id,
+                name=s.get("name", ""),
+                email=s.get("email", ""),
+                order_index=s.get("order_index", 0),
+                download_token_hash=hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
+            ))
 
     await _log_event(db, env.id, "envelope_created", actor_email=user.email or user.username)
     await db.commit()
@@ -310,7 +345,7 @@ async def create_envelope(
 
 
 @router.post("/envelopes/upload", status_code=201)
-async def create_envelope_with_upload(
+async def create_envelope_upload_alias(
     title: str = fastapi_Form(...),
     message: Optional[str] = fastapi_Form(None),
     signing_order: str = fastapi_Form("parallel"),
@@ -319,50 +354,18 @@ async def create_envelope_with_upload(
     db: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ):
-    """Create a new envelope by uploading a PDF directly."""
-    from idpkit.esign.pdf_utils import compute_sha256, get_page_count
-
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported for e-signature")
-
-    content = await file.read()
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (max 50MB)")
-
-    sha = compute_sha256(content)
-    try:
-        pages = get_page_count(content)
-    except Exception:
-        pages = 1
-
-    env_id = str(uuid.uuid4())
-    file_key = f"esign/{user.id}/{env_id}/original.pdf"
-    storage.save(file_key, content)
-
-    env = SignatureEnvelope(
-        id=env_id,
-        owner_id=user.id,
-        title=title or file.filename,
+    """Backward-compatible alias for POST /envelopes with file upload."""
+    return await create_envelope(
+        title=title,
         message=message,
         signing_order=signing_order,
-        doc_sha256=sha,
-        original_file_key=file_key,
-        page_count=pages,
-        status=EnvelopeStatus.DRAFT.value,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=ESIGN_EXPIRY_DAYS),
+        document_id=None,
+        signers_json=None,
+        file=file,
+        user=user,
+        db=db,
+        storage=storage,
     )
-    db.add(env)
-    await _log_event(db, env_id, "envelope_created", actor_email=user.email or user.username)
-    await db.commit()
-    await db.refresh(env)
-
-    result = await db.execute(
-        select(SignatureEnvelope)
-        .options(selectinload(SignatureEnvelope.signers), selectinload(SignatureEnvelope.fields))
-        .where(SignatureEnvelope.id == env.id)
-    )
-    env = result.scalar_one()
-    return _envelope_response(env)
 
 
 @router.get("/envelopes")
@@ -454,7 +457,7 @@ async def update_signers(
             name=s.name,
             email=s.email,
             order_index=s.order_index,
-            download_token=secrets.token_urlsafe(32),
+            download_token_hash=hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
         )
         db.add(signer)
 
@@ -1153,11 +1156,11 @@ async def submit_signature(
 
         base_url = str(request.base_url).rstrip("/")
         for s in all_signers:
-            # Each signer gets their own public token-based download URL (no login required)
-            if s.download_token:
-                signer_download_url = f"{base_url}/api/esign/download/{s.download_token}"
-            else:
-                signer_download_url = f"{base_url}/esign"
+            # Generate a one-time raw download token, store only its SHA-256 hash, send raw in email
+            raw_dl_token = secrets.token_urlsafe(32)
+            s.download_token_hash = hashlib.sha256(raw_dl_token.encode()).hexdigest()
+            db.add(s)
+            signer_download_url = f"{base_url}/api/esign/download/{raw_dl_token}"
             await send_completion_notice(
                 recipient_email=s.email,
                 recipient_name=s.name,
@@ -1269,10 +1272,11 @@ async def signer_download_by_token(
     storage: StorageBackend = Depends(get_storage),
 ):
     """Public: allow completion-email recipients to download finalized document (no login needed)."""
+    dl_hash = hashlib.sha256(download_token.encode()).hexdigest()
     result = await db.execute(
         select(EnvelopeSigner)
         .options(selectinload(EnvelopeSigner.envelope))
-        .where(EnvelopeSigner.download_token == download_token)
+        .where(EnvelopeSigner.download_token_hash == dl_hash)
     )
     signer = result.scalar_one_or_none()
     if not signer or not signer.envelope:

@@ -79,7 +79,7 @@ class EnvelopeSigner(Base):
     order_index = Column(Integer, default=0)
     status = Column(String(20), default=SignerStatus.PENDING.value)
     token_hash = Column(String(64), nullable=True, unique=True, index=True)
-    download_token = Column(String(64), nullable=True, unique=True, index=True)
+    download_token_hash = Column(String(64), nullable=True, unique=True, index=True)
     viewed_at = Column(TZDateTime, nullable=True)
     signed_at = Column(TZDateTime, nullable=True)
     ip_address = Column(String(45), nullable=True)

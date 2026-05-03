@@ -324,21 +324,19 @@ function esignPrepare() {
       this.creating = true;
       try {
         let res, data;
+        // Both paths now use the unified POST /envelopes multipart endpoint
+        const fd = new FormData();
+        fd.append('title', this.form.title);
+        if (this.form.message) fd.append('message', this.form.message);
+        fd.append('signing_order', this.form.signing_order);
         if (this.docSource === 'upload' && this.uploadedFile) {
-          const fd = new FormData();
-          fd.append('title', this.form.title);
-          if (this.form.message) fd.append('message', this.form.message);
-          fd.append('signing_order', this.form.signing_order);
           fd.append('file', this.uploadedFile);
-          res = await fetch('/api/esign/envelopes/upload', { method: 'POST', body: fd });
         } else {
           if (!this.form.document_id) { this.createError = 'Select a document.'; this.creating = false; return; }
-          res = await fetch('/api/esign/envelopes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...this.form, signers: goodSigners }),
-          });
+          fd.append('document_id', this.form.document_id);
+          fd.append('signers_json', JSON.stringify(goodSigners));
         }
+        res = await fetch('/api/esign/envelopes', { method: 'POST', body: fd });
         data = await res.json();
         if (!res.ok) { this.createError = data.detail || 'Failed to create envelope'; this.creating = false; return; }
 

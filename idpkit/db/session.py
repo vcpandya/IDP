@@ -75,9 +75,9 @@ async def init_db():
             # envelope_signers — new columns added across e-sign code review rounds
             if "envelope_signers" in tables:
                 cols = {c["name"] for c in insp.get_columns("envelope_signers")}
-                if "download_token" not in cols:
+                if "download_token_hash" not in cols:
                     sync_conn.execute(text(
-                        "ALTER TABLE envelope_signers ADD COLUMN download_token VARCHAR(64)"
+                        "ALTER TABLE envelope_signers ADD COLUMN download_token_hash VARCHAR(64)"
                     ))
             # envelope_audit_events — new forensic columns
             if "envelope_audit_events" in tables:

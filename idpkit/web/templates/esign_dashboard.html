@@ -84,11 +84,6 @@
                 <i class="fas fa-shield-alt"></i> Audit Report
               </a>
             </template>
-            <template x-if="env.status === 'sent'">
-              <a :href="'/api/esign/envelopes/' + env.id + '/audit-report'" class="btn btn-sm" style="background:#6366f1;color:#fff;border-color:#6366f1">
-                <i class="fas fa-shield-alt"></i> Audit Report
-              </a>
-            </template>
             <template x-if="env.status === 'sent' || env.status === 'draft'">
               <button @click="voidEnvelope(env)" class="btn btn-sm btn-danger" title="Void">
                 <i class="fas fa-ban"></i> Void
