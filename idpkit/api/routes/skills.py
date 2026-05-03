@@ -16,6 +16,7 @@ from idpkit.agent.skill_import import (
     ParsedSkill,
     SkillImportError,
     fetch_community_catalog,
+    find_community_entry,
     import_from_md_bytes,
     import_from_url,
     import_from_zip_bytes,
@@ -267,6 +268,8 @@ async def import_skill(
 @router.get("/community", summary="Browse the agentskills.io community catalog")
 async def list_community_skills(
     refresh: bool = False,
+    q: Optional[str] = None,
+    category: Optional[str] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -274,27 +277,50 @@ async def list_community_skills(
     installed_names = set((await db.execute(
         select(Skill.name).where(Skill.owner_id == user.id)
     )).scalars().all())
-    enriched = []
+    items = []
+    categories: set[str] = set()
     for entry in catalog:
-        # Best-effort installed-flag using the entry name (may differ from frontmatter name)
-        enriched.append({**entry, "installed_hint": entry.get("name", "").lower().replace(" ", "-") in installed_names})
-    return {"items": enriched, "count": len(enriched)}
+        cat = entry.get("category")
+        if cat:
+            categories.add(cat)
+        if category and cat != category:
+            continue
+        if q:
+            hay = (entry.get("name", "") + " " + entry.get("description", "")).lower()
+            if q.lower() not in hay:
+                continue
+        slug = (entry.get("name", "") or "").lower().replace(" ", "-")
+        items.append({
+            **entry,
+            "installed": slug in installed_names,
+            "installed_hint": slug in installed_names,  # kept for back-compat
+        })
+    return {"items": items, "count": len(items), "categories": sorted(categories)}
 
 
 class CommunityInstallRequest(BaseModel):
-    url: str
+    id: Optional[str] = None
+    url: Optional[str] = None
     overwrite: bool = False
     preview: bool = False
 
 
-@router.post("/community/install", summary="Install a community-catalog skill by URL")
+@router.post("/community/install", summary="Install a community-catalog skill by id (or URL)")
 async def install_community_skill(
     body: CommunityInstallRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    target_url: Optional[str] = body.url
+    if body.id:
+        entry = await find_community_entry(body.id)
+        if not entry:
+            raise HTTPException(404, f"Community skill '{body.id}' not found in catalog")
+        target_url = entry["url"]
+    if not target_url:
+        raise HTTPException(400, "Either 'id' or 'url' must be provided")
     try:
-        parsed = await import_from_url(body.url)
+        parsed = await import_from_url(target_url)
     except SkillImportError as exc:
         raise HTTPException(400, str(exc))
     if body.preview:
