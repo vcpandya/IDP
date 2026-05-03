@@ -102,11 +102,19 @@ async def init_db():
                         "ON signature_fields (bulk_group_id)"
                     ))
 
+        def _migrate_skills(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "skills" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("skills")}
+                if "requirements" not in cols:
+                    sync_conn.execute(text("ALTER TABLE skills ADD COLUMN requirements JSON"))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(_migrate_users)
         await conn.run_sync(_migrate_jobs)
         await conn.run_sync(_migrate_esign)
+        await conn.run_sync(_migrate_skills)
         await conn.run_sync(Base.metadata.create_all)
 
 

@@ -19,6 +19,7 @@ from .youtube import router as youtube_router
 from .skills import router as skills_router
 from .verifier import router as verifier_router
 from .esign import router as esign_router
+from .connectors import router as connectors_router
 
 __all__ = [
     "auth_router",
@@ -40,4 +41,5 @@ __all__ = [
     "skills_router",
     "verifier_router",
     "esign_router",
+    "connectors_router",
 ]

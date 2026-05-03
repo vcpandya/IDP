@@ -217,6 +217,8 @@ class IDPAgent:
                 pass  # Proceed without names
 
         skills_section = ""
+        connector_tools: list[dict] = []
+        connector_executors: dict = {}
         if user_id and db:
             try:
                 from idpkit.agent.skills import load_active_skills, build_skills_prompt_section
@@ -224,6 +226,19 @@ class IDPAgent:
                 skills_section = build_skills_prompt_section(active_skills)
             except Exception:
                 logger.debug("Could not load skills", exc_info=True)
+            try:
+                from idpkit.connectors.runtime import (
+                    list_active_connections,
+                    build_runtime_tools,
+                    build_runtime_executors,
+                    build_capability_prompt_section,
+                )
+                active_conns = await list_active_connections(db, user_id)
+                connector_tools = build_runtime_tools(active_conns)
+                connector_executors = build_runtime_executors(db, user_id)
+                skills_section += build_capability_prompt_section(active_conns)
+            except Exception:
+                logger.debug("Could not load connectors", exc_info=True)
 
         # Record the user message
         conversation.add_message("user", message)
@@ -241,7 +256,7 @@ class IDPAgent:
                 response = await litellm.acompletion(
                     model=llm.default_model,
                     messages=messages,
-                    tools=TOOL_DEFINITIONS,
+                    tools=TOOL_DEFINITIONS + connector_tools,
                     tool_choice="auto",
                     temperature=llm.temperature,
                     api_key=resolved_key or None,
@@ -278,14 +293,17 @@ class IDPAgent:
                     if tool_name == "use_skill" and user_id:
                         tool_args["_user_id"] = user_id
 
-                    # Execute the tool
+                    # Execute the tool — connector tools dispatched via runtime executor map
                     try:
-                        tool_result = await execute_tool(
-                            name=tool_name,
-                            args=tool_args,
-                            llm=llm,
-                            db=db,
-                        )
+                        if tool_name in connector_executors:
+                            tool_result = await connector_executors[tool_name](tool_args, llm, db)
+                        else:
+                            tool_result = await execute_tool(
+                                name=tool_name,
+                                args=tool_args,
+                                llm=llm,
+                                db=db,
+                            )
                     except Exception as exc:
                         logger.error("Tool '%s' execution failed: %s", tool_name, exc)
                         tool_result = {"error": f"Tool execution failed: {exc}"}
