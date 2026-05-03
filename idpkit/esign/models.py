@@ -22,7 +22,10 @@ from idpkit.db.models import Base, TZDateTime, generate_uuid, utcnow
 class EnvelopeStatus(str, enum.Enum):
     DRAFT = "draft"
     SENT = "sent"
+    VIEWED = "viewed"
+    PARTIALLY_SIGNED = "partially_signed"
     COMPLETED = "completed"
+    DECLINED = "declined"
     VOIDED = "voided"
     EXPIRED = "expired"
 

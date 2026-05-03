@@ -286,7 +286,7 @@ function esignPrepare() {
         const res = await fetch('/api/documents/?limit=200');
         if (res.ok) {
           const data = await res.json();
-          this.documents = (data.items || []).filter(d => d.format === 'pdf' || d.format === 'docx');
+          this.documents = (data.items || []).filter(d => d.format === 'pdf');
         }
       } catch(e) {}
     },
