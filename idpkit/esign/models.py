@@ -129,6 +129,7 @@ class EnvelopeAuditEvent(Base):
     timezone = Column(String(100), nullable=True)
     language = Column(String(50), nullable=True)
     session_id = Column(String(64), nullable=True)
+    notes = Column(String(500), nullable=True)
     extra_json = Column(Text, nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
 

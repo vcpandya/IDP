@@ -195,38 +195,54 @@ def generate_audit_report_pdf(
 
 
 def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hmac_key, envelope_url):
-    page = doc.new_page(-1, width=595, height=1500)  # tall single page
+    PAGE_W = 595
+    PAGE_H = 842  # A4
     margin = 40
-    y = margin
     gray = (0.45, 0.45, 0.45)
     dark = (0.05, 0.05, 0.05)
     blue = (0.18, 0.33, 0.72)
-    red = (0.8, 0.1, 0.1)
-    green = (0.05, 0.55, 0.15)
+
+    # --- Pagination helpers ---
+    pages = []
+    current_page = [None]
+    y_ref = [margin]
+
+    def _new_page():
+        p = doc.new_page(-1, width=PAGE_W, height=PAGE_H)
+        pages.append(p)
+        current_page[0] = p
+        y_ref[0] = margin
+
+    def _ensure_space(needed=20):
+        if y_ref[0] + needed > PAGE_H - margin:
+            _new_page()
 
     def write(text, x=margin, size=9, color=dark, bold=False):
-        nonlocal y
+        _ensure_space(size + 5)
         fname = "hebo" if bold else "helv"
-        safe = str(text)[:200]
-        page.insert_text((x, y), safe, fontsize=size, fontname=fname, color=color)
-        y += size + 3
+        safe = str(text)[:300]
+        current_page[0].insert_text((x, y_ref[0]), safe, fontsize=size, fontname=fname, color=color)
+        y_ref[0] += size + 3
 
     def line(color=(0.8, 0.8, 0.8)):
-        nonlocal y
-        page.draw_line((margin, y), (595 - margin, y), color=color, width=0.5)
-        y += 5
+        _ensure_space(8)
+        current_page[0].draw_line((margin, y_ref[0]), (PAGE_W - margin, y_ref[0]), color=color, width=0.5)
+        y_ref[0] += 5
 
     def section(label):
-        nonlocal y
-        y += 6
-        page.draw_rect(fitz.Rect(margin, y, 595 - margin, y + 18), color=blue, fill=blue)
-        page.insert_text((margin + 4, y + 13), label, fontsize=10, fontname="hebo", color=(1, 1, 1))
-        y += 22
+        _ensure_space(30)
+        y_ref[0] += 6
+        current_page[0].draw_rect(fitz.Rect(margin, y_ref[0], PAGE_W - margin, y_ref[0] + 18), color=blue, fill=blue)
+        current_page[0].insert_text((margin + 4, y_ref[0] + 13), label, fontsize=10, fontname="hebo", color=(1, 1, 1))
+        y_ref[0] += 22
+
+    # Start first page
+    _new_page()
 
     # Header
     write("FORENSIC AUDIT REPORT", size=18, bold=True, color=blue)
     write("Electronic Signature Provenance Record", size=10, color=gray)
-    y += 4
+    y_ref[0] += 4
     line(color=blue)
 
     # Summary
@@ -234,14 +250,14 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
     write(f"Envelope ID:      {envelope_id}", size=9)
     write(f"Document SHA-256: {doc_sha256}", size=8, color=gray)
     write(f"Report Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}", size=9)
-    y += 4
+    y_ref[0] += 4
     line()
 
     # Legal notice
     write(CONSENT_TEXT, size=8, color=gray)
-    y += 4
+    y_ref[0] += 4
 
-    # QR code
+    # QR code (placed on first page, top-right)
     if envelope_url:
         try:
             import qrcode
@@ -251,11 +267,10 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
             img = qr.make_image(fill_color="black", back_color="white")
             buf = io.BytesIO()
             img.save(buf, format="PNG")
-            qr_b64 = buf.getvalue()
-            qr_rect = fitz.Rect(595 - margin - 80, margin, 595 - margin, margin + 80)
-            page.insert_image(qr_rect, stream=qr_b64)
-            page.insert_text(
-                (595 - margin - 80, margin + 84),
+            qr_rect = fitz.Rect(PAGE_W - margin - 80, margin, PAGE_W - margin, margin + 80)
+            pages[0].insert_image(qr_rect, stream=buf.getvalue())
+            pages[0].insert_text(
+                (PAGE_W - margin - 80, margin + 84),
                 "Verify online",
                 fontsize=6,
                 color=gray,
@@ -269,28 +284,39 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
         write(f"Name:   {s.get('name', '')}", bold=True)
         write(f"Email:  {s.get('email', '')}", size=8)
         write(f"Status: {s.get('status', '')}    Signed At: {s.get('signed_at') or '—'}", size=8)
-        write(f"IP:     {s.get('ip_address') or '—'}    UA: {(s.get('user_agent') or '')[:80]}", size=7.5, color=gray)
-        y += 4
+        write(f"IP:     {s.get('ip_address') or '—'}", size=7.5, color=gray)
+        ua_full = (s.get("user_agent") or "")[:200]
+        if ua_full:
+            write(f"UA:     {ua_full}", size=7, color=gray)
+        y_ref[0] += 4
 
-    # Detailed audit events
+    # Detailed audit events — fully paginated, no truncation
     section("DETAILED AUDIT TRAIL")
     cols = ["Timestamp (UTC)", "Actor", "Event", "IP Address", "Browser", "OS", "Geo"]
-    col_w = [110, 120, 80, 80, 80, 60, 60]
+    col_w = [110, 115, 80, 80, 75, 55, 55]
     col_x = [margin]
     for w in col_w[:-1]:
         col_x.append(col_x[-1] + w)
 
-    # Header row
-    for i, col in enumerate(cols):
-        page.insert_text((col_x[i], y + 10), col, fontsize=6.5, fontname="hebo", color=blue)
-    y += 14
-    page.draw_line((margin, y), (595 - margin, y), color=blue, width=0.4)
-    y += 4
+    def _draw_col_headers():
+        for i, col in enumerate(cols):
+            current_page[0].insert_text((col_x[i], y_ref[0] + 10), col, fontsize=6.5, fontname="hebo", color=blue)
+        y_ref[0] += 14
+        current_page[0].draw_line((margin, y_ref[0]), (PAGE_W - margin, y_ref[0]), color=blue, width=0.4)
+        y_ref[0] += 4
+
+    _draw_col_headers()
 
     for ev in events:
+        # Each event row needs ~28 px (main row + UA sub-row + extras + divider)
+        _ensure_space(32)
+        # If we started a new page, re-draw column headers
+        if y_ref[0] == margin:
+            _draw_col_headers()
+
         ts = str(ev.get("created_at") or "")[:19]
         actor = (ev.get("actor_email") or "system")[:18]
-        etype = (ev.get("event_type") or "")[:12]
+        etype = (ev.get("event_type") or "")[:14]
         ip = (ev.get("ip_address") or "")[:15]
         browser = (f"{ev.get('browser_name') or ''} {ev.get('browser_version') or ''}").strip()[:12]
         os_ = (ev.get("os_name") or "")[:10]
@@ -298,13 +324,18 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
 
         row_data = [ts, actor, etype, ip, browser, os_, geo]
         for i, val in enumerate(row_data):
-            page.insert_text((col_x[i], y + 9), val, fontsize=6.5, fontname="helv", color=dark)
-        y += 12
+            current_page[0].insert_text((col_x[i], y_ref[0] + 9), val, fontsize=6.5, fontname="helv", color=dark)
+        y_ref[0] += 12
 
-        # Fingerprint/extra data sub-row
+        # Full User-Agent string sub-row (required forensic field)
+        ua_full = (ev.get("user_agent") or "").strip()
+        if ua_full:
+            write(f"    UA: {ua_full[:180]}", size=6, color=gray)
+
+        # Fingerprint / browser-environment sub-row
         extras = []
         if ev.get("canvas_fingerprint_hash"):
-            extras.append(f"Canvas FP: {ev['canvas_fingerprint_hash'][:16]}…")
+            extras.append(f"CanvasFP: {ev['canvas_fingerprint_hash'][:16]}…")
         if ev.get("screen_resolution"):
             extras.append(f"Screen: {ev['screen_resolution']}")
         if ev.get("timezone"):
@@ -316,14 +347,11 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
         if extras:
             write("    " + "  |  ".join(extras), size=6, color=gray)
 
-        page.draw_line((margin, y), (595 - margin, y), color=(0.9, 0.9, 0.9), width=0.2)
-        y += 2
+        current_page[0].draw_line((margin, y_ref[0]), (PAGE_W - margin, y_ref[0]), color=(0.9, 0.9, 0.9), width=0.2)
+        y_ref[0] += 2
 
-        if y > 1450:
-            break
-
-    # MAC address disclaimer
-    y += 8
+    # Technical notes — on whatever page we end up on
+    y_ref[0] += 8
     section("TECHNICAL NOTES")
     write("MAC Address: Not available — web browsers do not expose device MAC addresses for privacy reasons.", size=8, color=gray)
     write("Browser fingerprint is computed via HTML5 Canvas API (silent, no cookies required).", size=8, color=gray)
