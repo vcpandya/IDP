@@ -97,6 +97,13 @@ async def skills_page(request: Request, user=Depends(get_current_user_optional))
     return templates.TemplateResponse("skills.html", {"request": request, "user": user})
 
 
+@router.get("/connections", response_class=HTMLResponse)
+async def connections_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("connections.html", {"request": request, "user": user})
+
+
 @router.get("/verifier", response_class=HTMLResponse)
 async def verifier_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:

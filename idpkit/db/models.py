@@ -311,6 +311,7 @@ class Skill(Base):
     description = Column(Text, nullable=True)
     skill_content = Column(Text, nullable=False)
     scripts = Column(JSON, nullable=True)
+    requirements = Column(JSON, nullable=True)
     is_active = Column(Integer, default=1)
     created_at = Column(TZDateTime, default=utcnow)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
@@ -319,6 +320,34 @@ class Skill(Base):
 
     __table_args__ = (
         Index("ix_skills_owner_name", "owner_id", "name", unique=True),
+    )
+
+
+class Connection(Base):
+    """A user's authenticated connection to an external SaaS connector.
+
+    Credentials are stored encrypted (Fernet, key derived from SECRET_KEY).
+    Plaintext creds never leave the connector executor and are never logged
+    or sent to the LLM.
+    """
+
+    __tablename__ = "connections"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    connector_id = Column(String(50), nullable=False, index=True)
+    display_name = Column(String(200), nullable=True)
+    encrypted_credentials = Column(Text, nullable=False)
+    connection_metadata = Column(JSON, nullable=True)
+    status = Column(String(20), default="active", index=True)
+    last_checked_at = Column(TZDateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    expires_at = Column(TZDateTime, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("ix_connections_owner_connector", "owner_id", "connector_id"),
     )
 
 

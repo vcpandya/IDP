@@ -494,6 +494,27 @@
                                 </template>
                             </ul>
                         </template>
+                        <template x-if="importPreview.compatibility && (importPreview.compatibility.items || []).length">
+                            <div style="margin-top:12px;padding:10px 12px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-subtle, #f8fafc);">
+                                <div style="font-weight:600;font-size:12px;text-transform:uppercase;color:var(--text-secondary);margin-bottom:6px;">
+                                    Pre-install checklist
+                                </div>
+                                <template x-for="item in importPreview.compatibility.items" :key="item.id">
+                                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;">
+                                        <i :class="item.status === 'ok' ? 'fas fa-check-circle' : 'fas fa-circle-exclamation'"
+                                           :style="item.status === 'ok' ? 'color:#059669;' : 'color:#b45309;'"></i>
+                                        <span x-text="item.display_name"></span>
+                                        <span style="color:var(--text-muted);" x-text="'— ' + item.message"></span>
+                                        <a x-show="item.status !== 'ok'" href="/connections" target="_blank"
+                                           style="margin-left:auto;font-size:12px;">Connect →</a>
+                                    </div>
+                                </template>
+                                <div x-show="!importPreview.compatibility.ready"
+                                     style="margin-top:6px;font-size:12px;color:#b45309;">
+                                    You can still install — the skill will tell users to connect missing integrations.
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </template>
                 <template x-if="importError">
