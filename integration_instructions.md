@@ -21,6 +21,7 @@ This document describes how an external system can integrate with the IDP Kit RE
 13. [Error Reference](#13-error-reference)
 14. [Typical Integration Workflow](#14-typical-integration-workflow)
 15. [Document Verification](#15-document-verification)
+16. [Agent Skills Importer](#16-agent-skills-importer)
 
 ---
 
@@ -1070,3 +1071,113 @@ curl -X POST https://idpai.replit.app/api/verify/single \
 **Key constraints:** 20 MB per file, max 20 files per batch, supported formats include PDF, images, DOCX, TXT, MD, HTML, and CSV.
 
 For the full endpoint reference including multi-file SSE streaming, response field details, processing methods, and error handling, see **[verify_integration.md](verify_integration.md)**.
+
+---
+
+## 16. Agent Skills Importer
+
+The skills importer accepts three input shapes — a single `SKILL.md`, a `.zip` bundle (with optional `scripts/` and `resources/` files), or a public HTTPS URL — and shares one server-side validator across all of them.
+
+### 16.1 Import a Skill
+
+```
+POST /api/skills/import
+Content-Type: multipart/form-data
+```
+
+**Form fields** (provide exactly one of `file` or `url`):
+
+| Field | Type | Notes |
+|---|---|---|
+| `file` | upload | `.md` or `.zip`. Max 5 MB, max 50 files inside a ZIP. |
+| `url` | string | Public HTTPS URL — raw `SKILL.md`, `github.com/.../blob/...`, or `.zip`. |
+| `preview` | boolean | If `true`, parse and return without saving. |
+| `overwrite` | boolean | If `true`, replace an existing skill of the same name. |
+
+**Response (200 — saved)**
+
+```json
+{
+  "id": "skill-uuid",
+  "name": "my-skill",
+  "description": "...",
+  "is_active": true,
+  "scripts_count": 3,
+  "warnings": ["Skipped oversized resource (>65536 bytes): big.md"],
+  "created_at": "2026-05-03T12:00:00Z",
+  "updated_at": "2026-05-03T12:00:00Z"
+}
+```
+
+**Response (200 — preview)**
+
+```json
+{
+  "preview": {
+    "name": "my-skill",
+    "description": "...",
+    "skill_content": "---\nname: my-skill\n...",
+    "scripts": [{"path": "scripts/run.py", "kind": "script", "size": 412}],
+    "warnings": []
+  }
+}
+```
+
+**Errors**
+
+| Code | Reason |
+|---|---|
+| 400 | Validation failure (bad ZIP, missing `SKILL.md`, missing frontmatter `name`, non-HTTPS URL, private/loopback host, etc.) |
+| 409 | A skill with that name already exists (pass `overwrite=true` to replace) |
+| 413 | Upload exceeds 5 MB |
+
+**Security notes**
+
+- URLs must use `https://`. Each redirect is re-validated.
+- Hostnames must resolve to public, routable IPs — private (`10.*`, `192.168.*`, `172.16-31.*`), loopback (`127.*`), link-local, multicast, and reserved ranges are rejected.
+- ZIP bundles reject path traversal (`../`), absolute paths, and symlinks.
+- Resource files larger than 64 KB are dropped (recorded in `warnings`).
+
+### 16.2 Browse the Community Catalog
+
+```
+GET /api/skills/community?refresh=false
+```
+
+Returns the agentskills.io catalog cached server-side for 5 minutes.
+
+**Response (200)**
+
+```json
+{
+  "items": [
+    {
+      "id": "legal-contracts",
+      "name": "Legal Contracts",
+      "description": "Analyse legal contracts...",
+      "category": "legal",
+      "author": "community",
+      "url": "https://raw.githubusercontent.com/.../SKILL.md",
+      "installed_hint": false
+    }
+  ],
+  "count": 1
+}
+```
+
+If the catalog is unreachable the response falls back to the last successful fetch (or an empty list).
+
+### 16.3 Install from the Community Catalog
+
+```
+POST /api/skills/community/install
+Content-Type: application/json
+
+{
+  "url": "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+  "overwrite": false,
+  "preview": false
+}
+```
+
+Internally reuses the same URL resolver as `/api/skills/import` and returns the same response shape.
