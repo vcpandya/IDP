@@ -292,6 +292,7 @@ async def create_envelope(
             name=s.name,
             email=s.email,
             order_index=s.order_index,
+            download_token=secrets.token_urlsafe(32),
         )
         db.add(signer)
 
@@ -453,6 +454,7 @@ async def update_signers(
             name=s.name,
             email=s.email,
             order_index=s.order_index,
+            download_token=secrets.token_urlsafe(32),
         )
         db.add(signer)
 
@@ -648,12 +650,23 @@ async def download_audit_report(
     env = result.scalar_one_or_none()
     if not env:
         raise HTTPException(status_code=404, detail="Envelope not found")
+    if env.status != EnvelopeStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="Audit report is only available for completed envelopes")
 
-    # Regenerate on-the-fly if needed (also try cached version)
     if env.audit_report_key and storage.exists(env.audit_report_key):
         pdf_bytes = storage.load(env.audit_report_key)
     else:
-        pdf_bytes = await _generate_and_store_audit_report(env, storage, db)
+        try:
+            pdf_bytes = await _generate_and_store_audit_report(env, storage, db)
+        except Exception as exc:
+            logger.error("Audit report generation failed on demand: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to generate forensic audit report") from exc
+
+    if not pdf_bytes:
+        raise HTTPException(
+            status_code=500,
+            detail="Audit report generation requires SECRET_KEY to be configured.",
+        )
 
     safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in env.title)
     filename = f"audit_report_{safe_title[:50]}.pdf"
@@ -875,6 +888,16 @@ async def get_signing_page_image(
     env = signer.envelope
     if env.status in (EnvelopeStatus.VOIDED.value, EnvelopeStatus.EXPIRED.value):
         raise HTTPException(status_code=410, detail="Envelope is no longer active")
+
+    now_check = datetime.now(timezone.utc)
+    if env.expires_at and now_check > env.expires_at:
+        env.status = EnvelopeStatus.EXPIRED.value
+        db.add(env)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise HTTPException(status_code=410, detail="This signing link has expired")
 
     # Log page-view event (only once per page per session to avoid noise, suppress commit errors silently)
     try:
@@ -1129,18 +1152,22 @@ async def submit_signature(
         from idpkit.esign.email import send_completion_notice
 
         base_url = str(request.base_url).rstrip("/")
-        download_url = f"{base_url}/esign"
         for s in all_signers:
+            # Each signer gets their own public token-based download URL (no login required)
+            if s.download_token:
+                signer_download_url = f"{base_url}/api/esign/download/{s.download_token}"
+            else:
+                signer_download_url = f"{base_url}/esign"
             await send_completion_notice(
                 recipient_email=s.email,
                 recipient_name=s.name,
                 envelope_title=env.title,
-                download_url=download_url,
+                download_url=signer_download_url,
                 pdf_bytes=signed_pdf_with_cert,
                 filename=f"signed_{env.title[:40]}.pdf",
             )
 
-        # Also notify the sender
+        # Also notify the sender (authenticated dashboard link is fine for the owner)
         result_owner = await db.execute(
             select(User).where(User.id == env.owner_id)
         )
@@ -1219,6 +1246,42 @@ async def signer_download(
         raise HTTPException(status_code=400, detail="Document is not yet complete")
 
     # Audit log the download event
+    try:
+        await _log_event(db, env.id, "signed_document_downloaded", actor_email=signer.email, request=request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
+    pdf_bytes = storage.load(env.finalized_file_key)
+    safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in env.title)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="signed_{safe_title[:60]}.pdf"'},
+    )
+
+
+@router.get("/download/{download_token}")
+async def signer_download_by_token(
+    download_token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    """Public: allow completion-email recipients to download finalized document (no login needed)."""
+    result = await db.execute(
+        select(EnvelopeSigner)
+        .options(selectinload(EnvelopeSigner.envelope))
+        .where(EnvelopeSigner.download_token == download_token)
+    )
+    signer = result.scalar_one_or_none()
+    if not signer or not signer.envelope:
+        raise HTTPException(status_code=404, detail="Invalid or expired download link")
+
+    env = signer.envelope
+    if env.status != EnvelopeStatus.COMPLETED.value or not env.finalized_file_key:
+        raise HTTPException(status_code=400, detail="Document is not yet complete")
+
     try:
         await _log_event(db, env.id, "signed_document_downloaded", actor_email=signer.email, request=request)
         await db.commit()
