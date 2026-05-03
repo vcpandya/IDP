@@ -15,6 +15,7 @@ get encrypted, and are never echoed back. GETs return only public metadata.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -200,6 +201,28 @@ async def disconnect(
 # ---------------------------------------------------------------------------
 
 def _oauth_redirect_uri(request: Request) -> str:
+    """Build the OAuth callback URL.
+
+    To prevent open-redirect / host-spoofing, production deployments MUST set
+    `OAUTH_REDIRECT_BASE_URL` (the canonical https origin of the deployment).
+    A comma-separated `OAUTH_ALLOWED_HOSTS` env var may additionally restrict
+    which request hosts are acceptable when no explicit base is set
+    (useful for multi-domain dev). Falls back to the request host only when
+    neither is configured (dev convenience).
+    """
+    explicit = os.environ.get("OAUTH_REDIRECT_BASE_URL", "").strip().rstrip("/")
+    if explicit:
+        return f"{explicit}/api/connectors/oauth/callback"
+    allowed = [
+        h.strip().lower() for h in os.environ.get("OAUTH_ALLOWED_HOSTS", "").split(",")
+        if h.strip()
+    ]
+    request_host = (request.url.hostname or "").lower()
+    if allowed and request_host not in allowed:
+        raise HTTPException(
+            400,
+            f"OAuth redirect host '{request_host}' is not in OAUTH_ALLOWED_HOSTS.",
+        )
     base = str(request.base_url).rstrip("/")
     return f"{base}/api/connectors/oauth/callback"
 

@@ -118,25 +118,248 @@ def test_check_compatibility_ready_and_missing():
     assert out2["missing_connectors"] == []
 
 
-def test_capability_prompt_section_lists_available_and_unavailable():
+def test_capability_prompt_section_lists_connected_only_when_no_skills():
     from idpkit.connectors.runtime import build_capability_prompt_section
 
-    class _Conn:  # minimal stub matching the .connector_id attribute
+    class _Conn:
         def __init__(self, cid):
             self.connector_id = cid
 
-    txt = build_capability_prompt_section([_Conn("slack")])
+    # No active skills → no "missing required" section is shown.
+    txt = build_capability_prompt_section([_Conn("slack")], active_skills=[])
     assert "Connector Availability" in txt
     assert "Slack" in txt
-    # Other registered connectors are unavailable
-    assert "Notion" in txt or "GitHub" in txt
-    assert "Not connected" in txt
+    assert "Required by installed skills" not in txt
 
 
-def test_capability_prompt_section_no_connections():
+def test_capability_prompt_section_calls_out_skill_required_missing():
     from idpkit.connectors.runtime import build_capability_prompt_section
-    txt = build_capability_prompt_section([])
+
+    class _Conn:
+        def __init__(self, cid):
+            self.connector_id = cid
+
+    skills = [
+        {"name": "daily-digest", "requirements": {"connectors": ["slack", "notion"]}},
+        {"name": "ticket-bot", "requirements": {"connectors": ["github"]}},
+    ]
+    txt = build_capability_prompt_section([_Conn("slack")], active_skills=skills)
+    assert "Notion" in txt and "GitHub" in txt
+    assert "Required by installed skills" in txt
+    assert "daily-digest" in txt
+    assert "ticket-bot" in txt
+    # Connectors NOT mentioned by any skill must NOT be listed (e.g. dropbox).
+    assert "Dropbox" not in txt
+
+
+def test_capability_prompt_section_no_connections_no_skills():
+    from idpkit.connectors.runtime import build_capability_prompt_section
+    txt = build_capability_prompt_section([], active_skills=[])
     assert "no external integrations connected" in txt
+    assert "Required by installed skills" not in txt
+
+
+# ---------------------------------------------------------------------------
+# OAuth redirect URI pinning
+# ---------------------------------------------------------------------------
+
+def test_oauth_redirect_uri_uses_explicit_base_when_set(monkeypatch):
+    from types import SimpleNamespace
+    from idpkit.api.routes.connectors import _oauth_redirect_uri
+
+    monkeypatch.setenv("OAUTH_REDIRECT_BASE_URL", "https://idpkit.example.com")
+    monkeypatch.delenv("OAUTH_ALLOWED_HOSTS", raising=False)
+    fake_req = SimpleNamespace(
+        url=SimpleNamespace(hostname="attacker.evil"),
+        base_url="https://attacker.evil/",
+    )
+    uri = _oauth_redirect_uri(fake_req)
+    assert uri == "https://idpkit.example.com/api/connectors/oauth/callback"
+
+
+def test_oauth_redirect_uri_rejects_unallowed_host(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from idpkit.api.routes.connectors import _oauth_redirect_uri
+
+    monkeypatch.delenv("OAUTH_REDIRECT_BASE_URL", raising=False)
+    monkeypatch.setenv("OAUTH_ALLOWED_HOSTS", "idpkit.example.com,localhost")
+    fake_req = SimpleNamespace(
+        url=SimpleNamespace(hostname="attacker.evil"),
+        base_url="https://attacker.evil/",
+    )
+    with pytest.raises(HTTPException) as ei:
+        _oauth_redirect_uri(fake_req)
+    assert ei.value.status_code == 400
+
+
+def test_oauth_redirect_uri_falls_back_to_request_in_dev(monkeypatch):
+    from types import SimpleNamespace
+    from idpkit.api.routes.connectors import _oauth_redirect_uri
+
+    monkeypatch.delenv("OAUTH_REDIRECT_BASE_URL", raising=False)
+    monkeypatch.delenv("OAUTH_ALLOWED_HOSTS", raising=False)
+    fake_req = SimpleNamespace(
+        url=SimpleNamespace(hostname="localhost"),
+        base_url="http://localhost:5000/",
+    )
+    uri = _oauth_redirect_uri(fake_req)
+    assert uri == "http://localhost:5000/api/connectors/oauth/callback"
+
+
+# ---------------------------------------------------------------------------
+# Runtime OAuth refresh
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_runtime_oauth_refresh_retries_after_auth_error(_env, monkeypatch):
+    """If a tool raises ConnectorAuthError but the connector supports refresh
+    and we have a refresh_token, the runtime must refresh, persist the new
+    token (encrypted), and retry the call once."""
+    from idpkit.connectors import encrypt_credentials
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthError, ConnectorAuthType, ConnectorTool,
+    )
+    from idpkit.connectors.crypto import decrypt_credentials
+    from idpkit.connectors.runtime import build_runtime_executors
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.db.models import Connection
+    from idpkit.db.session import init_db, async_session
+
+    await init_db()
+
+    calls = {"count": 0, "refresh_count": 0}
+
+    async def _flaky_executor(args, creds):
+        calls["count"] += 1
+        if creds.get("access_token") == "old-token":
+            raise ConnectorAuthError("expired")
+        return {"ok": True, "saw_token": creds["access_token"]}
+
+    async def _refresher(creds):
+        calls["refresh_count"] += 1
+        assert creds.get("refresh_token") == "rt-1"
+        return {"access_token": "new-token", "expires_in": 3600}
+
+    fake = Connector(
+        id="fake_oauth",
+        display_name="Fake OAuth",
+        description="test",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=_flaky_executor,
+        )],
+        oauth_refresh=_refresher,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        async with async_session() as db:
+            row = Connection(
+                owner_id="user-test-refresh",
+                connector_id="fake_oauth",
+                encrypted_credentials=encrypt_credentials({
+                    "access_token": "old-token", "refresh_token": "rt-1",
+                }),
+                status="active",
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+            row_id = row.id
+
+            execs = build_runtime_executors(db, "user-test-refresh")
+            assert "fake_oauth_do" in execs
+            result = await execs["fake_oauth_do"]({}, None, db)
+            assert result == {"ok": True, "saw_token": "new-token"}
+            assert calls["refresh_count"] == 1
+            assert calls["count"] == 2  # called twice (failed then succeeded)
+
+            await db.refresh(row)
+            stored = decrypt_credentials(row.encrypted_credentials)
+            assert stored["access_token"] == "new-token"
+            assert stored["refresh_token"] == "rt-1"  # preserved
+            assert row.status == "active"
+    finally:
+        REGISTRY.pop("fake_oauth", None)
+
+
+@pytest.mark.asyncio
+async def test_runtime_marks_disconnected_when_refresh_fails(_env, monkeypatch):
+    from idpkit.connectors import encrypt_credentials
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthError, ConnectorAuthType, ConnectorTool,
+    )
+    from idpkit.connectors.runtime import build_runtime_executors
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.db.models import Connection
+    from idpkit.db.session import init_db, async_session
+
+    await init_db()
+
+    async def _always_fails(args, creds):
+        raise ConnectorAuthError("expired")
+
+    async def _refresh_fails(creds):
+        raise ConnectorAuthError("refresh denied")
+
+    fake = Connector(
+        id="fake_oauth_bad",
+        display_name="Fake OAuth Bad",
+        description="test",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_bad_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=_always_fails,
+        )],
+        oauth_refresh=_refresh_fails,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        async with async_session() as db:
+            row = Connection(
+                owner_id="user-bad-refresh",
+                connector_id="fake_oauth_bad",
+                encrypted_credentials=encrypt_credentials({
+                    "access_token": "x", "refresh_token": "y",
+                }),
+                status="active",
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+
+            execs = build_runtime_executors(db, "user-bad-refresh")
+            result = await execs["fake_oauth_bad_do"]({}, None, db)
+            assert "error" in result
+
+            await db.refresh(row)
+            assert row.status == "disconnected"
+            assert "refresh failed" in (row.last_error or "")
+    finally:
+        REGISTRY.pop("fake_oauth_bad", None)
+
+
+# ---------------------------------------------------------------------------
+# Google has wave-1 tools
+# ---------------------------------------------------------------------------
+
+def test_google_connector_includes_drive_gmail_sheets_calendar():
+    from idpkit.connectors.registry import get_connector
+    g = get_connector("google")
+    names = {t.name for t in g.tools}
+    assert {
+        "google_drive_search",
+        "google_gmail_send",
+        "google_sheets_read_range",
+        "google_sheets_append_row",
+        "google_calendar_list_events",
+        "google_calendar_create_event",
+    }.issubset(names)
 
 
 # ---------------------------------------------------------------------------
