@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Envelope Verification — E-Sign{% endblock %}
+{% block content %}
+<div x-data="esignDetail()" x-init="init()" style="max-width:760px;margin:0 auto">
+
+  <div class="page-header" style="margin-bottom:24px">
+    <h2><i class="fas fa-shield-alt"></i> Envelope Verification</h2>
+    <a href="/esign" class="btn"><i class="fas fa-arrow-left"></i> Dashboard</a>
+  </div>
+
+  <div x-show="loading" style="text-align:center;padding:60px;color:var(--text-muted)">
+    <i class="fas fa-spinner fa-spin fa-2x"></i>
+    <p style="margin-top:12px">Loading envelope…</p>
+  </div>
+
+  <div x-show="error && !loading" style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:24px;text-align:center">
+    <i class="fas fa-exclamation-triangle" style="font-size:2rem;color:#ef4444;margin-bottom:8px;display:block"></i>
+    <p style="color:#7f1d1d;font-weight:600" x-text="error"></p>
+  </div>
+
+  <div x-show="env && !loading">
+    <!-- Status banner -->
+    <div style="border-radius:12px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;gap:16px"
+         :style="statusStyle(env && env.status)">
+      <i class="fas fa-3x" :class="statusIcon(env && env.status)" style="opacity:0.85"></i>
+      <div>
+        <div style="font-size:1.2rem;font-weight:700" x-text="statusLabel(env && env.status)"></div>
+        <div style="font-size:0.85rem;opacity:0.8" x-text="statusSub(env && env.status)"></div>
+      </div>
+    </div>
+
+    <!-- Envelope metadata -->
+    <div class="panel-card" style="margin-bottom:16px">
+      <h4 style="margin:0 0 14px;font-size:0.85rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em">
+        <i class="fas fa-file-signature"></i> Document Details
+      </h4>
+      <table style="width:100%;border-collapse:collapse;font-size:0.88rem">
+        <tr><td style="padding:6px 0;color:var(--text-muted);width:140px">Title</td><td style="font-weight:600" x-text="env && env.title"></td></tr>
+        <tr><td style="padding:6px 0;color:var(--text-muted)">Envelope ID</td><td style="font-family:monospace;font-size:0.78rem" x-text="env && env.id"></td></tr>
+        <tr><td style="padding:6px 0;color:var(--text-muted)">Status</td><td><span class="badge" :class="badgeClass(env && env.status)" x-text="statusLabel(env && env.status)"></span></td></tr>
+        <tr><td style="padding:6px 0;color:var(--text-muted)">Created</td><td x-text="formatDate(env && env.created_at)"></td></tr>
+        <tr x-show="env && env.completed_at"><td style="padding:6px 0;color:var(--text-muted)">Completed</td><td x-text="formatDate(env && env.completed_at)"></td></tr>
+        <tr x-show="env && env.doc_sha256"><td style="padding:6px 0;color:var(--text-muted)">SHA-256</td><td style="font-family:monospace;font-size:0.72rem;word-break:break-all" x-text="env && env.doc_sha256"></td></tr>
+      </table>
+    </div>
+
+    <!-- Signers -->
+    <div class="panel-card" style="margin-bottom:16px">
+      <h4 style="margin:0 0 14px;font-size:0.85rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em">
+        <i class="fas fa-users"></i> Signers (<span x-text="env && env.signers ? env.signers.length : 0"></span>)
+      </h4>
+      <template x-for="s in (env && env.signers || [])" :key="s.id">
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem"
+               :style="'background:' + signerBg(s.status) + ';color:' + signerColor(s.status)">
+            <i class="fas" :class="signerIcon(s.status)"></i>
+          </div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:0.9rem" x-text="s.name"></div>
+            <div style="font-size:0.78rem;color:var(--text-muted)" x-text="s.email"></div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:0.8rem;font-weight:600" :style="'color:' + signerColor(s.status)" x-text="signerLabel(s.status)"></div>
+            <div style="font-size:0.72rem;color:var(--text-muted)" x-show="s.signed_at" x-text="formatDate(s.signed_at)"></div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Integrity notice -->
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px;font-size:0.82rem;color:#14532d">
+      <i class="fas fa-lock" style="margin-right:6px;color:#16a34a"></i>
+      <strong>Integrity Statement:</strong> This envelope record is stored with a cryptographic HMAC seal.
+      The completed signed PDF contains an embedded Audit Report with SHA-256 document hash,
+      per-signer identity data, IP addresses, timestamps, and a QR code linking to this page.
+    </div>
+  </div>
+</div>
+
+<script>
+function esignDetail() {
+  return {
+    envelopeId: '{{ envelope_id }}',
+    env: null,
+    loading: true,
+    error: null,
+
+    async init() {
+      try {
+        const res = await fetch(`/api/esign/envelopes/${this.envelopeId}`);
+        if (res.ok) {
+          this.env = await res.json();
+        } else if (res.status === 404) {
+          this.error = 'Envelope not found.';
+        } else if (res.status === 401) {
+          this.error = 'Sign in to view this envelope.';
+        } else {
+          this.error = 'Unable to load envelope details.';
+        }
+      } catch(e) {
+        this.error = 'Network error loading envelope.';
+      }
+      this.loading = false;
+    },
+
+    statusLabel(s) {
+      return { draft:'Draft', sent:'Awaiting Signatures', viewed:'Viewed by Signer', partially_signed:'Partially Signed', completed:'Completed — All Signed', declined:'Declined', voided:'Voided', expired:'Expired' }[s] || (s || '');
+    },
+
+    statusSub(s) {
+      return { draft:'Not yet sent to signers', sent:'Waiting for all signers to complete', viewed:'At least one signer has opened the document', partially_signed:'Some signers have completed; others are pending', completed:'All parties have signed this document', declined:'A signer declined to sign', voided:'This envelope was voided by the sender', expired:'The signing deadline has passed' }[s] || '';
+    },
+
+    statusStyle(s) {
+      const map = {
+        completed: 'background:#f0fdf4;border:1.5px solid #bbf7d0;color:#14532d',
+        partially_signed: 'background:#fffbeb;border:1.5px solid #fde68a;color:#78350f',
+        viewed: 'background:#eff6ff;border:1.5px solid #bfdbfe;color:#1e3a8a',
+        sent: 'background:#eff6ff;border:1.5px solid #bfdbfe;color:#1e3a8a',
+        declined: 'background:#fef2f2;border:1.5px solid #fca5a5;color:#7f1d1d',
+        voided: 'background:#fef2f2;border:1.5px solid #fca5a5;color:#7f1d1d',
+        expired: 'background:#fef2f2;border:1.5px solid #fca5a5;color:#7f1d1d',
+        draft: 'background:#f9fafb;border:1.5px solid var(--border);color:var(--text-secondary)',
+      };
+      return map[s] || map.draft;
+    },
+
+    statusIcon(s) {
+      return { completed:'fa-check-circle', partially_signed:'fa-adjust', viewed:'fa-eye', sent:'fa-clock', declined:'fa-times-circle', voided:'fa-ban', expired:'fa-hourglass-end', draft:'fa-edit' }[s] || 'fa-circle';
+    },
+
+    badgeClass(s) {
+      return { completed:'status-indexed', partially_signed:'status-indexing', viewed:'status-indexing', sent:'status-indexing', declined:'status-failed', voided:'status-failed', expired:'status-failed', draft:'status-uploaded' }[s] || '';
+    },
+
+    signerLabel(s) {
+      return { signed:'Signed', viewed:'Viewed', sent:'Awaiting', pending:'Pending', declined:'Declined' }[s] || s;
+    },
+
+    signerIcon(s) {
+      return { signed:'fa-check', viewed:'fa-eye', sent:'fa-clock', pending:'fa-clock', declined:'fa-times' }[s] || 'fa-circle';
+    },
+
+    signerColor(s) {
+      return { signed:'#16a34a', viewed:'#d97706', sent:'#9ca3af', pending:'#9ca3af', declined:'#dc2626' }[s] || '#9ca3af';
+    },
+
+    signerBg(s) {
+      return { signed:'#f0fdf4', viewed:'#fffbeb', sent:'#f9fafb', pending:'#f9fafb', declined:'#fef2f2' }[s] || '#f9fafb';
+    },
+
+    formatDate(d) {
+      if (!d) return '';
+      return new Date(d).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    },
+  }
+}
+</script>
+{% endblock %}
