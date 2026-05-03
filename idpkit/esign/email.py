@@ -154,10 +154,14 @@ async def _send(
 ) -> bool:
     api_key = _api_key()
     if not api_key:
+        body_preview = body[:2000] + "…[truncated]" if len(body) > 2000 else body
         logger.warning(
-            "[E-Sign EMAIL FALLBACK] No EMAIL_API_KEY set.\n"
-            "  To: %s\n  Subject: %s\n  URL: %s",
-            to, subject, signing_url or "(no url)",
+            "[E-Sign EMAIL FALLBACK] No EMAIL_API_KEY set — email not delivered.\n"
+            "  To:      %s\n"
+            "  Subject: %s\n"
+            "  URL:     %s\n"
+            "  Body:\n%s",
+            to, subject, signing_url or "(no url)", body_preview,
         )
         return False
 
