@@ -246,7 +246,7 @@ def _load_envelope_pdf(env: SignatureEnvelope, storage: StorageBackend) -> bytes
 # Sender Routes (authenticated)
 # ---------------------------------------------------------------------------
 
-@router.post("/envelopes", status_code=201)
+@router.post("/envelopes", status_code=201, summary="Create envelope (multipart: upload PDF or reference document_id)")
 async def create_envelope(
     title: str = fastapi_Form(...),
     message: Optional[str] = fastapi_Form(None),
@@ -353,7 +353,7 @@ async def create_envelope(
     return _envelope_response(env)
 
 
-@router.post("/envelopes/upload", status_code=201)
+@router.post("/envelopes/upload", status_code=201, summary="Create envelope from uploaded PDF (legacy alias for POST /envelopes)")
 async def create_envelope_upload_alias(
     title: str = fastapi_Form(...),
     message: Optional[str] = fastapi_Form(None),
@@ -377,7 +377,7 @@ async def create_envelope_upload_alias(
     )
 
 
-@router.get("/envelopes")
+@router.get("/envelopes", summary="List envelopes owned by the authenticated user")
 async def list_envelopes(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -392,7 +392,7 @@ async def list_envelopes(
     return [_envelope_response(e) for e in envelopes]
 
 
-@router.get("/envelopes/{envelope_id}")
+@router.get("/envelopes/{envelope_id}", summary="Get envelope details, signers, fields, and finalized state")
 async def get_envelope(
     envelope_id: str,
     user: User = Depends(get_current_user),
@@ -434,7 +434,7 @@ async def get_envelope(
     return resp
 
 
-@router.put("/envelopes/{envelope_id}/signers")
+@router.put("/envelopes/{envelope_id}/signers", summary="Replace signer list (draft only)")
 async def update_signers(
     envelope_id: str,
     signers: list[SignerIn],
@@ -474,7 +474,7 @@ async def update_signers(
     return {"detail": "Signers updated"}
 
 
-@router.put("/envelopes/{envelope_id}/fields")
+@router.put("/envelopes/{envelope_id}/fields", summary="Replace field placements (draft only)")
 async def update_fields(
     envelope_id: str,
     body: UpdateFieldsIn,
@@ -518,7 +518,7 @@ async def update_fields(
     return {"detail": "Fields saved"}
 
 
-@router.post("/envelopes/{envelope_id}/send")
+@router.post("/envelopes/{envelope_id}/send", summary="Send envelope: transition draft→sent, dispatch invitations")
 async def send_envelope(
     envelope_id: str,
     request: Request,
@@ -609,7 +609,7 @@ async def send_envelope(
     return {"detail": "Envelope sent", "signer_count": invites_sent}
 
 
-@router.get("/envelopes/{envelope_id}/pdf-page/{page}")
+@router.get("/envelopes/{envelope_id}/pdf-page/{page}", summary="Owner-only: render a PDF page as PNG for the prepare UI")
 async def get_pdf_page(
     envelope_id: str,
     page: int,
@@ -633,7 +633,7 @@ async def get_pdf_page(
     return {"page": page, "image_b64": img_b64, "total_pages": env.page_count}
 
 
-@router.get("/envelopes/{envelope_id}/download")
+@router.get("/envelopes/{envelope_id}/download", summary="Owner-only: download finalized signed PDF (with audit certificate appended)")
 async def download_signed_pdf(
     envelope_id: str,
     user: User = Depends(get_current_user),
@@ -663,7 +663,7 @@ async def download_signed_pdf(
     )
 
 
-@router.get("/envelopes/{envelope_id}/audit-report")
+@router.get("/envelopes/{envelope_id}/audit-report", summary="Owner-only: download standalone audit report PDF (HMAC-signed)")
 async def download_audit_report(
     envelope_id: str,
     user: User = Depends(get_current_user),
@@ -705,7 +705,7 @@ async def download_audit_report(
     )
 
 
-@router.post("/envelopes/{envelope_id}/void")
+@router.post("/envelopes/{envelope_id}/void", summary="Void an in-progress envelope (cannot be undone)")
 async def void_envelope(
     envelope_id: str,
     request: Request,
@@ -745,7 +745,7 @@ async def void_envelope(
     return {"detail": "Envelope voided"}
 
 
-@router.post("/envelopes/{envelope_id}/resend/{signer_id}")
+@router.post("/envelopes/{envelope_id}/resend/{signer_id}", summary="Resend invitation email to a specific signer (sent/viewed/partially_signed/declined)")
 async def resend_invitation(
     envelope_id: str,
     signer_id: str,
@@ -814,7 +814,7 @@ def _find_signer_by_token(token: str, db):
     return select(EnvelopeSigner).where(EnvelopeSigner.token_hash == token_hash)
 
 
-@router.get("/sign/{token}")
+@router.get("/sign/{token}", summary="Public: fetch signing context for a signer's invitation token (no auth)")
 async def get_signing_context(
     token: str,
     request: Request,
@@ -905,7 +905,7 @@ async def get_signing_context(
     }
 
 
-@router.get("/sign/{token}/page/{page}")
+@router.get("/sign/{token}/page/{page}", summary="Public: render a PDF page as PNG for the signer UI")
 async def get_signing_page_image(
     token: str,
     page: int,
@@ -952,7 +952,7 @@ async def get_signing_page_image(
     return {"page": page, "image_b64": img_b64, "total_pages": env.page_count}
 
 
-@router.post("/sign/{token}/submit")
+@router.post("/sign/{token}/submit", summary="Public: submit signature/initials/date/text values; finalizes envelope when all signers complete")
 async def submit_signature(
     token: str,
     body: SubmitSignatureIn,
@@ -1312,7 +1312,7 @@ class DeclineIn(BaseModel):
     reason: Optional[str] = None
 
 
-@router.post("/sign/{token}/decline")
+@router.post("/sign/{token}/decline", summary="Public: decline to sign with a reason; transitions envelope to declined")
 async def decline_signature(
     token: str,
     body: DeclineIn,
@@ -1368,7 +1368,7 @@ async def decline_signature(
     return {"declined": True, "envelope_title": env.title}
 
 
-@router.get("/sign/{token}/download")
+@router.get("/sign/{token}/download", summary="Public: signer downloads finalized PDF using their signing token")
 async def signer_download(
     token: str,
     request: Request,
@@ -1406,7 +1406,7 @@ async def signer_download(
     )
 
 
-@router.get("/download/{download_token}")
+@router.get("/download/{download_token}", summary="Public: download finalized PDF via one-time completion-email token")
 async def signer_download_by_token(
     download_token: str,
     request: Request,
