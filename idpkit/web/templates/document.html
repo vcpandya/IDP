@@ -15,6 +15,7 @@
             <button @click="triggerIndex()" class="btn btn-outline" x-show="doc.status === 'indexed'" :disabled="indexing">
                 <i class="fas fa-sync-alt"></i> Re-Index
             </button>
+            <a x-show="doc.format === 'pdf'" :href="'/esign/new?document_id=' + doc.id + '&title=' + encodeURIComponent(doc.filename || '')" class="btn btn-primary" style="background:#4f46e5"><i class="fas fa-file-signature"></i> E-Sign</a>
             <a :href="'/api/documents/' + doc.id + '/download'" class="btn"><i class="fas fa-download"></i> Download</a>
             <button @click="deleteDocument()" class="btn btn-danger">
                 <i class="fas fa-trash"></i> Delete
