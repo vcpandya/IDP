@@ -1,0 +1,186 @@
+Email Service API Documentation
+Overview
+This API provides email sending capabilities with optional AI-generated content using OpenAI's GPT models. It supports both plain text and HTML emails with CC functionality.
+
+Base URL
+https://myutils.replit.app
+Authentication
+All requests require an API key passed in the header:
+
+X-API-KEY: EMAIL_API_KEY
+Endpoints
+Send Email
+GET/POST /send_email
+
+Sends an email to specified recipients with either provided content or AI-generated content. Supports file attachments via POST requests.
+
+Required Parameters
+Parameter	Type	Description
+to	string	Comma-separated list of recipient email addresses
+subject	string	Email subject line
+Content Parameters (One Required)
+Parameter	Type	Description
+body	string	Email body content (plain text or HTML)
+prompt	string	User prompt for AI-generated content
+Optional Parameters
+Parameter	Type	Default	Description
+cc	string	""	Comma-separated list of CC email addresses
+system	string	"You are an assistant that drafts professional emails."	System prompt for AI generation
+model	string	"gpt-4o-mini"	OpenAI model to use
+temp	float	0.7	Temperature for AI generation (0.0-2.0)
+max_tokens	integer	2000	Maximum tokens for AI response
+include_content	boolean	false	Include generated content in API response
+reply_to	string	""	Reply-to email address
+bcc	string	""	Comma-separated list of BCC email addresses
+Attachment Support (POST only)
+File Upload: Send files using multipart/form-data JSON with Base64: Send base64-encoded files in JSON payload
+
+Example Requests
+Send email with provided body:
+
+GET /send_email?to=user@example.com&subject=Test%20Email&body=Hello%20World
+X-API-KEY: YOUR_API_KEY
+Send AI-generated email:
+
+GET /send_email?to=user@example.com,user2@example.com&cc=manager@example.com&subject=Meeting%20Reminder&prompt=Write%20a%20professional%20reminder%20about%20tomorrow's%20team%20meeting&include_content=true
+X-API-KEY: YOUR_API_KEY
+Advanced AI generation:
+
+GET /send_email?to=client@example.com&subject=Project%20Update&prompt=Write%20a%20project%20status%20update&system=You%20are%20a%20professional%20project%20manager&model=gpt-4o-mini&temp=0.5&max_tokens=1500
+X-API-KEY: YOUR_API_KEY
+Send email with file attachment (multipart/form-data):
+
+curl -X POST "https://your-repl-name.your-username.repl.co/send_email" \
+  -H "X-API-KEY: YOUR_API_KEY" \
+  -F "to=user@example.com" \
+  -F "subject=Document Attached" \
+  -F "body=Please find the attached document." \
+  -F "attachment=@/path/to/file.pdf"
+Send email with base64 attachment (JSON):
+
+curl -X POST "https://your-repl-name.your-username.repl.co/send_email" \
+  -H "X-API-KEY: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "user@example.com",
+    "subject": "Report Attached",
+    "body": "Please find the attached report.",
+    "attachments": [
+      {
+        "filename": "report.pdf",
+        "content": "JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PAo...",
+        "content_type": "application/pdf",
+        "encoding": "base64"
+      }
+    ]
+  }'
+Python example with requests:
+
+import requests
+import base64
+# Method 1: File upload
+with open('document.pdf', 'rb') as f:
+    files = {'attachment': f}
+    data = {
+        'to': 'user@example.com',
+        'subject': 'Document Attached',
+        'body': 'Please find the attached document.'
+    }
+    response = requests.post(
+        'https://your-repl-name.your-username.repl.co/send_email',
+        headers={'X-API-KEY': 'YOUR_API_KEY'},
+        data=data,
+        files=files
+    )
+# Method 2: Base64 JSON
+with open('document.pdf', 'rb') as f:
+    encoded_content = base64.b64encode(f.read()).decode('utf-8')
+payload = {
+    'to': 'user@example.com',
+    'subject': 'Document Attached',
+    'body': 'Please find the attached document.',
+    'attachments': [
+        {
+            'filename': 'document.pdf',
+            'content': encoded_content,
+            'content_type': 'application/pdf',
+            'encoding': 'base64'
+        }
+    ]
+}
+response = requests.post(
+    'https://your-repl-name.your-username.repl.co/send_email',
+    headers={'X-API-KEY': 'YOUR_API_KEY', 'Content-Type': 'application/json'},
+    json=payload
+)
+Response Format
+Success Response (200):
+
+{
+  "status": "Email sent successfully via SES.",
+  "message_id": "000001234567890a-12345678-1234-1234-1234-123456789012-000000",
+  "recipients": {
+    "to": ["user@example.com", "user2@example.com"],
+    "cc": ["manager@example.com"],
+    "bcc": []
+  },
+  "attachments": 1,
+  "content": "Generated email content here..." // Only if include_content=true
+}
+Error Responses:
+
+401 Unauthorized:
+
+{
+  "error": "Unauthorized. Invalid API Key."
+}
+400 Bad Request:
+
+{
+  "error": "Missing 'to' parameter with email addresses"
+}
+500 Internal Server Error:
+
+{
+  "error": "Error message describing the issue"
+}
+Features
+HTML Support
+Automatically detects and handles HTML content
+Converts plain text to HTML with proper formatting
+Supports line breaks and paragraph formatting
+AI Content Generation
+Uses OpenAI GPT models for content generation
+Customizable system prompts for different email types
+Adjustable temperature and token limits
+Automatic HTML formatting for AI-generated content
+Includes AI disclaimer in generated emails
+Email Formatting
+Supports TO, CC, and BCC recipients
+Professional email headers
+HTML email support with fallback
+File attachment support (any file type)
+Attachment Support
+File Upload: Upload files directly using multipart/form-data
+Base64 JSON: Send files as base64-encoded content in JSON payload
+Multiple Attachments: Support for multiple files per email
+Any File Type: PDFs, images, documents, etc.
+Automatic Content-Type Detection: Handles various file formats
+Error Handling
+The API returns appropriate HTTP status codes and descriptive error messages for various scenarios:
+
+Missing required parameters
+Invalid email addresses
+Authentication failures
+SMTP server issues
+OpenAI API errors
+Rate Limits
+Please be mindful of:
+
+OpenAI API rate limits based on your plan
+SMTP server limitations
+Repl resource constraints
+Security Notes
+API keys should be kept secure and not exposed in client-side code
+The service uses Office 365 SMTP for reliable email delivery
+All AI-generated emails include a disclaimer
