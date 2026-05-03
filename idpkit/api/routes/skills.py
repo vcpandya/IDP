@@ -5,12 +5,21 @@ import re
 from typing import List, Optional
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.api.deps import get_current_user, get_db, get_llm
+from idpkit.agent.skill_import import (
+    MAX_TOTAL_SIZE,
+    ParsedSkill,
+    SkillImportError,
+    fetch_community_catalog,
+    import_from_md_bytes,
+    import_from_url,
+    import_from_zip_bytes,
+)
 from idpkit.core.llm import LLMClient
 from idpkit.db.models import Skill, User
 
@@ -165,6 +174,132 @@ async def install_library_skill(
         "is_active": bool(skill.is_active),
         "created_at": skill.created_at.isoformat() if skill.created_at else None,
     }
+
+
+async def _persist_parsed_skill(
+    parsed: ParsedSkill,
+    user: User,
+    db: AsyncSession,
+    overwrite: bool = False,
+) -> dict:
+    """Validate name, save (or overwrite) Skill row, return summary."""
+    name = _validate_skill_name(parsed.name)
+    existing = (await db.execute(
+        select(Skill).where(Skill.owner_id == user.id, Skill.name == name)
+    )).scalar_one_or_none()
+    if existing and not overwrite:
+        raise HTTPException(
+            409,
+            f"Skill '{name}' already exists. Pass overwrite=true to replace it.",
+        )
+    if existing:
+        existing.skill_content = parsed.skill_content
+        existing.description = parsed.description[:1024] if parsed.description else None
+        existing.scripts = parsed.scripts or None
+        existing.is_active = 1
+        await db.commit()
+        await db.refresh(existing)
+        skill = existing
+    else:
+        skill = Skill(
+            owner_id=user.id,
+            name=name,
+            description=parsed.description[:1024] if parsed.description else None,
+            skill_content=parsed.skill_content,
+            scripts=parsed.scripts or None,
+            is_active=1,
+        )
+        db.add(skill)
+        await db.commit()
+        await db.refresh(skill)
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description,
+        "is_active": bool(skill.is_active),
+        "scripts_count": len(parsed.scripts or []),
+        "warnings": parsed.warnings,
+        "created_at": skill.created_at.isoformat() if skill.created_at else None,
+        "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
+    }
+
+
+@router.post("/import", summary="Import a skill from a SKILL.md, ZIP, or public URL")
+async def import_skill(
+    file: Optional[UploadFile] = File(None),
+    url: Optional[str] = Form(None),
+    preview: bool = Form(False),
+    overwrite: bool = Form(False),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not file and not url:
+        raise HTTPException(400, "Either 'file' or 'url' must be provided")
+    if file and url:
+        raise HTTPException(400, "Provide either 'file' or 'url', not both")
+
+    try:
+        if file is not None:
+            data = await file.read()
+            if len(data) > MAX_TOTAL_SIZE:
+                raise HTTPException(413, f"Upload exceeds {MAX_TOTAL_SIZE} bytes")
+            fname = (file.filename or "").lower()
+            if fname.endswith(".zip"):
+                parsed = import_from_zip_bytes(data)
+            else:
+                parsed = import_from_md_bytes(data)
+        else:
+            parsed = await import_from_url(url)
+    except SkillImportError as exc:
+        raise HTTPException(400, str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Skill import failed")
+        raise HTTPException(500, f"Skill import failed: {exc}")
+
+    if preview:
+        return {"preview": parsed.to_preview_dict()}
+
+    return await _persist_parsed_skill(parsed, user, db, overwrite=overwrite)
+
+
+@router.get("/community", summary="Browse the agentskills.io community catalog")
+async def list_community_skills(
+    refresh: bool = False,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    catalog = await fetch_community_catalog(force=refresh)
+    installed_names = set((await db.execute(
+        select(Skill.name).where(Skill.owner_id == user.id)
+    )).scalars().all())
+    enriched = []
+    for entry in catalog:
+        # Best-effort installed-flag using the entry name (may differ from frontmatter name)
+        enriched.append({**entry, "installed_hint": entry.get("name", "").lower().replace(" ", "-") in installed_names})
+    return {"items": enriched, "count": len(enriched)}
+
+
+class CommunityInstallRequest(BaseModel):
+    url: str
+    overwrite: bool = False
+    preview: bool = False
+
+
+@router.post("/community/install", summary="Install a community-catalog skill by URL")
+async def install_community_skill(
+    body: CommunityInstallRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        parsed = await import_from_url(body.url)
+    except SkillImportError as exc:
+        raise HTTPException(400, str(exc))
+    if body.preview:
+        return {"preview": parsed.to_preview_dict()}
+    return await _persist_parsed_skill(parsed, user, db, overwrite=body.overwrite)
 
 
 _SKILL_GEN_PROMPT = """\
