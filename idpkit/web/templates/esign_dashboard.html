@@ -147,11 +147,11 @@ function esignDashboard() {
     },
 
     statusLabel(s) {
-      return { draft:'Draft', sent:'Awaiting Signatures', completed:'Completed', voided:'Voided', expired:'Expired' }[s] || s;
+      return { draft:'Draft', sent:'Awaiting Signatures', viewed:'Viewed', partially_signed:'Partially Signed', completed:'Completed', declined:'Declined', voided:'Voided', expired:'Expired' }[s] || s;
     },
 
     statusClass(s) {
-      return { draft:'status-uploaded', sent:'status-indexing', completed:'status-indexed', voided:'status-failed', expired:'status-failed' }[s] || '';
+      return { draft:'status-uploaded', sent:'status-indexing', viewed:'status-indexing', partially_signed:'status-indexing', completed:'status-indexed', declined:'status-failed', voided:'status-failed', expired:'status-failed' }[s] || '';
     },
 
     signerIcon(s) {

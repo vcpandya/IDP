@@ -291,6 +291,11 @@ async def create_envelope(
             raise HTTPException(status_code=404, detail="Document not found")
         if not doc.file_path:
             raise HTTPException(status_code=400, detail="Document has no stored file")
+        if not doc.file_path.lower().endswith(".pdf"):
+            raise HTTPException(
+                status_code=400,
+                detail="Only PDF documents are supported for e-signature. Please upload a PDF file instead.",
+            )
         content = storage.load(doc.file_path)
         sha = compute_sha256(content)
         pages = get_page_count(content)
@@ -837,6 +842,10 @@ async def get_signing_context(
         signer.viewed_at = now
         signer.status = SignerStatus.VIEWED.value
         db.add(signer)
+        # Envelope-level transition: sent → viewed (on first view by any signer)
+        if env.status == EnvelopeStatus.SENT.value:
+            env.status = EnvelopeStatus.VIEWED.value
+            db.add(env)
     await _log_event(db, env.id, "document_viewed", actor_email=signer.email, request=request)
     await db.commit()
 
@@ -1084,7 +1093,12 @@ async def submit_signature(
         env.completed_at = now
         db.add(env)
         await db.flush()
+    elif env.status not in (EnvelopeStatus.COMPLETED.value, EnvelopeStatus.VOIDED.value, EnvelopeStatus.EXPIRED.value):
+        # Partial: at least this signer is done but others remain
+        env.status = EnvelopeStatus.PARTIALLY_SIGNED.value
+        db.add(env)
 
+    if not unsigned:
         # Reload all events for audit report
         ev_result = await db.execute(
             select(EnvelopeAuditEvent)
@@ -1263,7 +1277,67 @@ async def submit_signature(
                     await _log_event(db, env.id, "invitation_sent", actor_email=ns.email)
 
     await db.commit()
-    return {"signed": True, "completed": False, "envelope_title": env.title}
+    return {"signed": True, "completed": not unsigned, "envelope_title": env.title}
+
+
+class DeclineIn(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post("/sign/{token}/decline")
+async def decline_signature(
+    token: str,
+    body: DeclineIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Public: signer explicitly declines to sign the document."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    result = await db.execute(
+        select(EnvelopeSigner)
+        .options(selectinload(EnvelopeSigner.envelope))
+        .where(EnvelopeSigner.token_hash == token_hash)
+    )
+    signer = result.scalar_one_or_none()
+    if not signer or not signer.envelope:
+        raise HTTPException(status_code=404, detail="Invalid or expired signing link")
+
+    env = signer.envelope
+    now = datetime.now(timezone.utc)
+
+    if env.status in (EnvelopeStatus.VOIDED.value, EnvelopeStatus.EXPIRED.value):
+        raise HTTPException(status_code=410, detail="Envelope is no longer active")
+    if env.expires_at and now > env.expires_at:
+        env.status = EnvelopeStatus.EXPIRED.value
+        db.add(env)
+        await db.commit()
+        raise HTTPException(status_code=410, detail="This signing link has expired")
+    if signer.status == SignerStatus.SIGNED.value:
+        raise HTTPException(status_code=400, detail="Already signed — cannot decline")
+    if signer.status == SignerStatus.DECLINED.value:
+        raise HTTPException(status_code=400, detail="Already declined")
+
+    ip = _client_ip(request)
+    ua_str = request.headers.get("user-agent", "")
+
+    signer.status = SignerStatus.DECLINED.value
+    db.add(signer)
+
+    # Envelope-level transition to declined
+    if env.status not in (EnvelopeStatus.COMPLETED.value, EnvelopeStatus.VOIDED.value):
+        env.status = EnvelopeStatus.DECLINED.value
+        db.add(env)
+
+    notes_str = f"reason={body.reason[:200]}" if body.reason else "no reason given"
+    await _log_event(
+        db, env.id, "signer_declined",
+        actor_email=signer.email,
+        request=request,
+        extra={"notes": notes_str},
+    )
+
+    await db.commit()
+    return {"declined": True, "envelope_title": env.title}
 
 
 @router.get("/sign/{token}/download")
@@ -1413,7 +1487,7 @@ async def _generate_and_store_audit_report(
         logger.error("Skipping audit report HMAC seal — SECRET_KEY not configured")
         return b""
 
-    envelope_url = f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost')}/esign/{env.id}/prepare" if env.id else ""
+    envelope_url = f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost')}/esign/{env.id}/detail" if env.id else ""
 
     report_pdf = await _run_sync(
         generate_audit_report_pdf,

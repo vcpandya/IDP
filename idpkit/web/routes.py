@@ -143,6 +143,11 @@ async def esign_prepare(request: Request, envelope_id: str, user=Depends(get_cur
     return templates.TemplateResponse("esign_prepare.html", {"request": request, "user": user, "envelope_id": envelope_id})
 
 
+@router.get("/esign/{envelope_id}/detail", response_class=HTMLResponse)
+async def esign_detail(request: Request, envelope_id: str):
+    return templates.TemplateResponse("esign_detail.html", {"request": request, "envelope_id": envelope_id})
+
+
 @router.get("/sign/{token}", response_class=HTMLResponse)
 async def esign_sign(request: Request, token: str):
     return templates.TemplateResponse("esign_sign.html", {"request": request, "token": token})
