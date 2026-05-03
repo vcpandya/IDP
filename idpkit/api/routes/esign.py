@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
+from fastapi import APIRouter, Depends, Form as fastapi_Form, HTTPException, Request, UploadFile, File, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -142,12 +142,12 @@ def _parse_ua(ua: str) -> dict:
 
 
 async def _geo_lookup(ip: str) -> dict:
-    """Best-effort IP geolocation using ip-api.com (free, no key needed)."""
+    """Best-effort IP geolocation using ip-api.com over HTTPS (free, no key needed)."""
     if ip in ("unknown", "127.0.0.1", "::1"):
         return {}
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"http://ip-api.com/json/{ip}?fields=country,city,status")
+            resp = await client.get(f"https://ip-api.com/json/{ip}?fields=country,city,status")
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == "success":
@@ -310,9 +310,9 @@ async def create_envelope(
 
 @router.post("/envelopes/upload", status_code=201)
 async def create_envelope_with_upload(
-    title: str,
-    message: Optional[str] = None,
-    signing_order: str = "parallel",
+    title: str = fastapi_Form(...),
+    message: Optional[str] = fastapi_Form(None),
+    signing_order: str = fastapi_Form("parallel"),
     file: UploadFile = File(...),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -923,8 +923,28 @@ async def submit_signature(
     now = datetime.now(timezone.utc)
     if env.status == EnvelopeStatus.VOIDED.value:
         raise HTTPException(status_code=410, detail="Envelope has been voided")
+    if env.status == EnvelopeStatus.EXPIRED.value:
+        raise HTTPException(status_code=410, detail="This signing link has expired")
+    if env.expires_at and now > env.expires_at:
+        env.status = EnvelopeStatus.EXPIRED.value
+        db.add(env)
+        await db.commit()
+        raise HTTPException(status_code=410, detail="This signing link has expired")
     if signer.status == SignerStatus.SIGNED.value:
         raise HTTPException(status_code=400, detail="Already signed")
+
+    # Sequential order gate: block submission if prior signers have not yet completed
+    if env.signing_order == "sequential" and signer.order_index > 0:
+        all_signers_check = env.signers or []
+        incomplete_predecessors = [
+            s for s in all_signers_check
+            if s.order_index < signer.order_index and s.status != SignerStatus.SIGNED.value
+        ]
+        if incomplete_predecessors:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot sign yet — waiting for previous signers to complete",
+            )
 
     ip = _client_ip(request)
     ua_str = request.headers.get("user-agent", "")
@@ -1023,6 +1043,7 @@ async def submit_signature(
                 "actor_email": e.actor_email,
                 "event_type": e.event_type,
                 "ip_address": e.ip_address,
+                "user_agent": e.user_agent or "",
                 "browser_name": e.browser_name,
                 "browser_version": e.browser_version,
                 "os_name": e.os_name,
@@ -1038,6 +1059,7 @@ async def submit_signature(
             for e in all_events
         ]
 
+        # Fail-closed: PDF overlay must succeed; do not mark completed on failure
         try:
             orig_pdf = _load_envelope_pdf(env, storage)
             signed_pdf = await _run_sync(overlay_signatures, orig_pdf, overlay_data)
@@ -1052,18 +1074,34 @@ async def submit_signature(
             )
         except Exception as exc:
             logger.error("PDF finalization failed: %s", exc)
-            signed_pdf_with_cert = _load_envelope_pdf(env, storage)
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate signed PDF. Please contact support.",
+            )
 
         finalized_key = f"esign/{env.owner_id}/{env.id}/signed.pdf"
         storage.save(finalized_key, signed_pdf_with_cert)
         env.finalized_file_key = finalized_key
         db.add(env)
 
-        # Generate audit report
+        # Fail-closed: audit report must also succeed; do not mark completed without it
         try:
             report_pdf = await _generate_and_store_audit_report(env, storage, db, events_data=events_data, signers_data=signers_data)
         except Exception as exc:
             logger.error("Audit report generation failed: %s", exc)
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to generate forensic audit report. Please contact support.",
+            )
+
+        if not report_pdf:
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="Audit report generation requires SECRET_KEY to be configured.",
+            )
 
         await db.flush()
 
@@ -1207,6 +1245,7 @@ async def _generate_and_store_audit_report(
                 "actor_email": e.actor_email,
                 "event_type": e.event_type,
                 "ip_address": e.ip_address,
+                "user_agent": e.user_agent or "",
                 "browser_name": e.browser_name,
                 "browser_version": e.browser_version,
                 "os_name": e.os_name,
