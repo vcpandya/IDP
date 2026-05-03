@@ -29,6 +29,7 @@ async def load_active_skills(db: AsyncSession, user_id: str) -> list[dict]:
             "id": s.id,
             "name": s.name,
             "description": s.description or "",
+            "requirements": s.requirements or {},
         }
         for s in rows
     ]
