@@ -358,7 +358,7 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
     write("IP geolocation is approximate and based on public IP address lookup.", size=8, color=gray)
 
     # HMAC signature — covers the full ordered audit event log
-    y += 8
+    y_ref[0] += 8
     section("TAMPER-EVIDENT SEAL")
     canonical_events = [
         {
