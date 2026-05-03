@@ -300,7 +300,10 @@ async def create_envelope(
         sha = compute_sha256(content)
         pages = get_page_count(content)
         env_id = str(uuid.uuid4())
-        file_key = doc.file_path
+        # Make an immutable envelope-local snapshot so changes to the source
+        # document do not affect rendering, finalization, or SHA-256 provenance
+        file_key = f"esign/{user.id}/{env_id}/original.pdf"
+        storage.save(file_key, content)
         doc_ref_id = doc.id
         effective_title = title or doc.filename
     else:
@@ -537,6 +540,22 @@ async def send_envelope(
         raise HTTPException(status_code=400, detail="Add at least one signer before sending")
     if not env.fields:
         raise HTTPException(status_code=400, detail="Add at least one signature field before sending")
+    # Every field must be assigned to a signer — unassigned fields can never be filled
+    unassigned = [f for f in env.fields if not f.signer_id]
+    if unassigned:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{len(unassigned)} field(s) have no signer assigned. Assign each field to a signer before sending.",
+        )
+    # Every signer must have at least one field (otherwise they have nothing to sign)
+    signer_ids_with_fields = {f.signer_id for f in env.fields}
+    signers_without_fields = [s for s in env.signers if s.id not in signer_ids_with_fields]
+    if signers_without_fields:
+        names = ", ".join(s.name for s in signers_without_fields)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Signer(s) have no fields assigned: {names}. Assign at least one field per signer.",
+        )
 
     from idpkit.esign.email import send_signing_invitation
 
@@ -742,8 +761,17 @@ async def resend_invitation(
     env = result.scalar_one_or_none()
     if not env:
         raise HTTPException(status_code=404, detail="Envelope not found")
-    if env.status not in (EnvelopeStatus.SENT.value,):
-        raise HTTPException(status_code=400, detail="Envelope is not in sent state")
+    _RESEND_ALLOWED_STATUSES = {
+        EnvelopeStatus.SENT.value,
+        EnvelopeStatus.VIEWED.value,
+        EnvelopeStatus.PARTIALLY_SIGNED.value,
+        EnvelopeStatus.DECLINED.value,
+    }
+    if env.status not in _RESEND_ALLOWED_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resend — envelope status is '{env.status}'",
+        )
 
     result2 = await db.execute(
         select(EnvelopeSigner).where(
