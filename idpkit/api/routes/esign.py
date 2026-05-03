@@ -800,7 +800,7 @@ async def resend_invitation(
         signing_url=signing_url,
         message=env.message,
     )
-    await _log_event(db, envelope_id, "invitation_resent", actor_email=user.email or user.username)
+    await _log_event(db, envelope_id, "invitation_resent", actor_email=user.email or user.username, request=request)
     await db.commit()
     return {"detail": "Invitation resent"}
 
@@ -1266,7 +1266,7 @@ async def submit_signature(
                 pdf_bytes=signed_pdf_with_cert,
             )
 
-        await _log_event(db, env.id, "envelope_completed")
+        await _log_event(db, env.id, "envelope_completed", actor_email=signer.email, request=request)
         await db.commit()
 
         return {"signed": True, "completed": True, "envelope_title": env.title}

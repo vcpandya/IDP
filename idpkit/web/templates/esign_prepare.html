@@ -11,6 +11,8 @@
 .field-overlay:hover, .field-overlay.active { border-color:#7c3aed; background:rgba(124,58,237,0.12); }
 .field-overlay .remove-btn { position:absolute; top:-8px; right:-8px; width:16px; height:16px; background:#ef4444; color:#fff; border-radius:50%; font-size:9px; display:none; align-items:center; justify-content:center; cursor:pointer; border:none; }
 .field-overlay:hover .remove-btn { display:flex; }
+.field-overlay .resize-handle { position:absolute; bottom:-4px; right:-4px; width:12px; height:12px; background:#4f46e5; border-radius:2px; cursor:se-resize; display:none; }
+.field-overlay:hover .resize-handle, .field-overlay.active .resize-handle { display:block; }
 .field-type-btn { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1.5px solid var(--border); border-radius:8px; background:var(--bg-primary,#fff); cursor:grab; font-size:0.82rem; font-weight:600; transition:all 0.15s; }
 .field-type-btn:hover { border-color:#4f46e5; color:#4f46e5; background:#eef2ff; }
 .signer-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
@@ -144,6 +146,7 @@
                   :class="selectedField && selectedField.id === field.id ? 'active' : ''">
                   <button class="remove-btn" @click.stop="removeField(field.id)"><i class="fas fa-times"></i></button>
                   <span x-text="fieldIcon(field.field_type) + ' ' + (field.label || field.field_type)"></span>
+                  <div class="resize-handle" @mousedown.stop="startResize($event, field)"></div>
                 </div>
               </template>
             </div>
@@ -438,6 +441,31 @@ function esignPrepare() {
         const dy = ((e.clientY - startY) / rect.height) * 100;
         field.x_pct = Math.max(0, Math.min(100 - field.w_pct, origX + dx));
         field.y_pct = Math.max(0, Math.min(100 - field.h_pct, origY + dy));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+
+    startResize(evt, field) {
+      if (this.envelope && this.envelope.status !== 'draft') return;
+      evt.preventDefault();
+      const wrap = document.getElementById(`page-wrap-${field.page}`);
+      if (!wrap) return;
+      const rect = wrap.getBoundingClientRect();
+      const startX = evt.clientX;
+      const startY = evt.clientY;
+      const origW = field.w_pct;
+      const origH = field.h_pct;
+
+      const onMove = (e) => {
+        const dw = ((e.clientX - startX) / rect.width) * 100;
+        const dh = ((e.clientY - startY) / rect.height) * 100;
+        field.w_pct = Math.max(5, Math.min(100 - field.x_pct, origW + dw));
+        field.h_pct = Math.max(2, Math.min(100 - field.y_pct, origH + dh));
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);

@@ -173,6 +173,7 @@
                                 </td>
                                 <td class="actions">
                                     <a :href="'/documents/' + doc.id" class="btn btn-sm"><i class="fas fa-eye"></i></a>
+                                    <a x-show="doc.format === 'pdf'" :href="'/esign/new?document_id=' + doc.id + '&title=' + encodeURIComponent(doc.filename || '')" class="btn btn-sm" title="E-Sign this document" style="color:#4f46e5;border-color:#4f46e5"><i class="fas fa-file-signature"></i></a>
                                     <button @click="autoTagDoc(doc.id)" class="btn btn-sm" title="Auto-tag"><i class="fas fa-magic"></i></button>
                                     <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
                                 </td>
