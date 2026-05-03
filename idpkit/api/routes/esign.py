@@ -87,7 +87,13 @@ class SubmitSignatureIn(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_secret_key() -> str:
-    return os.getenv("SECRET_KEY") or os.getenv("SESSION_SECRET") or os.getenv("IDP_SECRET_KEY") or "changeme"
+    key = os.getenv("SECRET_KEY") or os.getenv("SESSION_SECRET") or os.getenv("IDP_SECRET_KEY")
+    if not key:
+        raise RuntimeError(
+            "No secret key configured for HMAC signing. "
+            "Set SECRET_KEY (or SESSION_SECRET / IDP_SECRET_KEY) environment variable."
+        )
+    return key
 
 
 def _client_ip(request: Request) -> str:
@@ -526,34 +532,51 @@ async def send_envelope(
     base_url = str(request.base_url).rstrip("/")
     env.status = EnvelopeStatus.SENT.value
 
+    # For sequential mode, determine the minimum order_index (the "first" group).
+    # Only those signers receive an invite now; higher-order signers wait.
+    sorted_signers = sorted(env.signers, key=lambda s: s.order_index)
+    if env.signing_order == "sequential" and sorted_signers:
+        first_order = sorted_signers[0].order_index
+        active_now = {s.id for s in sorted_signers if s.order_index == first_order}
+    else:
+        active_now = {s.id for s in env.signers}  # parallel — all active
+
+    invites_sent = 0
     for signer in env.signers:
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
         signer.token_hash = token_hash
-        signer.status = SignerStatus.SENT.value
-        db.add(signer)
 
-        signing_url = f"{base_url}/sign/{raw_token}"
-        expires_str = env.expires_at.strftime("%B %d, %Y") if env.expires_at else None
+        if signer.id in active_now:
+            signer.status = SignerStatus.SENT.value
+            db.add(signer)
 
-        await send_signing_invitation(
-            signer_name=signer.name,
-            signer_email=signer.email,
-            sender_name=user.username,
-            envelope_title=env.title,
-            signing_url=signing_url,
-            message=env.message,
-            expires_at=expires_str,
-        )
-        await _log_event(
-            db, envelope_id, "invitation_sent",
-            actor_email=user.email or user.username,
-            extra={"session_id": signer.id},
-        )
+            signing_url = f"{base_url}/sign/{raw_token}"
+            expires_str = env.expires_at.strftime("%B %d, %Y") if env.expires_at else None
+
+            await send_signing_invitation(
+                signer_name=signer.name,
+                signer_email=signer.email,
+                sender_name=user.username,
+                envelope_title=env.title,
+                signing_url=signing_url,
+                message=env.message,
+                expires_at=expires_str,
+            )
+            await _log_event(
+                db, envelope_id, "invitation_sent",
+                actor_email=user.email or user.username,
+                extra={"session_id": signer.id},
+            )
+            invites_sent += 1
+        else:
+            # Will be notified when their turn comes
+            signer.status = SignerStatus.PENDING.value
+            db.add(signer)
 
     db.add(env)
     await db.commit()
-    return {"detail": "Envelope sent", "signer_count": len(env.signers)}
+    return {"detail": "Envelope sent", "signer_count": invites_sent}
 
 
 @router.get("/envelopes/{envelope_id}/pdf-page/{page}")
@@ -832,6 +855,7 @@ async def get_signing_context(
 async def get_signing_page_image(
     token: str,
     page: int,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ):
@@ -851,6 +875,13 @@ async def get_signing_page_image(
     env = signer.envelope
     if env.status in (EnvelopeStatus.VOIDED.value, EnvelopeStatus.EXPIRED.value):
         raise HTTPException(status_code=410, detail="Envelope is no longer active")
+
+    # Log page-view event (only once per page per session to avoid noise, suppress commit errors silently)
+    try:
+        await _log_event(db, env.id, f"page_viewed_p{page}", actor_email=signer.email, request=request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     pdf_bytes = _load_envelope_pdf(env, storage)
     img_b64 = await _run_sync(render_page_to_image, pdf_bytes, page)
@@ -1070,6 +1101,39 @@ async def submit_signature(
 
         return {"signed": True, "completed": True, "envelope_title": env.title}
 
+    # Sequential mode: unlock the next group of signers who haven't received an invite yet
+    if env.signing_order == "sequential":
+        from idpkit.esign.email import send_signing_invitation as _send_inv
+
+        base_url = str(request.base_url).rstrip("/")
+        # Find the lowest order_index among signers still pending (not yet sent/signed)
+        still_pending = [s for s in all_signers if s.status == SignerStatus.PENDING.value]
+        if still_pending:
+            next_order = min(s.order_index for s in still_pending)
+            # Check all signers at the previous order level have signed
+            prev_done = all(
+                s.status == SignerStatus.SIGNED.value
+                for s in all_signers
+                if s.order_index < next_order
+            )
+            if prev_done:
+                next_group = [s for s in still_pending if s.order_index == next_order]
+                for ns in next_group:
+                    raw_token = secrets.token_urlsafe(32)
+                    ns.token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                    ns.status = SignerStatus.SENT.value
+                    db.add(ns)
+                    signing_url = f"{base_url}/sign/{raw_token}"
+                    await _send_inv(
+                        signer_name=ns.name,
+                        signer_email=ns.email,
+                        sender_name="",
+                        envelope_title=env.title,
+                        signing_url=signing_url,
+                        message=env.message,
+                    )
+                    await _log_event(db, env.id, "invitation_sent", actor_email=ns.email)
+
     await db.commit()
     return {"signed": True, "completed": False, "envelope_title": env.title}
 
@@ -1077,6 +1141,7 @@ async def submit_signature(
 @router.get("/sign/{token}/download")
 async def signer_download(
     token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ):
@@ -1094,6 +1159,13 @@ async def signer_download(
     env = signer.envelope
     if env.status != EnvelopeStatus.COMPLETED.value or not env.finalized_file_key:
         raise HTTPException(status_code=400, detail="Document is not yet complete")
+
+    # Audit log the download event
+    try:
+        await _log_event(db, env.id, "signed_document_downloaded", actor_email=signer.email, request=request)
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     pdf_bytes = storage.load(env.finalized_file_key)
     safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in env.title)
@@ -1165,7 +1237,18 @@ async def _generate_and_store_audit_report(
             for s in s_result.scalars().all()
         ]
 
-    secret = _get_secret_key()
+    try:
+        secret = _get_secret_key()
+    except RuntimeError as e:
+        logger.warning("Audit report HMAC key unavailable: %s", e)
+        secret = None
+
+    if secret is None:
+        logger.error("Skipping audit report HMAC seal — SECRET_KEY not configured")
+        return b""
+
+    envelope_url = f"https://{os.getenv('REPLIT_DEV_DOMAIN', 'localhost')}/esign/{env.id}/prepare" if env.id else ""
+
     report_pdf = await _run_sync(
         generate_audit_report_pdf,
         env.id,
@@ -1174,7 +1257,7 @@ async def _generate_and_store_audit_report(
         signers_data,
         events_data,
         secret,
-        f"",
+        envelope_url,
     )
 
     report_key = f"esign/{env.owner_id}/{env.id}/audit_report.pdf"

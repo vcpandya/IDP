@@ -329,16 +329,45 @@ def _build_report_page(doc, envelope_id, title, doc_sha256, signers, events, hma
     write("Browser fingerprint is computed via HTML5 Canvas API (silent, no cookies required).", size=8, color=gray)
     write("IP geolocation is approximate and based on public IP address lookup.", size=8, color=gray)
 
-    # HMAC signature
+    # HMAC signature — covers the full ordered audit event log
     y += 8
     section("TAMPER-EVIDENT SEAL")
+    canonical_events = [
+        {
+            "ts": ev.get("created_at", ""),
+            "actor": ev.get("actor_email", ""),
+            "event": ev.get("event_type", ""),
+            "ip": ev.get("ip_address", ""),
+            "browser": ev.get("browser_name", ""),
+            "os": ev.get("os_name", ""),
+            "geo_country": ev.get("geo_country", ""),
+            "geo_city": ev.get("geo_city", ""),
+            "canvas_fp": ev.get("canvas_fingerprint_hash", ""),
+            "screen": ev.get("screen_resolution", ""),
+            "tz": ev.get("timezone", ""),
+            "lang": ev.get("language", ""),
+            "session": ev.get("session_id", ""),
+        }
+        for ev in events
+    ]
     audit_payload = json.dumps({
         "envelope_id": envelope_id,
         "doc_sha256": doc_sha256,
-        "signers": [{"email": s.get("email"), "signed_at": str(s.get("signed_at"))} for s in signers],
-        "event_count": len(events),
-    }, sort_keys=True)
-    seal = hmac.new(hmac_key.encode(), audit_payload.encode(), hashlib.sha256).hexdigest()
+        "signers": [
+            {
+                "name": s.get("name", ""),
+                "email": s.get("email", ""),
+                "status": s.get("status", ""),
+                "ip_address": s.get("ip_address", ""),
+                "signed_at": str(s.get("signed_at", "")),
+            }
+            for s in signers
+        ],
+        "events": canonical_events,
+    }, sort_keys=True, separators=(",", ":"))
+    seal = hmac.new(hmac_key.encode(), audit_payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    payload_hash = hashlib.sha256(audit_payload.encode("utf-8")).hexdigest()
     write(f"HMAC-SHA256 Seal: {seal}", size=8, bold=True)
-    write("Verify: recompute HMAC-SHA256 over the canonical audit payload using SECRET_KEY.", size=7.5, color=gray)
-    write(f"Payload: {audit_payload[:120]}...", size=6.5, color=gray)
+    write(f"Payload SHA-256:  {payload_hash}", size=7.5)
+    write(f"Covers: {len(events)} audit event(s), {len(signers)} signer(s), full forensic fields.", size=7.5, color=gray)
+    write("Verify: recompute HMAC-SHA256 over the canonical JSON payload (sort_keys=True, no spaces) with SECRET_KEY.", size=7, color=gray)
