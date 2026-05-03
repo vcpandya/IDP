@@ -67,6 +67,34 @@
       </template>
     </div>
 
+    <!-- Activity Timeline -->
+    <div class="panel-card" style="margin-bottom:16px" x-show="env && env.audit_events && env.audit_events.length > 0">
+      <h4 style="margin:0 0 14px;font-size:0.85rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em">
+        <i class="fas fa-history"></i> Activity Timeline (<span x-text="env && env.audit_events ? env.audit_events.length : 0"></span> events)
+      </h4>
+      <div style="position:relative;padding-left:20px;border-left:2px solid var(--border)">
+        <template x-for="(ev, idx) in (env && env.audit_events || [])" :key="idx">
+          <div style="position:relative;padding:8px 0 12px 14px">
+            <div style="position:absolute;left:-25px;top:12px;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.65rem"
+                 :style="'background:' + eventBg(ev.event_type) + ';color:' + eventColor(ev.event_type)">
+              <i class="fas" :class="eventIcon(ev.event_type)"></i>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+              <span style="font-weight:600;font-size:0.88rem" x-text="eventLabel(ev.event_type)"></span>
+              <span style="font-size:0.78rem;color:var(--text-muted)" x-text="ev.actor_email || 'system'"></span>
+            </div>
+            <div style="font-size:0.74rem;color:var(--text-muted);margin-top:2px" x-text="formatDate(ev.created_at)"></div>
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-top:2px" x-show="ev.ip_address || ev.browser_name">
+              <span x-show="ev.ip_address"><i class="fas fa-network-wired"></i> <span x-text="ev.ip_address"></span></span>
+              <span x-show="ev.browser_name" style="margin-left:8px"><i class="fas fa-globe"></i> <span x-text="ev.browser_name + (ev.os_name ? ' on ' + ev.os_name : '')"></span></span>
+              <span x-show="ev.geo_city || ev.geo_country" style="margin-left:8px"><i class="fas fa-map-marker-alt"></i> <span x-text="[ev.geo_city, ev.geo_country].filter(Boolean).join(', ')"></span></span>
+            </div>
+            <div x-show="ev.notes" style="font-size:0.72rem;color:var(--text-muted);margin-top:2px;font-style:italic" x-text="ev.notes"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
     <!-- Integrity notice -->
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:16px;font-size:0.82rem;color:#14532d">
       <i class="fas fa-lock" style="margin-right:6px;color:#16a34a"></i>
@@ -152,6 +180,53 @@ function esignDetail() {
     formatDate(d) {
       if (!d) return '';
       return new Date(d).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+    },
+
+    eventLabel(t) {
+      return {
+        envelope_created: 'Envelope created',
+        envelope_sent: 'Envelope sent',
+        invitation_sent: 'Invitation sent',
+        invitation_resent: 'Invitation resent',
+        document_viewed: 'Document viewed',
+        consent_accepted: 'ESIGN consent accepted',
+        field_signed: 'Field signed',
+        bulk_apply_propagated: 'Bulk apply propagated',
+        document_signed: 'Document signed',
+        envelope_completed: 'Envelope completed',
+        envelope_voided: 'Envelope voided',
+        envelope_declined: 'Envelope declined',
+        signer_declined: 'Signer declined',
+        envelope_expired: 'Envelope expired',
+        download_completed: 'Signed PDF downloaded',
+      }[t] || (t || '').replace(/_/g, ' ');
+    },
+
+    eventIcon(t) {
+      return {
+        envelope_created:'fa-plus', envelope_sent:'fa-paper-plane', invitation_sent:'fa-envelope',
+        invitation_resent:'fa-redo', document_viewed:'fa-eye', consent_accepted:'fa-handshake',
+        field_signed:'fa-pen', bulk_apply_propagated:'fa-clone', document_signed:'fa-signature',
+        envelope_completed:'fa-check-circle', envelope_voided:'fa-ban',
+        envelope_declined:'fa-times-circle', signer_declined:'fa-times',
+        envelope_expired:'fa-hourglass-end', download_completed:'fa-download',
+      }[t] || 'fa-circle';
+    },
+
+    eventColor(t) {
+      if (['envelope_completed','document_signed','field_signed','consent_accepted'].includes(t)) return '#16a34a';
+      if (['envelope_voided','envelope_declined','signer_declined','envelope_expired'].includes(t)) return '#dc2626';
+      if (['document_viewed','invitation_sent','invitation_resent','envelope_sent'].includes(t)) return '#2563eb';
+      if (t === 'bulk_apply_propagated') return '#7c3aed';
+      return '#6b7280';
+    },
+
+    eventBg(t) {
+      if (['envelope_completed','document_signed','field_signed','consent_accepted'].includes(t)) return '#dcfce7';
+      if (['envelope_voided','envelope_declined','signer_declined','envelope_expired'].includes(t)) return '#fee2e2';
+      if (['document_viewed','invitation_sent','invitation_resent','envelope_sent'].includes(t)) return '#dbeafe';
+      if (t === 'bulk_apply_propagated') return '#ede9fe';
+      return '#f3f4f6';
     },
   }
 }
