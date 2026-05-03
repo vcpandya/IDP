@@ -289,11 +289,20 @@ async def list_community_skills(
             hay = (entry.get("name", "") + " " + entry.get("description", "")).lower()
             if q.lower() not in hay:
                 continue
-        slug = (entry.get("name", "") or "").lower().replace(" ", "-")
+        # Match by exact catalog id, exact catalog name, or slug — covers the
+        # common cases where the catalog display name and the frontmatter
+        # `name` differ. Authoritative match is on `Skill.name` because that
+        # is the field the importer writes from frontmatter.
+        candidates = {
+            (entry.get("id") or "").strip(),
+            (entry.get("name") or "").strip(),
+            (entry.get("name") or "").strip().lower().replace(" ", "-"),
+        }
+        installed_flag = bool(candidates & installed_names)
         items.append({
             **entry,
-            "installed": slug in installed_names,
-            "installed_hint": slug in installed_names,  # kept for back-compat
+            "installed": installed_flag,
+            "installed_hint": installed_flag,  # kept for back-compat
         })
     return {"items": items, "count": len(items), "categories": sorted(categories)}
 

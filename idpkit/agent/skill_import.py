@@ -374,14 +374,19 @@ class ParsedSkill:
 def _parse_frontmatter(content: str) -> dict:
     text = content.strip()
     if not text.startswith("---"):
-        return {}
+        raise SkillImportError("SKILL.md is missing YAML frontmatter (expected '---' delimiters)")
     parts = text.split("---", 2)
     if len(parts) < 3:
-        return {}
+        raise SkillImportError("SKILL.md frontmatter is not closed with '---'")
     try:
-        return yaml.safe_load(parts[1]) or {}
-    except yaml.YAMLError:
+        loaded = yaml.safe_load(parts[1])
+    except yaml.YAMLError as exc:
+        raise SkillImportError(f"SKILL.md frontmatter is not valid YAML: {exc}")
+    if loaded is None:
         return {}
+    if not isinstance(loaded, dict):
+        raise SkillImportError("SKILL.md frontmatter must be a YAML mapping")
+    return loaded
 
 
 def parse_files_to_skill(files: dict[str, bytes], source: Optional[str] = None) -> ParsedSkill:
@@ -544,6 +549,7 @@ async def fetch_community_catalog(force: bool = False) -> list[dict]:
                 "category": entry.get("category"),
                 "author": entry.get("author"),
                 "url": url,
+                "download_url": url,
             })
         _CATALOG_CACHE.update({"ts": now, "data": normalized})
         return normalized
