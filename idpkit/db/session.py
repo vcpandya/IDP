@@ -69,10 +69,33 @@ async def init_db():
                 if "logs" not in cols:
                     sync_conn.execute(text("ALTER TABLE jobs ADD COLUMN logs JSON"))
 
+        def _migrate_esign(sync_conn):
+            insp = sa_inspect(sync_conn)
+            tables = insp.get_table_names()
+            # envelope_signers — new columns added across e-sign code review rounds
+            if "envelope_signers" in tables:
+                cols = {c["name"] for c in insp.get_columns("envelope_signers")}
+                if "download_token" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_signers ADD COLUMN download_token VARCHAR(64)"
+                    ))
+            # envelope_audit_events — new forensic columns
+            if "envelope_audit_events" in tables:
+                cols = {c["name"] for c in insp.get_columns("envelope_audit_events")}
+                if "notes" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_audit_events ADD COLUMN notes VARCHAR(500)"
+                    ))
+                if "user_agent" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_audit_events ADD COLUMN user_agent VARCHAR(1000)"
+                    ))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(_migrate_users)
         await conn.run_sync(_migrate_jobs)
+        await conn.run_sync(_migrate_esign)
         await conn.run_sync(Base.metadata.create_all)
 
 
