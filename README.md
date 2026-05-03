@@ -272,6 +272,129 @@ docker compose up --build
 
 ---
 
+## E-Signature API
+
+A DocuSign-style e-signature workflow is exposed under `/api/esign/*`. Full
+interactive reference is auto-generated at `http://localhost:5000/docs` (each
+route now carries a one-line `summary`); the section below shows the typical
+end-to-end flow.
+
+### Endpoint summary
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/esign/envelopes` | Create envelope (multipart: upload PDF **or** reference an existing `document_id`) |
+| `GET`  | `/api/esign/envelopes` | List envelopes owned by the caller |
+| `GET`  | `/api/esign/envelopes/{id}` | Envelope details, signers, fields, finalization state |
+| `PUT`  | `/api/esign/envelopes/{id}/signers` | Replace signer list (draft only) |
+| `PUT`  | `/api/esign/envelopes/{id}/fields` | Replace field placements (draft only) |
+| `POST` | `/api/esign/envelopes/{id}/send` | Transition draft→sent and dispatch invitations |
+| `POST` | `/api/esign/envelopes/{id}/void` | Void an in-progress envelope |
+| `POST` | `/api/esign/envelopes/{id}/resend/{signer_id}` | Resend invitation email |
+| `GET`  | `/api/esign/envelopes/{id}/download` | Owner: download finalized signed PDF |
+| `GET`  | `/api/esign/envelopes/{id}/audit-report` | Owner: download HMAC-signed audit report PDF |
+| `GET`  | `/api/esign/sign/{token}` | Public: signer context for an invitation token |
+| `POST` | `/api/esign/sign/{token}/submit` | Public: submit field values; finalizes when all signers complete |
+| `POST` | `/api/esign/sign/{token}/decline` | Public: decline to sign with a reason |
+| `GET`  | `/api/esign/sign/{token}/download` | Public: signer downloads finalized PDF |
+| `GET`  | `/api/esign/download/{download_token}` | Public: download via one-time completion-email token |
+
+### Authentication
+
+- Sender endpoints (`/envelopes/*`) require a logged-in session **or** an API
+  key in `Authorization: Bearer <api_key>` (same scheme as the rest of IDP Kit).
+- Signing endpoints (`/sign/*` and `/download/{token}`) are intentionally
+  unauthenticated — the raw token in the URL **is** the credential. Tokens are
+  stored as SHA-256 hashes server-side and only sent in invitation emails.
+
+### Typical flow (curl)
+
+1. **Create an envelope from an uploaded PDF**
+   ```bash
+   curl -X POST http://localhost:5000/api/esign/envelopes \
+     -H "Authorization: Bearer $IDP_API_KEY" \
+     -F "title=NDA - Acme Corp" \
+     -F "message=Please review and sign by Friday." \
+     -F "signing_order=parallel" \
+     -F "file=@./nda.pdf"
+   ```
+   Or reference an already-uploaded document by id (PDF format only):
+   ```bash
+   curl -X POST http://localhost:5000/api/esign/envelopes \
+     -H "Authorization: Bearer $IDP_API_KEY" \
+     -F "title=NDA - Acme Corp" \
+     -F "document_id=$DOC_ID"
+   ```
+
+2. **Add signers** (use `signing_order=sequential` on creation if you want them
+   invited in order rather than all at once)
+   ```bash
+   curl -X PUT http://localhost:5000/api/esign/envelopes/$ENV_ID/signers \
+     -H "Authorization: Bearer $IDP_API_KEY" -H "Content-Type: application/json" \
+     -d '[{"name":"Jane Doe","email":"jane@example.com","order":1},
+          {"name":"John Roe","email":"john@example.com","order":2}]'
+   ```
+
+3. **Place fields** (`x_pct`, `y_pct`, `w_pct`, `h_pct` are percentages of the
+   page; `field_type` is `signature | initials | date | text`)
+   ```bash
+   curl -X PUT http://localhost:5000/api/esign/envelopes/$ENV_ID/fields \
+     -H "Authorization: Bearer $IDP_API_KEY" -H "Content-Type: application/json" \
+     -d '{"fields":[{"signer_id":"<signer-uuid>","field_type":"signature",
+                     "page":1,"x_pct":60,"y_pct":85,"w_pct":18,"h_pct":5,
+                     "is_required":1}]}'
+   ```
+   The server enforces that **every** field has a `signer_id` and **every**
+   signer has at least one field before allowing send.
+
+4. **Send the envelope** — invitations are emailed (or logged when
+   `EMAIL_API_KEY` is unset)
+   ```bash
+   curl -X POST http://localhost:5000/api/esign/envelopes/$ENV_ID/send \
+     -H "Authorization: Bearer $IDP_API_KEY"
+   ```
+
+5. **Signer submits** (token comes from the invitation URL
+   `/esign/sign/{token}`; `consent_accepted` is required server-side)
+   ```bash
+   curl -X POST http://localhost:5000/api/esign/sign/$TOKEN/submit \
+     -H "Content-Type: application/json" \
+     -d '{"consent_accepted":true,
+          "values":[{"field_id":"<field-uuid>","value_text":"Jane Doe"}]}'
+   ```
+   When the last signer submits, the envelope auto-finalizes: the signed PDF
+   has the audit certificate page appended, and a one-time download link is
+   emailed to all parties.
+
+6. **Owner downloads outputs**
+   ```bash
+   curl -OJ -H "Authorization: Bearer $IDP_API_KEY" \
+        http://localhost:5000/api/esign/envelopes/$ENV_ID/download
+   curl -OJ -H "Authorization: Bearer $IDP_API_KEY" \
+        http://localhost:5000/api/esign/envelopes/$ENV_ID/audit-report
+   ```
+
+### Envelope status lifecycle
+
+`draft → sent → viewed → partially_signed → completed`
+with side transitions to `declined`, `voided`, or `expired`. Status changes
+emit audit events (with signer IP and User-Agent) that are embedded in both
+the appended audit certificate and the standalone audit report.
+
+### Compliance notes
+
+- The PDF used for signing is an **immutable per-envelope snapshot** — even
+  when the envelope is created from an existing `document_id`, the bytes are
+  copied to `esign/{owner_id}/{envelope_id}/original.pdf` so later edits to
+  the source document cannot change what was signed.
+- Both the signed PDF SHA-256 and the audit report are HMAC-signed with
+  `SECRET_KEY`. The verification page at `/esign/{id}/detail` (linked from a
+  QR code on the audit certificate) lets any party confirm the document.
+- `SECRET_KEY` is required at startup; the service fails closed if it is
+  missing, so audit signatures cannot silently degrade.
+
+---
+
 ## Optional Dependencies
 
 ```bash
