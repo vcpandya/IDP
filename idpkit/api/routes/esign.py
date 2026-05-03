@@ -75,6 +75,7 @@ class UpdateFieldsIn(BaseModel):
 
 class SubmitSignatureIn(BaseModel):
     fields: list[dict]
+    consent_accepted: bool = False
     canvas_fingerprint_hash: Optional[str] = None
     screen_resolution: Optional[str] = None
     timezone: Optional[str] = None
@@ -972,13 +973,52 @@ async def submit_signature(
                 detail="Cannot sign yet — waiting for previous signers to complete",
             )
 
+    # ESIGN Act: explicit consent must be captured server-side
+    if not body.consent_accepted:
+        raise HTTPException(
+            status_code=400,
+            detail="Electronic signature consent must be explicitly accepted before signing",
+        )
+
     ip = _client_ip(request)
     ua_str = request.headers.get("user-agent", "")
     ua_info = _parse_ua(ua_str)
     geo = await _geo_lookup(ip)
 
-    # Store field values and emit a per-field audit event for each completed field
+    # Server-side required field enforcement: all required fields for this signer must be present and non-empty
     field_map = {f.id: f for f in (env.fields or []) if f.signer_id == signer.id}
+    submitted_values = {s.get("id"): s.get("value", "") for s in body.fields}
+    missing_required = [
+        f.id for f in field_map.values()
+        if f.is_required and not submitted_values.get(f.id, "").strip()
+    ]
+    if missing_required:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Required fields are incomplete: {', '.join(missing_required)}",
+        )
+
+    # Record consent as a distinct audit event with full forensic data (evidentiary timestamp)
+    db.add(EnvelopeAuditEvent(
+        envelope_id=env.id,
+        actor_email=signer.email,
+        event_type="consent_accepted",
+        ip_address=ip,
+        user_agent=ua_str[:500],
+        browser_name=ua_info.get("browser_name"),
+        browser_version=ua_info.get("browser_version"),
+        os_name=ua_info.get("os_name"),
+        geo_country=geo.get("geo_country", ""),
+        geo_city=geo.get("geo_city", ""),
+        canvas_fingerprint_hash=body.canvas_fingerprint_hash,
+        screen_resolution=body.screen_resolution,
+        timezone=body.timezone,
+        language=body.language,
+        session_id=body.session_id,
+        notes="ESIGN Act electronic signature consent acknowledged by signer",
+    ))
+
+    # Store field values and emit a per-field audit event for each completed field
     for submitted in body.fields:
         fid = submitted.get("id")
         value = submitted.get("value", "")
