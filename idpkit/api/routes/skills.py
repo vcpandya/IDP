@@ -193,10 +193,12 @@ async def _persist_parsed_skill(
             409,
             f"Skill '{name}' already exists. Pass overwrite=true to replace it.",
         )
+    requirements = parsed.requirements or {}
     if existing:
         existing.skill_content = parsed.skill_content
         existing.description = parsed.description[:1024] if parsed.description else None
         existing.scripts = parsed.scripts or None
+        existing.requirements = requirements or None
         existing.is_active = 1
         await db.commit()
         await db.refresh(existing)
@@ -208,11 +210,26 @@ async def _persist_parsed_skill(
             description=parsed.description[:1024] if parsed.description else None,
             skill_content=parsed.skill_content,
             scripts=parsed.scripts or None,
+            requirements=requirements or None,
             is_active=1,
         )
         db.add(skill)
         await db.commit()
         await db.refresh(skill)
+
+    # Build a post-install compatibility checklist so the UI can prompt
+    # the user to connect any missing integrations immediately after install.
+    compatibility = None
+    try:
+        from idpkit.agent.skill_requirements import check_compatibility
+        from idpkit.connectors.runtime import list_active_connections
+        active = await list_active_connections(db, user.id)
+        compatibility = check_compatibility(
+            requirements, {c.connector_id for c in active},
+        )
+    except Exception:  # noqa: BLE001
+        compatibility = None
+
     return {
         "id": skill.id,
         "name": skill.name,
@@ -220,6 +237,8 @@ async def _persist_parsed_skill(
         "is_active": bool(skill.is_active),
         "scripts_count": len(parsed.scripts or []),
         "warnings": parsed.warnings,
+        "requirements": requirements,
+        "compatibility": compatibility,
         "created_at": skill.created_at.isoformat() if skill.created_at else None,
         "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
     }
@@ -260,7 +279,20 @@ async def import_skill(
         raise HTTPException(500, f"Skill import failed: {exc}")
 
     if preview:
-        return {"preview": parsed.to_preview_dict()}
+        # Augment preview with a live compatibility check against the user's connections.
+        compatibility = None
+        try:
+            from idpkit.agent.skill_requirements import check_compatibility
+            from idpkit.connectors.runtime import list_active_connections
+            active = await list_active_connections(db, user.id)
+            compatibility = check_compatibility(
+                parsed.requirements or {}, {c.connector_id for c in active},
+            )
+        except Exception:  # noqa: BLE001
+            compatibility = None
+        preview_dict = parsed.to_preview_dict()
+        preview_dict["compatibility"] = compatibility
+        return {"preview": preview_dict}
 
     return await _persist_parsed_skill(parsed, user, db, overwrite=overwrite)
 

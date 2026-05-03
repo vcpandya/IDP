@@ -356,6 +356,7 @@ class ParsedSkill:
     scripts: list[dict] = field(default_factory=list)  # [{path, content, kind, language?}]
     warnings: list[str] = field(default_factory=list)
     source: Optional[str] = None  # human-readable origin
+    requirements: dict = field(default_factory=dict)  # {connectors: [...], tools: [...]}
 
     def to_preview_dict(self) -> dict:
         return {
@@ -368,6 +369,7 @@ class ParsedSkill:
             ],
             "warnings": self.warnings,
             "source": self.source,
+            "requirements": self.requirements,
         }
 
 
@@ -407,6 +409,11 @@ def parse_files_to_skill(files: dict[str, bytes], source: Optional[str] = None) 
     if not name:
         raise SkillImportError("SKILL.md frontmatter is missing required 'name' field")
     description = (fm.get("description") or "").strip()
+    try:
+        from idpkit.agent.skill_requirements import parse_requirements
+        requirements = parse_requirements(fm)
+    except Exception:  # noqa: BLE001
+        requirements = {"connectors": [], "tools": []}
 
     base = skill_md_path.rsplit("/", 1)[0] + "/" if "/" in skill_md_path else ""
     scripts: list[dict] = []
@@ -453,6 +460,7 @@ def parse_files_to_skill(files: dict[str, bytes], source: Optional[str] = None) 
         scripts=scripts,
         warnings=warnings,
         source=source,
+        requirements=requirements,
     )
 
 

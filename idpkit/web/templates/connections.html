@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Connections - IDP Kit{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-plug"></i> Connections</h2>
+    <p class="page-subtitle">
+        Connect external SaaS apps so IDA can act on your behalf — Slack, Notion, GitHub, Google,
+        Linear, Jira, HubSpot, Dropbox, S3. Credentials are encrypted and never sent to the AI model.
+    </p>
+</div>
+
+<div x-data="connectionsPage()" x-init="init()">
+
+    <template x-if="oauthOk">
+        <div style="background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;padding:10px 14px;border-radius:8px;margin-bottom:16px;">
+            <i class="fas fa-check-circle"></i> Connected successfully via OAuth.
+        </div>
+    </template>
+    <template x-if="oauthError">
+        <div style="background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:8px;margin-bottom:16px;">
+            <i class="fas fa-times-circle"></i> OAuth failed: <span x-text="oauthError"></span>
+        </div>
+    </template>
+
+    <template x-if="loading">
+        <div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin fa-2x"></i></div>
+    </template>
+
+    <div class="skills-grid" x-show="!loading">
+        <template x-for="c in connectors" :key="c.id">
+            <div class="skill-card library-card">
+                <div class="skill-card-top">
+                    <div class="skill-card-info">
+                        <h3>
+                            <i :class="c.icon || 'fa-solid fa-plug'" style="margin-right:6px;opacity:0.7;"></i>
+                            <span x-text="c.display_name"></span>
+                        </h3>
+                        <p x-text="c.description"></p>
+                    </div>
+                    <span class="skill-badge"
+                          :class="connectionFor(c.id) ? (connectionFor(c.id).status === 'active' ? 'badge-active' : 'badge-inactive') : 'badge-inactive'"
+                          x-text="connectionFor(c.id) ? connectionFor(c.id).status : 'not connected'"></span>
+                </div>
+                <div class="skill-card-meta" x-show="connectionFor(c.id) && connectionFor(c.id).display_name">
+                    <i class="fas fa-user-circle"></i>
+                    <span x-text="connectionFor(c.id) && connectionFor(c.id).display_name"></span>
+                </div>
+                <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
+                    <strong>Tools:</strong>
+                    <template x-for="t in c.tools" :key="t.name">
+                        <code style="margin-right:6px;" x-text="t.name"></code>
+                    </template>
+                </div>
+                <div class="skill-card-actions" style="margin-top:14px;">
+                    <template x-if="!connectionFor(c.id)">
+                        <button class="btn btn-sm btn-primary" @click="openConnect(c)">
+                            <i class="fas fa-plug"></i> Connect
+                        </button>
+                    </template>
+                    <template x-if="connectionFor(c.id)">
+                        <button class="btn btn-sm" @click="openConnect(c)">
+                            <i class="fas fa-rotate"></i> Reconnect
+                        </button>
+                    </template>
+                    <template x-if="connectionFor(c.id)">
+                        <button class="btn btn-sm btn-danger"
+                                @click="disconnect(connectionFor(c.id))">
+                            <i class="fas fa-unlink"></i> Disconnect
+                        </button>
+                    </template>
+                    <a class="btn btn-sm" :href="c.docs_url" target="_blank" rel="noopener" x-show="c.docs_url">
+                        <i class="fas fa-book"></i> Setup docs
+                    </a>
+                </div>
+                <div class="skill-card-meta" x-show="connectionFor(c.id) && connectionFor(c.id).last_error"
+                     style="color:#991b1b;">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span x-text="connectionFor(c.id) && connectionFor(c.id).last_error"></span>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Connect Modal -->
+    <div class="modal-overlay" x-show="showModal" x-cloak x-transition.opacity
+         @click.self="showModal=false" @keydown.escape.window="showModal=false">
+        <div class="modal skill-modal" @click.stop>
+            <div class="modal-header">
+                <h3>
+                    <i :class="currentConnector ? (currentConnector.icon || 'fa-solid fa-plug') : 'fa-solid fa-plug'"
+                       style="margin-right:8px;"></i>
+                    Connect to <span x-text="currentConnector && currentConnector.display_name"></span>
+                </h3>
+                <button @click="showModal=false" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;"
+                   x-text="currentConnector && currentConnector.description"></p>
+
+                <template x-if="currentConnector && currentConnector.auth_type === 'oauth2'">
+                    <div>
+                        <p style="font-size:13px;margin-bottom:14px;">
+                            This integration uses OAuth. Click "Authorize" to grant access in a new tab.
+                        </p>
+                        <button class="btn btn-primary" @click="startOauth()">
+                            <i class="fas fa-arrow-up-right-from-square"></i> Authorize
+                        </button>
+                        <p x-show="oauthStartError" style="margin-top:10px;color:#991b1b;font-size:13px;"
+                           x-text="oauthStartError"></p>
+                    </div>
+                </template>
+
+                <template x-if="currentConnector && currentConnector.auth_type !== 'oauth2'">
+                    <div>
+                        <template x-for="f in currentConnector.fields" :key="f.key">
+                            <div style="margin-bottom:12px;">
+                                <label class="skill-label" x-text="f.label + (f.required ? ' *' : '')"></label>
+                                <input :type="f.type === 'password' ? 'password' : 'text'"
+                                       class="skill-textarea"
+                                       style="font-family:inherit;height:auto;padding:8px 12px;"
+                                       :placeholder="f.placeholder || ''"
+                                       x-model="formCreds[f.key]">
+                                <div style="font-size:12px;color:var(--text-muted);margin-top:2px;"
+                                     x-show="f.help" x-text="f.help"></div>
+                            </div>
+                        </template>
+                        <template x-if="testResult">
+                            <div style="margin-top:8px;padding:8px 12px;border-radius:6px;font-size:13px;"
+                                 :style="testResult.ok ? 'background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;' : 'background:#fef2f2;color:#991b1b;border:1px solid #fecaca;'">
+                                <span x-text="testResult.ok ? ('OK — ' + (testResult.account || 'authenticated')) : ('Failed: ' + testResult.error)"></span>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showModal=false">Cancel</button>
+                <template x-if="currentConnector && currentConnector.auth_type !== 'oauth2'">
+                    <button class="btn" @click="testConnect()" :disabled="busy">
+                        <i class="fas fa-vial"></i> Test
+                    </button>
+                </template>
+                <template x-if="currentConnector && currentConnector.auth_type !== 'oauth2'">
+                    <button class="btn btn-primary" @click="saveConnect()" :disabled="busy">
+                        <i class="fas fa-save"></i>
+                        <span x-text="busy ? 'Saving...' : 'Connect'"></span>
+                    </button>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function connectionsPage() {
+    return {
+        loading: true,
+        connectors: [],
+        connections: [],
+        showModal: false,
+        currentConnector: null,
+        formCreds: {},
+        busy: false,
+        testResult: null,
+        oauthStartError: '',
+        oauthOk: false,
+        oauthError: '',
+        async init() {
+            const sp = new URLSearchParams(window.location.search);
+            this.oauthOk = sp.get('oauth_ok') === '1';
+            this.oauthError = sp.get('oauth_error') || '';
+            await this.refresh();
+        },
+        connectionFor(cid) {
+            return this.connections.find(c => c.connector_id === cid && c.status === 'active')
+                || this.connections.find(c => c.connector_id === cid);
+        },
+        async refresh() {
+            this.loading = true;
+            try {
+                const [a, b] = await Promise.all([
+                    this._fetch('/api/connectors'),
+                    this._fetch('/api/connectors/connections'),
+                ]);
+                this.connectors = a.connectors || [];
+                this.connections = b.connections || [];
+            } finally {
+                this.loading = false;
+            }
+        },
+        openConnect(c) {
+            this.currentConnector = c;
+            this.formCreds = {};
+            this.testResult = null;
+            this.oauthStartError = '';
+            this.showModal = true;
+        },
+        async testConnect() {
+            this.busy = true;
+            this.testResult = null;
+            try {
+                const data = await this._fetch(
+                    `/api/connectors/${this.currentConnector.id}/test`,
+                    { method: 'POST', body: JSON.stringify({ credentials: this.formCreds }) },
+                );
+                this.testResult = data;
+            } catch (e) {
+                this.testResult = { ok: false, error: String(e.message || e) };
+            } finally { this.busy = false; }
+        },
+        async saveConnect() {
+            this.busy = true;
+            try {
+                await this._fetch(
+                    `/api/connectors/${this.currentConnector.id}/connect`,
+                    { method: 'POST', body: JSON.stringify({ credentials: this.formCreds }) },
+                );
+                this.showModal = false;
+                await this.refresh();
+            } catch (e) {
+                this.testResult = { ok: false, error: String(e.message || e) };
+            } finally { this.busy = false; }
+        },
+        async startOauth() {
+            this.oauthStartError = '';
+            try {
+                const data = await this._fetch(`/api/connectors/${this.currentConnector.id}/oauth/start`);
+                if (data.authorize_url) {
+                    window.location.href = data.authorize_url;
+                }
+            } catch (e) {
+                this.oauthStartError = String(e.message || e);
+            }
+        },
+        async disconnect(connection) {
+            if (!confirm(`Disconnect ${connection.connector_id}?`)) return;
+            await this._fetch(`/api/connectors/connections/${connection.id}`, { method: 'DELETE' });
+            await this.refresh();
+        },
+        async _fetch(url, opts = {}) {
+            const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+            const token = localStorage.getItem('token');
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            const res = await fetch(url, { ...opts, headers, credentials: 'same-origin' });
+            const text = await res.text();
+            let data;
+            try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+            if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+            return data;
+        },
+    };
+}
+</script>
+{% endblock %}
