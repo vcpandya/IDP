@@ -219,6 +219,7 @@ class IDPAgent:
         skills_section = ""
         connector_tools: list[dict] = []
         connector_executors: dict = {}
+        active_skills: list[dict] = []
         if user_id and db:
             try:
                 from idpkit.agent.skills import load_active_skills, build_skills_prompt_section
@@ -236,7 +237,9 @@ class IDPAgent:
                 active_conns = await list_active_connections(db, user_id)
                 connector_tools = build_runtime_tools(active_conns)
                 connector_executors = build_runtime_executors(db, user_id)
-                skills_section += build_capability_prompt_section(active_conns)
+                skills_section += build_capability_prompt_section(
+                    active_conns, active_skills=active_skills,
+                )
             except Exception:
                 logger.debug("Could not load connectors", exc_info=True)
 
