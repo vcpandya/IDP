@@ -47,6 +47,8 @@
                     <i class="fas fa-clipboard-list"></i> <span>Templates</span></a></li>
                 <li><a href="/verifier" class="{% if request.url.path == '/verifier' %}active{% endif %}">
                     <i class="fas fa-check-double"></i> <span>Verifier</span></a></li>
+                <li><a href="/esign" class="{% if '/esign' in request.url.path or '/sign/' in request.url.path %}active{% endif %}">
+                    <i class="fas fa-file-signature"></i> <span>E-Sign</span></a></li>
                 <li><a href="/skills" class="{% if request.url.path == '/skills' %}active{% endif %}">
                     <i class="fas fa-puzzle-piece"></i> <span>Skills</span></a></li>
                 <li><a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">

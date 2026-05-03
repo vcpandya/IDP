@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign Document — IDP Kit E-Sign</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js" defer></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f1f5f9; color: #1e293b; }
+.topbar { background: linear-gradient(135deg, #4f46e5, #7c3aed); padding: 12px 24px; display: flex; align-items: center; gap: 14px; color: #fff; box-shadow: 0 2px 8px rgba(79,70,229,0.25); }
+.topbar h1 { margin: 0; font-size: 1.1rem; font-weight: 700; }
+.topbar .doc-title { font-size: 0.9rem; opacity: 0.85; flex: 1; }
+.main { display: grid; grid-template-columns: 1fr 320px; gap: 0; min-height: calc(100vh - 56px); }
+.pdf-area { overflow-y: auto; padding: 24px; background: #e2e8f0; }
+.pdf-page-wrap { position: relative; display: inline-block; margin-bottom: 20px; }
+.pdf-page-wrap img { display: block; max-width: 100%; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,0.12); }
+.field-box { position: absolute; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; transition: all 0.15s; }
+.field-box.empty { border: 2px dashed #4f46e5; background: rgba(79,70,229,0.07); color: #4f46e5; }
+.field-box.empty:hover { background: rgba(79,70,229,0.15); }
+.field-box.filled { border: 2px solid #10b981; background: rgba(16,185,129,0.08); color: #065f46; }
+.field-box.filled img { width: 90%; height: 90%; object-fit: contain; pointer-events: none; }
+
+.side-panel { background: #fff; border-left: 1px solid #e2e8f0; display: flex; flex-direction: column; }
+.side-inner { flex: 1; overflow-y: auto; padding: 20px; }
+.progress-bar-wrap { padding: 16px 20px; border-bottom: 1px solid #e2e8f0; }
+.progress-label { font-size: 0.78rem; color: #64748b; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.progress-bar { height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
+.progress-fill { height: 100%; background: #4f46e5; border-radius: 4px; transition: width 0.4s ease; }
+.field-list-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.15s; font-size: 0.85rem; }
+.field-list-item:hover { border-color: #4f46e5; background: #eef2ff; }
+.field-list-item.done { border-color: #10b981; background: #f0fdf4; color: #065f46; }
+.field-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; border: 1.5px solid #e2e8f0; background: #fff; color: #374151; text-decoration: none; transition: all 0.15s; }
+.btn-primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+.btn-primary:hover { background: #4338ca; }
+.btn-success { background: #10b981; color: #fff; border-color: #10b981; font-size: 1rem; padding: 14px 28px; }
+.btn-success:hover { background: #059669; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.consent-panel { background: #fefce8; border: 1.5px solid #fde047; border-radius: 10px; padding: 16px; margin: 16px 0; font-size: 0.82rem; line-height: 1.6; color: #713f12; }
+.consent-panel strong { color: #92400e; }
+
+/* Modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.modal { background: #fff; border-radius: 16px; padding: 24px; width: 90%; max-width: 500px; box-shadow: 0 20px 60px rgba(0,0,0,0.2); }
+.modal h3 { margin: 0 0 16px; font-size: 1.1rem; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid #e2e8f0; }
+.tab-btn { padding: 8px 16px; border: none; background: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: #64748b; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
+.tab-btn.active { color: #4f46e5; border-bottom-color: #4f46e5; }
+#sigCanvas { border: 2px solid #e2e8f0; border-radius: 8px; cursor: crosshair; touch-action: none; width: 100%; }
+.typed-sig { font-family: 'Dancing Script', 'Brush Script MT', cursive; font-size: 2.5rem; color: #1e293b; min-height: 80px; display: flex; align-items: center; padding: 0 16px; border: 2px solid #e2e8f0; border-radius: 8px; }
+.upload-zone-sm { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; font-size: 0.85rem; color: #94a3b8; }
+.upload-zone-sm:hover { border-color: #4f46e5; color: #4f46e5; background: #eef2ff; }
+.success-screen { text-align: center; padding: 40px 20px; }
+.success-screen .icon { font-size: 4rem; color: #10b981; margin-bottom: 16px; }
+
+@media(max-width:768px){ .main{grid-template-columns:1fr;} .side-panel{border-left:none;border-top:1px solid #e2e8f0;} }
+</style>
+</head>
+<body x-data="esignSign()" x-init="init()">
+
+<div class="topbar">
+  <i class="fas fa-file-signature" style="font-size:1.3rem"></i>
+  <div>
+    <h1>IDP Kit E-Sign</h1>
+    <div class="doc-title" x-text="context ? context.envelope_title : 'Loading…'"></div>
+  </div>
+  <div style="margin-left:auto;font-size:0.8rem;opacity:0.8" x-show="context">
+    Signing as <strong x-text="context ? context.signer_name : ''"></strong>
+  </div>
+</div>
+
+<!-- Loading -->
+<div x-show="loading" style="text-align:center;padding:80px;color:#64748b">
+  <i class="fas fa-spinner fa-spin" style="font-size:2.5rem"></i>
+  <p style="margin-top:12px">Loading document…</p>
+</div>
+
+<!-- Error -->
+<div x-show="!loading && error" style="text-align:center;padding:80px 20px;max-width:500px;margin:0 auto">
+  <i class="fas fa-exclamation-triangle" style="font-size:3rem;color:#ef4444;margin-bottom:16px"></i>
+  <h2 style="color:#dc2626" x-text="error"></h2>
+  <p style="color:#64748b">This link may be invalid, expired, or the envelope has been voided.</p>
+</div>
+
+<!-- Already signed -->
+<div x-show="!loading && !error && alreadySigned && !completed" style="text-align:center;padding:60px 20px;max-width:500px;margin:0 auto">
+  <i class="fas fa-check-circle" style="font-size:3.5rem;color:#10b981;margin-bottom:16px"></i>
+  <h2>You've already signed!</h2>
+  <p style="color:#64748b">Waiting for other parties to complete signing.</p>
+</div>
+
+<!-- Success screen -->
+<div x-show="!loading && !error && (submitted || completed)" class="success-screen" style="max-width:600px;margin:0 auto;padding:60px 20px">
+  <div class="icon"><i class="fas fa-check-circle"></i></div>
+  <h2 style="margin-bottom:8px">Signature submitted!</h2>
+  <p style="color:#64748b;margin-bottom:24px" x-show="isCompleted">All parties have signed. The completed document is available for download.</p>
+  <p style="color:#64748b;margin-bottom:24px" x-show="!isCompleted">Your signature has been recorded. You'll receive an email once all parties have signed.</p>
+  <template x-if="isCompleted">
+    <a :href="'/api/esign/sign/' + token + '/download'" class="btn btn-success">
+      <i class="fas fa-download"></i> Download Signed Document
+    </a>
+  </template>
+</div>
+
+<!-- Main signing layout -->
+<div x-show="!loading && !error && !alreadySigned && !submitted && !completed" class="main">
+
+  <!-- PDF Area -->
+  <div class="pdf-area" id="pdfArea">
+    <div x-show="pagesLoading" style="text-align:center;padding:40px;color:#64748b">
+      <i class="fas fa-spinner fa-spin" style="font-size:1.5rem"></i>
+      <p>Loading pages…</p>
+    </div>
+    <template x-for="pageNum in totalPages" :key="pageNum">
+      <div style="margin-bottom:28px;text-align:center">
+        <div style="font-size:0.72rem;color:#94a3b8;margin-bottom:6px;font-weight:600;text-align:left">Page <span x-text="pageNum"></span></div>
+        <div class="pdf-page-wrap" :id="'page-' + pageNum">
+          <img :src="'data:image/png;base64,' + (pages[pageNum] || '')" :alt="'Page ' + pageNum" @load="onImgLoad($event, pageNum)">
+          <template x-for="field in fieldsByPage(pageNum)" :key="field.id">
+            <div class="field-box"
+              :class="fieldValues[field.id] ? 'filled' : 'empty'"
+              :style="fieldPos(field)"
+              @click="openField(field)">
+              <template x-if="fieldValues[field.id] && (field.field_type === 'signature' || field.field_type === 'initials')">
+                <img :src="fieldValues[field.id]" style="width:90%;height:90%;object-fit:contain">
+              </template>
+              <template x-if="fieldValues[field.id] && field.field_type !== 'signature' && field.field_type !== 'initials'">
+                <span x-text="fieldValues[field.id]" style="font-size:0.75rem;font-weight:600;color:#065f46;padding:2px 4px"></span>
+              </template>
+              <template x-if="!fieldValues[field.id]">
+                <span x-text="fieldIcon(field.field_type) + ' ' + (field.label || fieldLabel(field.field_type))"></span>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Side panel -->
+  <div class="side-panel">
+    <div class="progress-bar-wrap">
+      <div class="progress-label">
+        <span>Fields completed</span>
+        <span x-text="doneCount + ' / ' + fields.length"></span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="'width:' + (fields.length ? Math.round(doneCount/fields.length*100) : 0) + '%'"></div>
+      </div>
+    </div>
+
+    <div class="side-inner">
+      <div style="font-size:0.75rem;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px">Required Fields</div>
+
+      <template x-for="field in fields" :key="field.id">
+        <div class="field-list-item" :class="fieldValues[field.id] ? 'done' : ''"
+          @click="openField(field); scrollToPage(field.page)">
+          <div class="field-status-dot" :style="'background:' + (fieldValues[field.id] ? '#10b981' : '#cbd5e1')"></div>
+          <i class="fas" :class="fieldValues[field.id] ? 'fa-check' : fieldFaIcon(field.field_type)" style="font-size:0.85rem"></i>
+          <span x-text="field.label || fieldLabel(field.field_type)"></span>
+          <span style="margin-left:auto;font-size:0.72rem;color:#94a3b8">p.<span x-text="field.page"></span></span>
+        </div>
+      </template>
+
+      <!-- Consent + submit (shown when all fields filled) -->
+      <div x-show="doneCount === fields.length && fields.length > 0" style="margin-top:16px">
+        <div class="consent-panel">
+          <strong>Legal Disclosure</strong><br>
+          By clicking "I Agree &amp; Sign" you are signing this document electronically. You agree that your electronic signature is the legal equivalent of your manual signature on this document.
+        </div>
+        <button @click="submitSignatures()" class="btn btn-success" style="width:100%" :disabled="submitting">
+          <i class="fas" :class="submitting ? 'fa-spinner fa-spin' : 'fa-check-circle'"></i>
+          <span x-show="!submitting">I Agree &amp; Sign</span>
+          <span x-show="submitting">Submitting…</span>
+        </button>
+      </div>
+
+      <div x-show="fields.length > 0 && doneCount < fields.length" style="margin-top:16px;font-size:0.82rem;color:#94a3b8;text-align:center">
+        Complete all <span x-text="fields.length - doneCount"></span> remaining field(s) to sign.
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Signature/Field Modal -->
+<div class="modal-backdrop" x-show="modalOpen" x-cloak @click.self="closeModal()">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h3 x-text="activeField ? (activeField.label || fieldLabel(activeField.field_type)) : ''"></h3>
+      <button @click="closeModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:#94a3b8"><i class="fas fa-times"></i></button>
+    </div>
+
+    <!-- Signature/Initials modal -->
+    <div x-show="activeField && (activeField.field_type === 'signature' || activeField.field_type === 'initials')">
+      <div class="tabs">
+        <button class="tab-btn" :class="sigTab==='draw' ? 'active' : ''" @click="sigTab='draw'"><i class="fas fa-pen"></i> Draw</button>
+        <button class="tab-btn" :class="sigTab==='type' ? 'active' : ''" @click="sigTab='type'; $nextTick(updateTypedPreview)"><i class="fas fa-font"></i> Type</button>
+        <button class="tab-btn" :class="sigTab==='upload' ? 'active' : ''" @click="sigTab='upload'"><i class="fas fa-upload"></i> Upload</button>
+      </div>
+
+      <!-- Draw tab -->
+      <div x-show="sigTab==='draw'">
+        <canvas id="sigCanvas" height="150" @mousedown="startDraw($event)" @mousemove="draw($event)" @mouseup="stopDraw()" @mouseleave="stopDraw()" @touchstart.prevent="startDrawTouch($event)" @touchmove.prevent="drawTouch($event)" @touchend="stopDraw()"></canvas>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button @click="clearCanvas()" class="btn btn-sm" style="font-size:0.8rem"><i class="fas fa-eraser"></i> Clear</button>
+          <button @click="applySignature('draw')" class="btn btn-primary" style="font-size:0.8rem;margin-left:auto"><i class="fas fa-check"></i> Apply</button>
+        </div>
+      </div>
+
+      <!-- Type tab -->
+      <div x-show="sigTab==='type'">
+        <input type="text" x-model="typedName" @input="updateTypedPreview()" placeholder="Type your name" style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.9rem;margin-bottom:10px">
+        <div class="typed-sig" id="typedPreview" x-text="typedName || 'Your Signature'"></div>
+        <div style="margin-top:10px;text-align:right">
+          <button @click="applySignature('type')" class="btn btn-primary" :disabled="!typedName.trim()"><i class="fas fa-check"></i> Apply</button>
+        </div>
+      </div>
+
+      <!-- Upload tab -->
+      <div x-show="sigTab==='upload'">
+        <div class="upload-zone-sm" @click="$refs.sigImg.click()">
+          <input type="file" x-ref="sigImg" accept="image/*" style="display:none" @change="loadUploadedSig($event)">
+          <i class="fas fa-image" style="font-size:1.5rem;margin-bottom:8px;display:block"></i>
+          Click to upload a signature image (PNG, JPG)
+        </div>
+        <div x-show="uploadedSigPreview" style="margin-top:10px;text-align:center">
+          <img :src="uploadedSigPreview" style="max-height:80px;border:1px solid #e2e8f0;border-radius:4px">
+          <div style="margin-top:8px">
+            <button @click="applySignature('upload')" class="btn btn-primary"><i class="fas fa-check"></i> Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Date modal -->
+    <div x-show="activeField && activeField.field_type === 'date'">
+      <input type="date" x-model="dateValue" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:1rem">
+      <div style="margin-top:12px;text-align:right">
+        <button @click="applyDateOrText()" class="btn btn-primary" :disabled="!dateValue"><i class="fas fa-check"></i> Apply</button>
+      </div>
+    </div>
+
+    <!-- Text modal -->
+    <div x-show="activeField && activeField.field_type === 'text'">
+      <textarea x-model="textValue" rows="3" placeholder="Enter text here…" style="width:100%;padding:10px 14px;border:1px solid #e2e8f0;border-radius:8px;font-size:0.9rem;resize:vertical"></textarea>
+      <div style="margin-top:12px;text-align:right">
+        <button @click="applyDateOrText()" class="btn btn-primary" :disabled="!textValue.trim()"><i class="fas fa-check"></i> Apply</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = '{{ token }}';
+
+function esignSign() {
+  return {
+    token: TOKEN,
+    loading: true,
+    error: null,
+    context: null,
+    fields: [],
+    fieldValues: {},
+    pages: {},
+    totalPages: 0,
+    pagesLoading: false,
+    alreadySigned: false,
+    submitted: false,
+    isCompleted: false,
+    submitting: false,
+    modalOpen: false,
+    activeField: null,
+    sigTab: 'draw',
+    typedName: '',
+    dateValue: new Date().toISOString().split('T')[0],
+    textValue: '',
+    uploadedSigPreview: null,
+    drawing: false,
+    lastX: 0, lastY: 0,
+    pageImgSizes: {},
+    sessionId: null,
+    canvasFp: null,
+
+    get doneCount() { return this.fields.filter(f => this.fieldValues[f.id]).length; },
+    get completed() { return this.isCompleted; },
+
+    async init() {
+      this.sessionId = 'sid_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      this.canvasFp = this.computeCanvasFingerprint();
+      await this.loadContext();
+    },
+
+    computeCanvasFingerprint() {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 200; c.height = 50;
+        const ctx = c.getContext('2d');
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillStyle = '#f60';
+        ctx.fillRect(125, 1, 62, 20);
+        ctx.fillStyle = '#069';
+        ctx.fillText('IDPKit eSig', 2, 15);
+        ctx.fillStyle = 'rgba(102,204,0,0.7)';
+        ctx.fillText('IDPKit eSig', 4, 17);
+        const raw = c.toDataURL();
+        // Simple hash
+        let h = 0;
+        for (let i = 0; i < raw.length; i++) { h = ((h << 5) - h) + raw.charCodeAt(i); h |= 0; }
+        return (h >>> 0).toString(16).padStart(8, '0');
+      } catch(e) { return null; }
+    },
+
+    async loadContext() {
+      this.loading = true;
+      try {
+        const res = await fetch(`/api/esign/sign/${this.token}`);
+        if (!res.ok) {
+          const d = await res.json();
+          this.error = d.detail || 'This signing link is invalid or has expired.';
+          this.loading = false;
+          return;
+        }
+        this.context = await res.json();
+        if (this.context.already_signed) {
+          this.alreadySigned = true;
+          this.isCompleted = this.context.completed;
+          this.loading = false;
+          return;
+        }
+        this.fields = this.context.fields || [];
+        this.totalPages = this.context.page_count || 1;
+        // Pre-fill date fields
+        for (const f of this.fields) {
+          if (f.field_type === 'date') this.fieldValues[f.id] = new Date().toLocaleDateString('en-US');
+        }
+        await this.loadPages();
+      } catch(e) {
+        this.error = 'Failed to load document. Please try again.';
+      }
+      this.loading = false;
+    },
+
+    async loadPages() {
+      this.pagesLoading = true;
+      for (let p = 1; p <= this.totalPages; p++) {
+        try {
+          const res = await fetch(`/api/esign/sign/${this.token}/page/${p}`);
+          if (res.ok) { const d = await res.json(); this.pages[p] = d.image_b64; }
+        } catch(e) {}
+      }
+      this.pagesLoading = false;
+    },
+
+    fieldsByPage(page) { return this.fields.filter(f => f.page === page); },
+
+    fieldPos(field) {
+      return `left:${field.x_pct}%;top:${field.y_pct}%;width:${field.w_pct}%;height:${field.h_pct}%;`;
+    },
+
+    fieldLabel(type) {
+      return { signature:'Click to Sign', initials:'Initials', date:'Date', text:'Text' }[type] || type;
+    },
+
+    fieldIcon(type) { return { signature:'✍', initials:'AB', date:'📅', text:'T' }[type] || '?'; },
+    fieldFaIcon(type) { return { signature:'fa-signature', initials:'fa-font', date:'fa-calendar', text:'fa-text-width' }[type] || 'fa-pen'; },
+
+    onImgLoad(evt, pageNum) {
+      const img = evt.target;
+      this.pageImgSizes[pageNum] = { w: img.naturalWidth, h: img.naturalHeight };
+    },
+
+    scrollToPage(page) {
+      const el = document.getElementById(`page-${page}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    },
+
+    openField(field) {
+      this.activeField = field;
+      this.sigTab = 'draw';
+      this.typedName = '';
+      this.uploadedSigPreview = null;
+      if (field.field_type === 'date') {
+        this.dateValue = this.fieldValues[field.id] ? '' : new Date().toISOString().split('T')[0];
+      }
+      if (field.field_type === 'text') {
+        this.textValue = this.fieldValues[field.id] || '';
+      }
+      this.modalOpen = true;
+      this.$nextTick(() => this.setupCanvas());
+    },
+
+    closeModal() {
+      this.modalOpen = false;
+      this.activeField = null;
+    },
+
+    setupCanvas() {
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      canvas.width = canvas.offsetWidth;
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    },
+
+    clearCanvas() {
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+    },
+
+    _getPos(evt, canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return { x: (evt.clientX - rect.left) * scaleX, y: (evt.clientY - rect.top) * scaleY };
+    },
+
+    startDraw(evt) {
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      this.drawing = true;
+      const pos = this._getPos(evt, canvas);
+      this.lastX = pos.x; this.lastY = pos.y;
+    },
+
+    draw(evt) {
+      if (!this.drawing) return;
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const pos = this._getPos(evt, canvas);
+      ctx.beginPath();
+      ctx.moveTo(this.lastX, this.lastY);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      this.lastX = pos.x; this.lastY = pos.y;
+    },
+
+    stopDraw() { this.drawing = false; },
+
+    startDrawTouch(evt) {
+      const touch = evt.touches[0];
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      this.drawing = true;
+      const rect = canvas.getBoundingClientRect();
+      this.lastX = touch.clientX - rect.left;
+      this.lastY = touch.clientY - rect.top;
+    },
+
+    drawTouch(evt) {
+      if (!this.drawing) return;
+      const touch = evt.touches[0];
+      const canvas = document.getElementById('sigCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+      ctx.beginPath();
+      ctx.moveTo(this.lastX, this.lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      this.lastX = x; this.lastY = y;
+    },
+
+    updateTypedPreview() {
+      const el = document.getElementById('typedPreview');
+      if (el) el.textContent = this.typedName || 'Your Signature';
+    },
+
+    loadUploadedSig(evt) {
+      const file = evt.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => { this.uploadedSigPreview = e.target.result; };
+      reader.readAsDataURL(file);
+    },
+
+    async applySignature(mode) {
+      let dataUrl = null;
+      if (mode === 'draw') {
+        const canvas = document.getElementById('sigCanvas');
+        dataUrl = canvas.toDataURL('image/png');
+        // Check if empty
+        const ctx = canvas.getContext('2d');
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        if (data.every(v => v === 0)) { alert('Please draw your signature first.'); return; }
+      } else if (mode === 'type') {
+        if (!this.typedName.trim()) return;
+        // Render typed name to canvas
+        const c = document.createElement('canvas');
+        c.width = 400; c.height = 100;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = 'transparent';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.font = "bold 52px 'Brush Script MT', 'Dancing Script', cursive";
+        ctx.fillStyle = '#1e293b';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.typedName, 16, 50);
+        dataUrl = c.toDataURL('image/png');
+      } else if (mode === 'upload') {
+        dataUrl = this.uploadedSigPreview;
+      }
+      if (dataUrl && this.activeField) {
+        this.fieldValues[this.activeField.id] = dataUrl;
+        this.closeModal();
+        this.autoAdvance();
+      }
+    },
+
+    applyDateOrText() {
+      if (!this.activeField) return;
+      const val = this.activeField.field_type === 'date' ? this.dateValue : this.textValue.trim();
+      if (!val) return;
+      this.fieldValues[this.activeField.id] = this.activeField.field_type === 'date'
+        ? new Date(this.dateValue + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })
+        : val;
+      this.closeModal();
+      this.autoAdvance();
+    },
+
+    autoAdvance() {
+      const next = this.fields.find(f => !this.fieldValues[f.id]);
+      if (next) { setTimeout(() => this.scrollToPage(next.page), 300); }
+    },
+
+    async submitSignatures() {
+      this.submitting = true;
+      const fieldData = this.fields.map(f => ({ id: f.id, value: this.fieldValues[f.id] || '' }));
+      const payload = {
+        fields: fieldData,
+        canvas_fingerprint_hash: this.canvasFp,
+        screen_resolution: `${screen.width}x${screen.height}`,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        language: navigator.language || navigator.userLanguage,
+        session_id: this.sessionId,
+      };
+      try {
+        const res = await fetch(`/api/esign/sign/${this.token}/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          this.submitted = true;
+          this.isCompleted = data.completed;
+        } else {
+          alert(data.detail || 'Failed to submit signatures. Please try again.');
+        }
+      } catch(e) {
+        alert('Network error. Please try again.');
+      }
+      this.submitting = false;
+    },
+  }
+}
+</script>
+</body>
+</html>
