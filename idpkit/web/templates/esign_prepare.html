@@ -1,0 +1,507 @@
+{% extends "base.html" %}
+{% block title %}Prepare Envelope — E-Sign{% endblock %}
+{% block head %}
+<style>
+.esign-layout { display:grid; grid-template-columns:1fr 340px; gap:20px; height:calc(100vh - 120px); }
+.pdf-panel { overflow-y:auto; background:var(--bg-secondary,#f9fafb); border-radius:10px; padding:16px; position:relative; }
+.sidebar-panel { overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
+.pdf-page-wrap { position:relative; display:inline-block; margin-bottom:20px; }
+.pdf-page-wrap img { display:block; max-width:100%; border:1px solid var(--border); border-radius:4px; box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+.field-overlay { position:absolute; border:2px solid #4f46e5; border-radius:4px; cursor:move; user-select:none; display:flex; align-items:center; justify-content:center; font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; background:rgba(79,70,229,0.08); color:#4f46e5; transition:border-color 0.15s; }
+.field-overlay:hover, .field-overlay.active { border-color:#7c3aed; background:rgba(124,58,237,0.12); }
+.field-overlay .remove-btn { position:absolute; top:-8px; right:-8px; width:16px; height:16px; background:#ef4444; color:#fff; border-radius:50%; font-size:9px; display:none; align-items:center; justify-content:center; cursor:pointer; border:none; }
+.field-overlay:hover .remove-btn { display:flex; }
+.field-type-btn { display:flex; align-items:center; gap:8px; padding:8px 12px; border:1.5px solid var(--border); border-radius:8px; background:var(--bg-primary,#fff); cursor:grab; font-size:0.82rem; font-weight:600; transition:all 0.15s; }
+.field-type-btn:hover { border-color:#4f46e5; color:#4f46e5; background:#eef2ff; }
+.signer-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+.signer-color { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+.panel-card { background:var(--bg-primary,#fff); border:1px solid var(--border); border-radius:10px; padding:16px; }
+.panel-card h4 { margin:0 0 12px; font-size:0.9rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em; }
+.drop-hint { text-align:center; padding:20px; color:var(--text-muted); font-size:0.82rem; border:2px dashed var(--border); border-radius:8px; margin-top:8px; }
+@media(max-width:900px){ .esign-layout{grid-template-columns:1fr;height:auto;} }
+</style>
+{% endblock %}
+{% block content %}
+<div x-data="esignPrepare()" x-init="init()">
+
+  <div class="page-header" style="margin-bottom:16px">
+    <h2><i class="fas fa-file-signature"></i>
+      <span x-show="!envelopeId">New Envelope</span>
+      <span x-show="envelopeId" x-text="envelope ? envelope.title : 'Prepare Envelope'"></span>
+    </h2>
+    <div style="display:flex;gap:8px">
+      <a href="/esign" class="btn"><i class="fas fa-arrow-left"></i> Back</a>
+      <button @click="sendEnvelope()" class="btn btn-primary"
+        :disabled="sending || !envelope || envelope.status !== 'draft'"
+        x-show="!envelope || envelope.status === 'draft'">
+        <i class="fas" :class="sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+        <span x-show="!sending">Send for Signature</span>
+        <span x-show="sending">Sending…</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 1: Create envelope (shown when no envelope yet) -->
+  <div x-show="!envelopeId" class="panel-card" style="max-width:700px;margin:0 auto">
+    <h3 style="margin-bottom:16px"><i class="fas fa-envelope"></i> Create Envelope</h3>
+
+    <div class="form-group">
+      <label>Envelope Title <span style="color:#ef4444">*</span></label>
+      <input type="text" x-model="form.title" placeholder="e.g. Service Agreement Q3 2025" maxlength="500">
+    </div>
+
+    <div class="form-group">
+      <label>Message to Signers (optional)</label>
+      <textarea x-model="form.message" rows="2" placeholder="Please review and sign the attached document…" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;resize:vertical"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Signing Order</label>
+      <select x-model="form.signing_order" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px">
+        <option value="parallel">Parallel — all signers receive link at once</option>
+        <option value="sequential">Sequential — each signer receives link after the previous signs</option>
+      </select>
+    </div>
+
+    <!-- Document source -->
+    <div class="form-group">
+      <label>Document Source</label>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button @click="docSource='existing'" class="btn btn-sm" :class="docSource==='existing' ? 'btn-primary' : ''">From Knowledge Base</button>
+        <button @click="docSource='upload'" class="btn btn-sm" :class="docSource==='upload' ? 'btn-primary' : ''">Upload New PDF</button>
+      </div>
+
+      <div x-show="docSource==='existing'">
+        <select x-model="form.document_id" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px">
+          <option value="">— Select document —</option>
+          <template x-for="doc in documents" :key="doc.id">
+            <option :value="doc.id" x-text="doc.filename + ' (' + (doc.format||'') + ')'"></option>
+          </template>
+        </select>
+        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px">Only PDF documents are fully supported for field placement.</p>
+      </div>
+
+      <div x-show="docSource==='upload'">
+        <div class="upload-zone" style="padding:20px;cursor:pointer" @click="$refs.pdfFile.click()">
+          <input type="file" x-ref="pdfFile" accept=".pdf" style="display:none" @change="handleFileSelect($event)">
+          <i class="fas fa-cloud-upload-alt" style="font-size:1.5rem;color:var(--text-muted)"></i>
+          <p style="margin:8px 0 0">Click to select a PDF</p>
+          <p class="upload-hint" x-show="uploadedFile" x-text="uploadedFile ? uploadedFile.name : ''"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Signers -->
+    <div class="form-group">
+      <label>Signers</label>
+      <template x-for="(signer, idx) in form.signers" :key="idx">
+        <div class="signer-row">
+          <div class="signer-color" :style="'background:' + signerColors[idx % signerColors.length]"></div>
+          <input type="text" x-model="signer.name" placeholder="Full Name" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+          <input type="email" x-model="signer.email" placeholder="email@example.com" style="flex:1.5;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+          <input type="number" x-model.number="signer.order_index" min="0" placeholder="Order" style="width:60px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+          <button @click="form.signers.splice(idx,1)" class="btn btn-sm btn-danger" style="padding:5px 8px"><i class="fas fa-times"></i></button>
+        </div>
+      </template>
+      <button @click="form.signers.push({name:'',email:'',order_index:form.signers.length})" class="btn btn-sm" style="margin-top:6px">
+        <i class="fas fa-plus"></i> Add Signer
+      </button>
+    </div>
+
+    <div x-show="createError" style="background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.85rem" x-text="createError"></div>
+
+    <button @click="createEnvelope()" class="btn btn-primary" :disabled="creating || !form.title.trim()">
+      <i class="fas" :class="creating ? 'fa-spinner fa-spin' : 'fa-check'"></i>
+      <span x-show="!creating">Create &amp; Add Fields</span>
+      <span x-show="creating">Creating…</span>
+    </button>
+  </div>
+
+  <!-- Step 2: Field placement -->
+  <div x-show="envelopeId && envelope" class="esign-layout">
+
+    <!-- PDF Panel -->
+    <div class="pdf-panel" id="pdfPanel">
+      <div x-show="pagesLoading" style="text-align:center;padding:40px;color:var(--text-muted)">
+        <i class="fas fa-spinner fa-spin" style="font-size:2rem"></i><p>Loading document…</p>
+      </div>
+      <div x-show="!pagesLoading">
+        <template x-for="pageNum in totalPages" :key="pageNum">
+          <div style="margin-bottom:28px">
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;font-weight:600">Page <span x-text="pageNum"></span></div>
+            <div class="pdf-page-wrap" :id="'page-wrap-' + pageNum"
+              @dragover.prevent="onDragOver($event, pageNum)"
+              @drop.prevent="onDrop($event, pageNum)">
+              <img :src="'data:image/png;base64,' + (pages[pageNum] || '')" :alt="'Page ' + pageNum"
+                @load="pageImgLoaded($event, pageNum)" :data-page="pageNum">
+
+              <!-- Field overlays for this page -->
+              <template x-for="field in fieldsByPage(pageNum)" :key="field.id">
+                <div class="field-overlay"
+                  :style="fieldStyle(field)"
+                  :data-field-id="field.id"
+                  @mousedown="startDrag($event, field)"
+                  :class="selectedField && selectedField.id === field.id ? 'active' : ''">
+                  <button class="remove-btn" @click.stop="removeField(field.id)"><i class="fas fa-times"></i></button>
+                  <span x-text="fieldIcon(field.field_type) + ' ' + (field.label || field.field_type)"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Sidebar Panel -->
+    <div class="sidebar-panel">
+
+      <!-- Field type palette -->
+      <div class="panel-card">
+        <h4><i class="fas fa-tools"></i> Field Types</h4>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">Drag onto the document to place a field.</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field-type-btn" draggable="true" @dragstart="onFieldDragStart($event, 'signature')">
+            <i class="fas fa-signature" style="color:#4f46e5"></i> Signature
+          </div>
+          <div class="field-type-btn" draggable="true" @dragstart="onFieldDragStart($event, 'initials')">
+            <i class="fas fa-font" style="color:#7c3aed"></i> Initials
+          </div>
+          <div class="field-type-btn" draggable="true" @dragstart="onFieldDragStart($event, 'date')">
+            <i class="fas fa-calendar" style="color:#0891b2"></i> Date
+          </div>
+          <div class="field-type-btn" draggable="true" @dragstart="onFieldDragStart($event, 'text')">
+            <i class="fas fa-text-width" style="color:#059669"></i> Text
+          </div>
+        </div>
+        <div class="drop-hint" x-show="fields.length === 0">Drop fields onto the PDF pages</div>
+      </div>
+
+      <!-- Selected field properties -->
+      <div class="panel-card" x-show="selectedField">
+        <h4><i class="fas fa-sliders-h"></i> Field Properties</h4>
+        <template x-if="selectedField">
+          <div>
+            <div class="form-group">
+              <label>Assigned To</label>
+              <select x-model="selectedField.signer_id" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                <option value="">— Assign signer —</option>
+                <template x-for="s in signers" :key="s.id">
+                  <option :value="s.id" x-text="s.name + ' <' + s.email + '>'"></option>
+                </template>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Label (optional)</label>
+              <input type="text" x-model="selectedField.label" placeholder="e.g. Client Signature" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+            </div>
+            <button @click="selectedField = null" class="btn btn-sm" style="width:100%">Done</button>
+          </div>
+        </template>
+      </div>
+
+      <!-- Signers summary -->
+      <div class="panel-card">
+        <h4><i class="fas fa-users"></i> Signers (<span x-text="signers.length"></span>)</h4>
+        <template x-for="(s, idx) in signers" :key="s.id">
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+            <div class="signer-color" :style="'background:' + signerColors[idx % signerColors.length]"></div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:0.85rem;font-weight:600" x-text="s.name"></div>
+              <div style="font-size:0.75rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.email"></div>
+            </div>
+            <span style="font-size:0.72rem;background:#eef2ff;color:#4f46e5;padding:2px 6px;border-radius:10px" x-text="fieldsByPage(0).concat(...Array.from({length:totalPages},(_,i)=>fieldsByPage(i+1))).filter(f=>f.signer_id===s.id).length + ' fields'"></span>
+          </div>
+        </template>
+        <div x-show="signers.length === 0" style="font-size:0.8rem;color:var(--text-muted)">No signers added.</div>
+      </div>
+
+      <!-- Save / Send -->
+      <div class="panel-card" x-show="envelope && envelope.status === 'draft'">
+        <button @click="saveFields()" class="btn" style="width:100%;margin-bottom:8px" :disabled="saving">
+          <i class="fas" :class="saving ? 'fa-spinner fa-spin' : 'fa-save'"></i>
+          <span x-show="!saving">Save Fields</span>
+          <span x-show="saving">Saving…</span>
+        </button>
+        <button @click="sendEnvelope()" class="btn btn-primary" style="width:100%" :disabled="sending || fields.length === 0 || signers.length === 0">
+          <i class="fas" :class="sending ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+          <span x-show="!sending">Send for Signature</span>
+          <span x-show="sending">Sending…</span>
+        </button>
+        <div x-show="saveMsg" style="margin-top:8px;font-size:0.8rem;text-align:center" :style="saveMsgError ? 'color:#dc2626' : 'color:#10b981'" x-text="saveMsg"></div>
+      </div>
+
+      <div class="panel-card" x-show="envelope && envelope.status !== 'draft'" style="text-align:center;color:var(--text-muted);font-size:0.85rem">
+        <i class="fas fa-lock" style="font-size:1.5rem;margin-bottom:8px;display:block"></i>
+        Envelope is <strong x-text="envelope ? envelope.status : ''"></strong> — fields are locked.
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<script>
+function esignPrepare() {
+  return {
+    envelopeId: '{{ envelope_id | default("") }}',
+    envelope: null,
+    signers: [],
+    fields: [],
+    pages: {},
+    totalPages: 0,
+    pagesLoading: false,
+    creating: false,
+    sending: false,
+    saving: false,
+    saveMsg: '',
+    saveMsgError: false,
+    createError: '',
+    documents: [],
+    selectedField: null,
+    draggingFieldType: null,
+    dragStartOffset: { x: 0, y: 0 },
+    isDraggingExisting: false,
+    pageImgSizes: {},
+    docSource: 'existing',
+    uploadedFile: null,
+    signerColors: ['#4f46e5','#7c3aed','#0891b2','#059669','#d97706','#dc2626','#db2777'],
+
+    form: {
+      title: '',
+      message: '',
+      signing_order: 'parallel',
+      document_id: '',
+      signers: [{ name: '', email: '', order_index: 0 }],
+    },
+
+    async init() {
+      await this.loadDocuments();
+      if (this.envelopeId) {
+        await this.loadEnvelope(this.envelopeId);
+      }
+    },
+
+    async loadDocuments() {
+      try {
+        const res = await fetch('/api/documents/?limit=200');
+        if (res.ok) {
+          const data = await res.json();
+          this.documents = (data.items || []).filter(d => d.format === 'pdf' || d.format === 'docx');
+        }
+      } catch(e) {}
+    },
+
+    async loadEnvelope(id) {
+      const res = await fetch(`/api/esign/envelopes/${id}`);
+      if (!res.ok) return;
+      this.envelope = await res.json();
+      this.signers = this.envelope.signers || [];
+      this.fields = (this.envelope.fields || []).map(f => ({...f, _tempId: f.id || Math.random().toString(36).slice(2)}));
+      this.totalPages = this.envelope.page_count || 1;
+      await this.loadPages();
+    },
+
+    async loadPages() {
+      this.pagesLoading = true;
+      for (let p = 1; p <= this.totalPages; p++) {
+        try {
+          const res = await fetch(`/api/esign/envelopes/${this.envelopeId}/pdf-page/${p}`);
+          if (res.ok) {
+            const data = await res.json();
+            this.pages[p] = data.image_b64;
+          }
+        } catch(e) {}
+      }
+      this.pagesLoading = false;
+    },
+
+    async createEnvelope() {
+      this.createError = '';
+      if (!this.form.title.trim()) { this.createError = 'Please enter a title.'; return; }
+      const goodSigners = this.form.signers.filter(s => s.name.trim() && s.email.trim());
+      if (goodSigners.length === 0) { this.createError = 'Add at least one signer.'; return; }
+
+      this.creating = true;
+      try {
+        let res, data;
+        if (this.docSource === 'upload' && this.uploadedFile) {
+          const fd = new FormData();
+          fd.append('title', this.form.title);
+          if (this.form.message) fd.append('message', this.form.message);
+          fd.append('signing_order', this.form.signing_order);
+          fd.append('file', this.uploadedFile);
+          res = await fetch('/api/esign/envelopes/upload', { method: 'POST', body: fd });
+        } else {
+          if (!this.form.document_id) { this.createError = 'Select a document.'; this.creating = false; return; }
+          res = await fetch('/api/esign/envelopes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...this.form, signers: goodSigners }),
+          });
+        }
+        data = await res.json();
+        if (!res.ok) { this.createError = data.detail || 'Failed to create envelope'; this.creating = false; return; }
+
+        this.envelopeId = data.id;
+        this.envelope = data;
+        this.signers = data.signers || [];
+
+        // Save signers if we used upload route
+        if (this.docSource === 'upload') {
+          await fetch(`/api/esign/envelopes/${this.envelopeId}/signers`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(goodSigners),
+          });
+          await this.loadEnvelope(this.envelopeId);
+        } else {
+          this.totalPages = data.page_count || 1;
+          await this.loadPages();
+        }
+        window.history.replaceState({}, '', `/esign/${this.envelopeId}/prepare`);
+      } catch(e) {
+        this.createError = 'An error occurred: ' + e.message;
+      }
+      this.creating = false;
+    },
+
+    handleFileSelect(e) {
+      this.uploadedFile = e.target.files[0] || null;
+    },
+
+    fieldsByPage(page) {
+      return this.fields.filter(f => f.page === page);
+    },
+
+    fieldStyle(field) {
+      return `left:${field.x_pct}%;top:${field.y_pct}%;width:${field.w_pct}%;height:${field.h_pct}%;`;
+    },
+
+    fieldIcon(type) {
+      return { signature:'✍', initials:'AB', date:'📅', text:'T' }[type] || '?';
+    },
+
+    pageImgLoaded(evt, pageNum) {
+      const img = evt.target;
+      this.pageImgSizes[pageNum] = { w: img.naturalWidth, h: img.naturalHeight, dw: img.width, dh: img.height };
+    },
+
+    onFieldDragStart(evt, type) {
+      this.draggingFieldType = type;
+      this.isDraggingExisting = false;
+      evt.dataTransfer.setData('text/plain', type);
+      evt.dataTransfer.effectAllowed = 'copy';
+    },
+
+    onDragOver(evt, page) {
+      evt.preventDefault();
+      evt.dataTransfer.dropEffect = 'copy';
+    },
+
+    onDrop(evt, page) {
+      evt.preventDefault();
+      const wrap = document.getElementById(`page-wrap-${page}`);
+      if (!wrap) return;
+      const rect = wrap.getBoundingClientRect();
+      const x_pct = ((evt.clientX - rect.left) / rect.width) * 100 - 7.5;
+      const y_pct = ((evt.clientY - rect.top) / rect.height) * 100 - 2.5;
+      const type = this.draggingFieldType || evt.dataTransfer.getData('text/plain') || 'signature';
+
+      const newField = {
+        id: 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2),
+        signer_id: this.signers.length === 1 ? this.signers[0].id : null,
+        field_type: type,
+        page: page,
+        x_pct: Math.max(0, Math.min(85, x_pct)),
+        y_pct: Math.max(0, Math.min(95, y_pct)),
+        w_pct: type === 'signature' ? 18 : type === 'initials' ? 10 : type === 'date' ? 14 : 20,
+        h_pct: type === 'text' ? 4 : 5,
+        label: null,
+        is_required: 1,
+      };
+      this.fields.push(newField);
+      this.selectedField = newField;
+    },
+
+    startDrag(evt, field) {
+      if (this.envelope && this.envelope.status !== 'draft') return;
+      this.selectedField = field;
+      evt.preventDefault();
+      const wrap = document.getElementById(`page-wrap-${field.page}`);
+      if (!wrap) return;
+      const rect = wrap.getBoundingClientRect();
+      const startX = evt.clientX;
+      const startY = evt.clientY;
+      const origX = field.x_pct;
+      const origY = field.y_pct;
+
+      const onMove = (e) => {
+        const dx = ((e.clientX - startX) / rect.width) * 100;
+        const dy = ((e.clientY - startY) / rect.height) * 100;
+        field.x_pct = Math.max(0, Math.min(100 - field.w_pct, origX + dx));
+        field.y_pct = Math.max(0, Math.min(100 - field.h_pct, origY + dy));
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+
+    removeField(id) {
+      this.fields = this.fields.filter(f => f.id !== id);
+      if (this.selectedField && this.selectedField.id === id) this.selectedField = null;
+    },
+
+    async saveFields() {
+      this.saving = true; this.saveMsg = ''; this.saveMsgError = false;
+      const payload = this.fields.map(f => ({
+        signer_id: f.signer_id || null,
+        field_type: f.field_type,
+        page: f.page,
+        x_pct: f.x_pct,
+        y_pct: f.y_pct,
+        w_pct: f.w_pct,
+        h_pct: f.h_pct,
+        label: f.label || null,
+        is_required: f.is_required ?? 1,
+      }));
+      const res = await fetch(`/api/esign/envelopes/${this.envelopeId}/fields`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: payload }),
+      });
+      if (res.ok) {
+        this.saveMsg = '✓ Fields saved';
+        await this.loadEnvelope(this.envelopeId);
+      } else {
+        const d = await res.json();
+        this.saveMsg = d.detail || 'Save failed'; this.saveMsgError = true;
+      }
+      this.saving = false;
+      setTimeout(() => this.saveMsg = '', 3000);
+    },
+
+    async sendEnvelope() {
+      if (this.fields.length === 0) { alert('Place at least one signature field before sending.'); return; }
+      const unassigned = this.fields.filter(f => !f.signer_id);
+      if (unassigned.length > 0) { if (!confirm(`${unassigned.length} field(s) have no signer assigned. Send anyway?`)) return; }
+      if (!confirm('Send the envelope to all signers now?')) return;
+
+      await this.saveFields();
+      this.sending = true;
+      const res = await fetch(`/api/esign/envelopes/${this.envelopeId}/send`, { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`Sent! ${data.signer_count} invitation(s) dispatched.`);
+        window.location.href = '/esign';
+      } else {
+        alert(data.detail || 'Failed to send');
+      }
+      this.sending = false;
+    },
+  }
+}
+</script>
+{% endblock %}

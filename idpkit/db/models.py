@@ -325,3 +325,6 @@ class Skill(Base):
 # Import graph models so Base.metadata.create_all() picks up their tables.
 # Placed at the bottom to avoid circular imports (graph.models imports from here).
 import idpkit.graph.models as _graph_models  # noqa: F401, E402
+
+# Import e-signature models so they are registered with Base.metadata.
+import idpkit.esign.models as _esign_models  # noqa: F401, E402

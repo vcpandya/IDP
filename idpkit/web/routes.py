@@ -118,3 +118,31 @@ async def admin_users_page(request: Request, user=Depends(get_current_user_optio
     if user.role not in ("admin", "superadmin"):
         return RedirectResponse(url="/dashboard", status_code=302)
     return templates.TemplateResponse("admin_users.html", {"request": request, "user": user})
+
+
+# ---- E-Sign pages ----
+
+@router.get("/esign", response_class=HTMLResponse)
+async def esign_dashboard(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("esign_dashboard.html", {"request": request, "user": user})
+
+
+@router.get("/esign/new", response_class=HTMLResponse)
+async def esign_new(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("esign_prepare.html", {"request": request, "user": user})
+
+
+@router.get("/esign/{envelope_id}/prepare", response_class=HTMLResponse)
+async def esign_prepare(request: Request, envelope_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("esign_prepare.html", {"request": request, "user": user, "envelope_id": envelope_id})
+
+
+@router.get("/sign/{token}", response_class=HTMLResponse)
+async def esign_sign(request: Request, token: str):
+    return templates.TemplateResponse("esign_sign.html", {"request": request, "token": token})
