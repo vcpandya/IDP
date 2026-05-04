@@ -65,10 +65,12 @@ dependencies = [
 postgres = ["asyncpg>=0.29.0"]
 ocr = ["pytesseract>=0.3.10"]
 graph = ["networkx>=3.0"]
+redis = ["redis>=5.0.0"]
 all = [
     "asyncpg>=0.29.0",
     "pytesseract>=0.3.10",
     "networkx>=3.0",
+    "redis>=5.0.0",
 ]
 dev = [
     "pytest>=8.0.0",
