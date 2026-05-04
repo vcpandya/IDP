@@ -10,7 +10,7 @@ import logging
 from datetime import timezone
 from typing import Awaitable, Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.connectors.base import (
@@ -18,31 +18,101 @@ from idpkit.connectors.base import (
 )
 from idpkit.connectors.crypto import decrypt_credentials, encrypt_credentials
 from idpkit.connectors.registry import REGISTRY, get_connector, tool_to_connector_map
-from idpkit.db.models import Connection, utcnow
+from idpkit.db.models import Connection, ConnectionAuditLog, utcnow
 
 logger = logging.getLogger(__name__)
 
 
 async def list_active_connections(db: AsyncSession, user_id: str) -> list[Connection]:
+    """Return active connections visible to ``user_id``.
+
+    Includes the user's own connections plus any org-shared (``scope='org'``)
+    connections — so a non-admin can attach skills to a connection an admin
+    has shared with the team. Per-(user, connector) we keep at most one row,
+    preferring the user's own connection when both exist.
+    """
     rows = (await db.execute(
         select(Connection).where(
-            Connection.owner_id == user_id,
+            or_(
+                Connection.owner_id == user_id,
+                Connection.scope == "org",
+            ),
             Connection.status == "active",
-        ).order_by(Connection.connector_id)
+        ).order_by(Connection.connector_id, Connection.created_at.desc())
     )).scalars().all()
-    return list(rows)
+    by_connector: dict[str, Connection] = {}
+    for row in rows:
+        existing = by_connector.get(row.connector_id)
+        if existing is None:
+            by_connector[row.connector_id] = row
+            continue
+        # Prefer the user's own connection over a shared one.
+        if existing.owner_id != user_id and row.owner_id == user_id:
+            by_connector[row.connector_id] = row
+    return sorted(by_connector.values(), key=lambda c: c.connector_id)
 
 
 async def get_active_connection(
     db: AsyncSession, user_id: str, connector_id: str,
 ) -> Optional[Connection]:
-    return (await db.execute(
+    """Resolve the connection used by runtime executors for ``user_id``.
+
+    Order of preference:
+      1. The user's own active connection for the connector.
+      2. An org-shared (``scope='org'``) active connection, most recent first.
+    """
+    own = (await db.execute(
         select(Connection).where(
             Connection.owner_id == user_id,
             Connection.connector_id == connector_id,
             Connection.status == "active",
         ).order_by(Connection.created_at.desc())
     )).scalars().first()
+    if own is not None:
+        return own
+    return (await db.execute(
+        select(Connection).where(
+            Connection.scope == "org",
+            Connection.connector_id == connector_id,
+            Connection.status == "active",
+        ).order_by(Connection.created_at.desc())
+    )).scalars().first()
+
+
+async def _record_shared_usage(
+    db: AsyncSession,
+    connection: Connection,
+    user_id: str,
+    tool_name: str,
+    success: bool,
+    error: Optional[str] = None,
+) -> None:
+    """Append an audit row for every call made through a shared connection.
+
+    Per the task spec ("Audit log records who used a shared connection for
+    each call") we log *every* invocation against an org-scoped connection,
+    including calls by the connection's owner — operators need to see total
+    usage, not just other-user usage. Private connections are not audited.
+    Failures here are swallowed: audit logging must never break a tool call.
+    """
+    if connection.scope != "org":
+        return
+    try:
+        db.add(ConnectionAuditLog(
+            connection_id=connection.id,
+            connector_id=connection.connector_id,
+            user_id=user_id,
+            tool_name=tool_name,
+            success=1 if success else 0,
+            error=(error or None) and (error[:1000] if error else None),
+        ))
+        await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to write connection audit log", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def build_runtime_tools(active_connections: list[Connection]) -> list[dict]:
@@ -88,51 +158,71 @@ def build_runtime_executors(
             except ValueError as exc:
                 logger.warning("Could not decrypt connection %s: %s", connection.id, exc)
                 await _mark_disconnected(_db, connection, str(exc))
+                await _record_shared_usage(
+                    _db, connection, user_id, tool.name, False, f"decrypt: {exc}",
+                )
                 return {"error": "Stored credentials are unreadable; reconnect this integration."}
 
+            audit_success = True
+            audit_error: Optional[str] = None
             try:
-                result = await tool.executor(sanitized, creds)
-            except ConnectorAuthError as exc:
-                # OAuth2 connectors: attempt one-shot refresh before giving up.
-                connector_def = get_connector(connector_id)
-                can_refresh = bool(
-                    connector_def
-                    and connector_def.auth_type == ConnectorAuthType.OAUTH2
-                    and connector_def.oauth_refresh
-                    and creds.get("refresh_token")
+                try:
+                    result = await tool.executor(sanitized, creds)
+                except ConnectorAuthError as exc:
+                    # OAuth2 connectors: attempt one-shot refresh before giving up.
+                    connector_def = get_connector(connector_id)
+                    can_refresh = bool(
+                        connector_def
+                        and connector_def.auth_type == ConnectorAuthType.OAUTH2
+                        and connector_def.oauth_refresh
+                        and creds.get("refresh_token")
+                    )
+                    refreshed = await _try_oauth_refresh(
+                        _db, connection, connector_def, creds, exc,
+                    ) if can_refresh else None
+                    if refreshed is not None:
+                        try:
+                            result = await tool.executor(sanitized, refreshed)
+                        except ConnectorAuthError as exc2:
+                            logger.info("Connector %s auth failure after refresh: %s", connector_id, exc2)
+                            await _mark_disconnected(_db, connection, str(exc2))
+                            audit_success = False
+                            audit_error = f"auth (post-refresh): {exc2}"
+                            return {
+                                "error": (
+                                    f"Auth failed for {connector_id} after token refresh; "
+                                    f"reconnect at /connections."
+                                )
+                            }
+                        except ConnectorError as exc2:
+                            audit_success = False
+                            audit_error = str(exc2)
+                            return {"error": str(exc2)}
+                        return result
+                    # If a refresh was attempted, _try_oauth_refresh has already
+                    # marked the connection disconnected with the refresh-failure
+                    # reason — don't overwrite it with the original auth error.
+                    if not can_refresh:
+                        logger.info("Connector %s auth failure: %s", connector_id, exc)
+                        await _mark_disconnected(_db, connection, str(exc))
+                    audit_success = False
+                    audit_error = f"auth: {exc}"
+                    return {"error": f"Auth failed for {connector_id}: reconnect at /connections"}
+                except ConnectorError as exc:
+                    logger.info("Connector %s error: %s", connector_id, exc)
+                    audit_success = False
+                    audit_error = str(exc)
+                    return {"error": str(exc)}
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("Unexpected connector error for %s", connector_id)
+                    audit_success = False
+                    audit_error = f"unexpected: {type(exc).__name__}"
+                    return {"error": f"Connector failure: {type(exc).__name__}"}
+                return result
+            finally:
+                await _record_shared_usage(
+                    _db, connection, user_id, tool.name, audit_success, audit_error,
                 )
-                refreshed = await _try_oauth_refresh(
-                    _db, connection, connector_def, creds, exc,
-                ) if can_refresh else None
-                if refreshed is not None:
-                    try:
-                        result = await tool.executor(sanitized, refreshed)
-                    except ConnectorAuthError as exc2:
-                        logger.info("Connector %s auth failure after refresh: %s", connector_id, exc2)
-                        await _mark_disconnected(_db, connection, str(exc2))
-                        return {
-                            "error": (
-                                f"Auth failed for {connector_id} after token refresh; "
-                                f"reconnect at /connections."
-                            )
-                        }
-                    except ConnectorError as exc2:
-                        return {"error": str(exc2)}
-                    return result
-                # If a refresh was attempted, _try_oauth_refresh has already
-                # marked the connection disconnected with the refresh-failure
-                # reason — don't overwrite it with the original auth error.
-                if not can_refresh:
-                    logger.info("Connector %s auth failure: %s", connector_id, exc)
-                    await _mark_disconnected(_db, connection, str(exc))
-                return {"error": f"Auth failed for {connector_id}: reconnect at /connections"}
-            except ConnectorError as exc:
-                logger.info("Connector %s error: %s", connector_id, exc)
-                return {"error": str(exc)}
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("Unexpected connector error for %s", connector_id)
-                return {"error": f"Connector failure: {type(exc).__name__}"}
-            return result
 
         return _runner
 

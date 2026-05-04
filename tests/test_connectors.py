@@ -516,3 +516,181 @@ async def test_skill_import_preview_includes_compatibility(auth_client):
     assert compat is not None
     assert compat["ready"] is False
     assert "slack" in compat["missing_connectors"]
+
+
+# ---------------------------------------------------------------------------
+# Org-wide shared connections (Task #10)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_share_unshare_connection_admin_only(auth_client, monkeypatch):
+    """Admin can share their own connection org-wide and revoke sharing."""
+    from idpkit.connectors.impl import slack as slack_mod
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-share-test"}},
+    )
+    assert res.status_code == 200
+    conn_id = res.json()["id"]
+
+    listing = (await auth_client.get("/api/connectors/connections")).json()
+    me = next(c for c in listing["connections"] if c["id"] == conn_id)
+    assert me["scope"] == "private" and me["is_shared"] is False
+    assert me["is_owner"] is True
+
+    shared = await auth_client.post(f"/api/connectors/connections/{conn_id}/share")
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["scope"] == "org"
+    assert shared.json()["is_shared"] is True
+    assert shared.json()["owner_org"] == "default"
+
+    unshared = await auth_client.post(f"/api/connectors/connections/{conn_id}/unshare")
+    assert unshared.status_code == 200
+    assert unshared.json()["scope"] == "private"
+
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+@pytest.mark.asyncio
+async def test_non_admin_sees_shared_connection_and_cannot_disconnect(auth_client, client, monkeypatch):
+    """A regular user sees shared connections, can use them via the runtime,
+    but cannot share, unshare, or disconnect them; audit rows record the use."""
+    from idpkit.connectors.impl import slack as slack_mod
+    from idpkit.connectors import encrypt_credentials
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.runtime import (
+        build_runtime_executors, get_active_connection, list_active_connections,
+    )
+    from idpkit.db.models import Connection, ConnectionAuditLog, User
+    from idpkit.db.session import async_session
+    from idpkit.api.deps import hash_password
+    from sqlalchemy import select
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    # Admin creates and shares a connection.
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-org-shared"}},
+    )
+    conn_id = res.json()["id"]
+    share = await auth_client.post(f"/api/connectors/connections/{conn_id}/share")
+    assert share.status_code == 200
+
+    # Create a regular (active) user and log in as them.
+    async with async_session() as db:
+        u = User(
+            username="member-user",
+            hashed_password=hash_password("memberpw"),
+            role="user",
+            is_active=1,
+        )
+        db.add(u)
+        await db.commit()
+        await db.refresh(u)
+        member_id = u.id
+
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "member-user", "password": "memberpw"},
+    )
+    member_token = login.json()["access_token"]
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+
+    # Member sees the shared connection.
+    listing = (await client.get(
+        "/api/connectors/connections", headers=member_headers,
+    )).json()
+    seen = next(c for c in listing["connections"] if c["id"] == conn_id)
+    assert seen["is_shared"] is True
+    assert seen["is_owner"] is False
+
+    # Member cannot share/unshare or disconnect.
+    assert (await client.post(
+        f"/api/connectors/connections/{conn_id}/share", headers=member_headers,
+    )).status_code == 403
+    assert (await client.post(
+        f"/api/connectors/connections/{conn_id}/unshare", headers=member_headers,
+    )).status_code == 403
+    assert (await client.delete(
+        f"/api/connectors/connections/{conn_id}", headers=member_headers,
+    )).status_code == 403
+
+    # Runtime lookup: member resolves the shared connection.
+    async with async_session() as db:
+        active = await list_active_connections(db, member_id)
+        assert any(c.id == conn_id for c in active)
+        resolved = await get_active_connection(db, member_id, "slack")
+        assert resolved is not None and resolved.id == conn_id
+
+    # Register an audit-friendly fake connector and a shared connection.
+    calls = {"n": 0}
+
+    async def _ok(args, creds):
+        calls["n"] += 1
+        return {"ok": True}
+
+    fake = Connector(
+        id="fake_shared",
+        display_name="Fake Shared",
+        description="t",
+        auth_type=ConnectorAuthType.API_KEY,
+        tools=[ConnectorTool(
+            name="fake_shared_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=_ok,
+        )],
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        async with async_session() as db:
+            row = Connection(
+                owner_id="some-other-admin",
+                connector_id="fake_shared",
+                encrypted_credentials=encrypt_credentials({"k": "v"}),
+                status="active",
+                scope="org",
+                owner_org="default",
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+            shared_conn_id = row.id
+
+            execs = build_runtime_executors(db, member_id)
+            result = await execs["fake_shared_do"]({}, None, db)
+            assert result == {"ok": True}
+
+            audit_rows = (await db.execute(
+                select(ConnectionAuditLog).where(
+                    ConnectionAuditLog.connection_id == shared_conn_id,
+                )
+            )).scalars().all()
+            assert len(audit_rows) == 1
+            assert audit_rows[0].user_id == member_id
+            assert audit_rows[0].tool_name == "fake_shared_do"
+            assert audit_rows[0].success == 1
+    finally:
+        REGISTRY.pop("fake_shared", None)
+
+    # Audit endpoint visible to the admin (connection owner is admin).
+    audit = await auth_client.get(f"/api/connectors/connections/{conn_id}/audit")
+    assert audit.status_code == 200
+    # No usage on this particular connection (slack one) yet, so empty list.
+    assert audit.json()["events"] == []
+
+    # Cleanup the slack connection.
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
