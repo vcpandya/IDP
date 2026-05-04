@@ -323,6 +323,22 @@ class Skill(Base):
     )
 
 
+class OAuthState(Base):
+    """Short-lived CSRF state token for OAuth2 authorization-code flows.
+
+    Stored in the database (instead of an in-process dict) so multi-worker
+    deployments can complete callbacks regardless of which worker began the
+    flow. Rows are deleted on consume; stale rows are pruned on each access.
+    """
+
+    __tablename__ = "oauth_states"
+
+    token = Column(String(64), primary_key=True)
+    payload = Column(JSON, nullable=False)
+    expires_at = Column(TZDateTime, nullable=False, index=True)
+    created_at = Column(TZDateTime, default=utcnow)
+
+
 class Connection(Base):
     """A user's authenticated connection to an external SaaS connector.
 
