@@ -9,13 +9,20 @@ from __future__ import annotations
 import os
 import secrets
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.connectors.base import ConnectorAuthError, ConnectorError
 from idpkit.connectors.http import DEFAULT_TIMEOUT
+from idpkit.db.models import OAuthState, utcnow
+
+# OAuth state tokens are short-lived; users typically complete consent in <2 min.
+STATE_TTL = timedelta(minutes=10)
 
 
 @dataclass
@@ -29,19 +36,49 @@ class OAuth2Spec:
     audience: Optional[str] = None
 
 
-_STATE_STORE: dict[str, dict] = {}
+async def _prune_expired_states(db: AsyncSession) -> None:
+    """Best-effort sweep of stale state rows."""
+    await db.execute(delete(OAuthState).where(OAuthState.expires_at < utcnow()))
 
 
-def new_state(payload: dict) -> str:
-    """Issue an opaque CSRF state token bound to a payload (e.g. user_id, connector_id)."""
+async def new_state(db: AsyncSession, payload: dict) -> str:
+    """Issue an opaque CSRF state token bound to a payload (e.g. user_id, connector_id).
+
+    Persists the token to the database with a short TTL so any worker can
+    consume it during the OAuth callback. Also prunes expired rows.
+    """
+    await _prune_expired_states(db)
     token = secrets.token_urlsafe(24)
-    _STATE_STORE[token] = payload
+    db.add(OAuthState(
+        token=token,
+        payload=payload,
+        expires_at=utcnow() + STATE_TTL,
+    ))
+    await db.commit()
     return token
 
 
-def consume_state(token: str) -> Optional[dict]:
-    """Pop a state token; returns None if unknown / already used."""
-    return _STATE_STORE.pop(token, None)
+async def consume_state(db: AsyncSession, token: str) -> Optional[dict]:
+    """Atomically pop a state token; returns None if unknown / expired / already used.
+
+    Uses a single ``DELETE ... RETURNING`` statement so concurrent callbacks
+    racing on the same token can never both succeed (supported on PostgreSQL
+    and on SQLite >= 3.35, which covers our deployment targets).
+    """
+    await _prune_expired_states(db)
+    result = await db.execute(
+        delete(OAuthState)
+        .where(OAuthState.token == token)
+        .returning(OAuthState.payload, OAuthState.expires_at)
+    )
+    row = result.first()
+    await db.commit()
+    if row is None:
+        return None
+    payload, expires_at = row
+    if expires_at < utcnow():
+        return None
+    return dict(payload) if isinstance(payload, dict) else payload
 
 
 def build_authorize_url(spec: OAuth2Spec, state: str, redirect_uri: str) -> str:
