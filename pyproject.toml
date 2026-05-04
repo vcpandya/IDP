@@ -95,3 +95,6 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "live: tests that hit a real third-party API using sandbox credentials. Auto-skipped when the required env vars are not set. Intended for a nightly CI suite — local dev runs without these secrets stay green.",
+]

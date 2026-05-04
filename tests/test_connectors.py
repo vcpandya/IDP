@@ -694,3 +694,129 @@ async def test_non_admin_sees_shared_connection_and_cannot_disconnect(auth_clien
 
     # Cleanup the slack connection.
     await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+# ---------------------------------------------------------------------------
+# Live integration tests (Task #12)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise one read-only tool per connector against a real sandbox
+# account. They are gated on per-connector env vars (see the ``*_live_creds``
+# fixtures in conftest.py) — when the secret is not set the test is silently
+# skipped, so local ``pytest`` runs and CI jobs without the secrets stay green.
+#
+# Run only the live suite (e.g. on a nightly job):    pytest -m live
+# Skip the live suite (default for fast feedback):    pytest -m "not live"
+#
+# Each test deliberately calls a non-mutating tool (list / search / health) so
+# repeated runs don't pollute the sandbox account.
+
+@pytest.mark.live
+async def test_live_slack_list_channels(slack_live_creds):
+    from idpkit.connectors.impl.slack import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(slack_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "slack_list_channels")
+    out = await list_tool.executor({"limit": 5}, slack_live_creds)
+    assert "channels" in out, out
+    assert isinstance(out["channels"], list)
+
+
+@pytest.mark.live
+async def test_live_notion_search_pages(notion_live_creds):
+    from idpkit.connectors.impl.notion import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(notion_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "notion_search_pages")
+    out = await search_tool.executor({"query": "", "page_size": 5}, notion_live_creds)
+    assert "results" in out, out
+    assert isinstance(out["results"], list)
+
+
+@pytest.mark.live
+async def test_live_github_list_repos(github_live_creds):
+    from idpkit.connectors.impl.github import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(github_live_creds)
+    assert ok and label.startswith("@")
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "github_list_repos")
+    out = await list_tool.executor({"per_page": 5}, github_live_creds)
+    assert "repos" in out, out
+    assert isinstance(out["repos"], list)
+
+
+@pytest.mark.live
+async def test_live_linear_list_issues(linear_live_creds):
+    from idpkit.connectors.impl.linear import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(linear_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "linear_list_issues")
+    out = await list_tool.executor({"first": 5}, linear_live_creds)
+    assert "issues" in out, out
+    assert isinstance(out["issues"], list)
+
+
+@pytest.mark.live
+async def test_live_hubspot_search_contacts(hubspot_live_creds):
+    from idpkit.connectors.impl.hubspot import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(hubspot_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "hubspot_search_contacts")
+    out = await search_tool.executor({"query": "test", "limit": 5}, hubspot_live_creds)
+    assert "results" in out, out
+    assert isinstance(out["results"], list)
+
+
+@pytest.mark.live
+async def test_live_dropbox_list_files(dropbox_live_creds):
+    from idpkit.connectors.impl.dropbox import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(dropbox_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "dropbox_list_files")
+    out = await list_tool.executor({"path": "", "limit": 5}, dropbox_live_creds)
+    assert "entries" in out, out
+    assert isinstance(out["entries"], list)
+
+
+@pytest.mark.live
+async def test_live_jira_health_and_search(jira_live_creds):
+    from idpkit.connectors.impl.jira import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(jira_live_creds)
+    assert ok and label
+    # ``order by created DESC`` is universally valid JQL even on empty projects.
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "jira_search_issues")
+    out = await search_tool.executor(
+        {"jql": "order by created DESC", "max_results": 5}, jira_live_creds,
+    )
+    assert "issues" in out, out
+    assert isinstance(out["issues"], list)
+
+
+@pytest.mark.live
+async def test_live_s3_list_objects(s3_live_creds):
+    from idpkit.connectors.impl.s3 import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(s3_live_creds)
+    assert ok and label.startswith("s3://")
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "s3_list_objects")
+    out = await list_tool.executor({"prefix": "", "max_keys": 5}, s3_live_creds)
+    assert "objects" in out, out
+    assert isinstance(out["objects"], list)
+
+
+@pytest.mark.live
+async def test_live_google_drive_search(google_live_creds):
+    from idpkit.connectors.impl.google import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(google_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "google_drive_search")
+    out = await search_tool.executor({"query": "", "page_size": 5}, google_live_creds)
+    assert "files" in out, out
+    assert isinstance(out["files"], list)
