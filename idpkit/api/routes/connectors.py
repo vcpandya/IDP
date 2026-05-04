@@ -232,13 +232,14 @@ async def oauth_start(
     connector_id: str,
     request: Request,
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     connector = get_connector(connector_id)
     if not connector or connector.auth_type != ConnectorAuthType.OAUTH2:
         raise HTTPException(400, "Connector does not use OAuth2")
     if not connector.oauth_authorize_url_builder:
         raise HTTPException(500, "Connector OAuth not configured")
-    state = new_state({"user_id": user.id, "connector_id": connector_id})
+    state = await new_state(db, {"user_id": user.id, "connector_id": connector_id})
     redirect_uri = _oauth_redirect_uri(request)
     try:
         auth_url = connector.oauth_authorize_url_builder(state, redirect_uri)
@@ -259,7 +260,7 @@ async def oauth_callback(
         return RedirectResponse(f"/connections?oauth_error={error}", status_code=302)
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
-    payload = consume_state(state)
+    payload = await consume_state(db, state)
     if not payload:
         raise HTTPException(400, "Invalid or expired state token")
     connector = get_connector(payload["connector_id"])
