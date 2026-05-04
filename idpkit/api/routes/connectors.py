@@ -30,7 +30,29 @@ from idpkit.connectors import (
     decrypt_credentials, encrypt_credentials, get_connector, list_connectors,
 )
 from idpkit.connectors.oauth import consume_state, new_state
-from idpkit.db.models import Connection, User, utcnow
+from idpkit.db.models import Connection, ConnectionAuditLog, User, UserRole, utcnow
+
+
+def _is_admin(user: User) -> bool:
+    return user.role in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value)
+
+
+def _serialize_connection(row: Connection, viewer: User) -> dict:
+    is_owner = row.owner_id == viewer.id
+    return {
+        "id": row.id,
+        "connector_id": row.connector_id,
+        "display_name": row.display_name,
+        "status": row.status,
+        "metadata": row.connection_metadata or {},
+        "scope": row.scope or "private",
+        "is_shared": (row.scope == "org"),
+        "is_owner": is_owner,
+        "owner_org": row.owner_org,
+        "last_checked_at": row.last_checked_at.isoformat() if row.last_checked_at else None,
+        "last_error": row.last_error,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
@@ -41,27 +63,25 @@ async def list_all(user: User = Depends(get_current_user)):
     return {"connectors": [c.public_metadata() for c in list_connectors()]}
 
 
-@router.get("/connections", summary="List the current user's connections")
+@router.get("/connections", summary="List connections visible to the current user")
 async def list_user_connections(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List all connections this user can see.
+
+    Includes the user's own connections plus any connection an admin has
+    shared at org level (``scope='org'``). Non-owners may attach skills
+    to a shared connection but cannot edit, disconnect, or read its
+    credentials.
+    """
+    from sqlalchemy import or_ as _or
     rows = (await db.execute(
-        select(Connection).where(Connection.owner_id == user.id).order_by(Connection.created_at.desc())
+        select(Connection).where(
+            _or(Connection.owner_id == user.id, Connection.scope == "org"),
+        ).order_by(Connection.created_at.desc())
     )).scalars().all()
-    return {"connections": [
-        {
-            "id": r.id,
-            "connector_id": r.connector_id,
-            "display_name": r.display_name,
-            "status": r.status,
-            "metadata": r.connection_metadata or {},
-            "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None,
-            "last_error": r.last_error,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]}
+    return {"connections": [_serialize_connection(r, user) for r in rows]}
 
 
 class CredentialBody(BaseModel):
@@ -187,13 +207,123 @@ async def disconnect(
     db: AsyncSession = Depends(get_db),
 ):
     row = (await db.execute(
-        select(Connection).where(Connection.id == connection_id, Connection.owner_id == user.id)
+        select(Connection).where(Connection.id == connection_id)
     )).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "Connection not found")
+    # The owner can always remove their own connection. Admins may also
+    # remove an org-shared connection that another admin set up.
+    if row.owner_id != user.id and not (row.scope == "org" and _is_admin(user)):
+        raise HTTPException(403, "Not allowed to disconnect this connection")
     await db.delete(row)
     await db.commit()
     return {"deleted": True, "id": connection_id}
+
+
+# ---------------------------------------------------------------------------
+# Org-level sharing — admins can promote a connection to "scope=org" so
+# any user in the deployment may attach skills to it.
+# ---------------------------------------------------------------------------
+
+class ShareBody(BaseModel):
+    owner_org: Optional[str] = None  # tenant identifier; defaults to "default"
+
+
+@router.post(
+    "/connections/{connection_id}/share",
+    summary="Admin: share a connection org-wide",
+)
+async def share_connection(
+    connection_id: str,
+    body: ShareBody = ShareBody(),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin(user):
+        raise HTTPException(403, "Only admins can share connections org-wide")
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    # Only the connection's owner (who is also an admin) can share — this
+    # avoids one admin silently exposing another admin's personal connection.
+    if row.owner_id != user.id:
+        raise HTTPException(403, "Only the connection owner can share it")
+    row.scope = "org"
+    row.owner_org = (body.owner_org or row.owner_org or "default")[:100]
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_connection(row, user)
+
+
+@router.post(
+    "/connections/{connection_id}/unshare",
+    summary="Admin: revoke org-wide sharing",
+)
+async def unshare_connection(
+    connection_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin(user):
+        raise HTTPException(403, "Only admins can change sharing")
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    if row.owner_id != user.id:
+        raise HTTPException(403, "Only the connection owner can unshare it")
+    row.scope = "private"
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_connection(row, user)
+
+
+@router.get(
+    "/connections/{connection_id}/audit",
+    summary="Owner/admin: list audit events for a shared connection",
+)
+async def connection_audit(
+    connection_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    if row.owner_id != user.id and not _is_admin(user):
+        raise HTTPException(403, "Not allowed to view audit log")
+    events = (await db.execute(
+        select(ConnectionAuditLog)
+        .where(ConnectionAuditLog.connection_id == connection_id)
+        .order_by(ConnectionAuditLog.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    # Resolve usernames in one round-trip for nicer display.
+    user_ids = sorted({e.user_id for e in events if e.user_id})
+    name_by_id: dict[str, str] = {}
+    if user_ids:
+        users = (await db.execute(
+            select(User.id, User.username).where(User.id.in_(user_ids))
+        )).all()
+        name_by_id = {uid: uname for uid, uname in users}
+    return {"events": [
+        {
+            "id": e.id,
+            "user_id": e.user_id,
+            "username": name_by_id.get(e.user_id) if e.user_id else None,
+            "tool_name": e.tool_name,
+            "success": bool(e.success),
+            "error": e.error,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]}
 
 
 # ---------------------------------------------------------------------------

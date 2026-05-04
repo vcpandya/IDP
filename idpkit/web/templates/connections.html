@@ -45,6 +45,13 @@
                     <i class="fas fa-user-circle"></i>
                     <span x-text="connectionFor(c.id) && connectionFor(c.id).display_name"></span>
                 </div>
+                <div class="skill-card-meta" x-show="connectionFor(c.id) && connectionFor(c.id).is_shared"
+                     style="color:#1e40af;">
+                    <i class="fas fa-users"></i>
+                    <span x-text="connectionFor(c.id) && connectionFor(c.id).is_owner
+                        ? 'Shared with your team'
+                        : 'Shared by your team admin'"></span>
+                </div>
                 <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
                     <strong>Tools:</strong>
                     <template x-for="t in c.tools" :key="t.name">
@@ -57,15 +64,30 @@
                             <i class="fas fa-plug"></i> Connect
                         </button>
                     </template>
-                    <template x-if="connectionFor(c.id)">
+                    <template x-if="connectionFor(c.id) && connectionFor(c.id).is_owner">
                         <button class="btn btn-sm" @click="openConnect(c)">
                             <i class="fas fa-rotate"></i> Reconnect
                         </button>
                     </template>
-                    <template x-if="connectionFor(c.id)">
+                    <template x-if="connectionFor(c.id) && (connectionFor(c.id).is_owner || (isAdmin && connectionFor(c.id).is_shared))">
                         <button class="btn btn-sm btn-danger"
                                 @click="disconnect(connectionFor(c.id))">
                             <i class="fas fa-unlink"></i> Disconnect
+                        </button>
+                    </template>
+                    <template x-if="isAdmin && connectionFor(c.id) && connectionFor(c.id).is_owner && !connectionFor(c.id).is_shared">
+                        <button class="btn btn-sm" @click="shareConnection(connectionFor(c.id))">
+                            <i class="fas fa-users"></i> Share with team
+                        </button>
+                    </template>
+                    <template x-if="isAdmin && connectionFor(c.id) && connectionFor(c.id).is_owner && connectionFor(c.id).is_shared">
+                        <button class="btn btn-sm" @click="unshareConnection(connectionFor(c.id))">
+                            <i class="fas fa-user-lock"></i> Stop sharing
+                        </button>
+                    </template>
+                    <template x-if="connectionFor(c.id) && connectionFor(c.id).is_shared && (connectionFor(c.id).is_owner || isAdmin)">
+                        <button class="btn btn-sm" @click="openAudit(connectionFor(c.id))">
+                            <i class="fas fa-clipboard-list"></i> Audit log
                         </button>
                     </template>
                     <a class="btn btn-sm" :href="c.docs_url" target="_blank" rel="noopener" x-show="c.docs_url">
@@ -79,6 +101,56 @@
                 </div>
             </div>
         </template>
+    </div>
+
+    <!-- Audit Log Modal -->
+    <div class="modal-overlay" x-show="showAuditModal" x-cloak x-transition.opacity
+         @click.self="showAuditModal=false" @keydown.escape.window="showAuditModal=false">
+        <div class="modal skill-modal" @click.stop>
+            <div class="modal-header">
+                <h3><i class="fas fa-clipboard-list"></i> Shared connection audit log</h3>
+                <button @click="showAuditModal=false" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">
+                    Every call made through this shared connection by a user other than the
+                    owner is recorded here.
+                </p>
+                <template x-if="auditLoading">
+                    <div style="text-align:center;padding:24px;"><i class="fas fa-spinner fa-spin"></i></div>
+                </template>
+                <template x-if="!auditLoading && auditEvents.length === 0">
+                    <div style="color:var(--text-muted);font-size:13px;">No usage recorded yet.</div>
+                </template>
+                <table x-show="!auditLoading && auditEvents.length > 0"
+                       style="width:100%;font-size:13px;border-collapse:collapse;">
+                    <thead><tr style="text-align:left;border-bottom:1px solid var(--border);">
+                        <th style="padding:6px 4px;">When</th>
+                        <th style="padding:6px 4px;">User</th>
+                        <th style="padding:6px 4px;">Tool</th>
+                        <th style="padding:6px 4px;">Result</th>
+                    </tr></thead>
+                    <tbody>
+                        <template x-for="ev in auditEvents" :key="ev.id">
+                            <tr style="border-bottom:1px solid var(--border);">
+                                <td style="padding:6px 4px;color:var(--text-muted);"
+                                    x-text="new Date(ev.created_at).toLocaleString()"></td>
+                                <td style="padding:6px 4px;" x-text="ev.username || ev.user_id || '?'"></td>
+                                <td style="padding:6px 4px;font-family:monospace;" x-text="ev.tool_name || '—'"></td>
+                                <td style="padding:6px 4px;">
+                                    <span x-show="ev.success" style="color:#065f46;">ok</span>
+                                    <span x-show="!ev.success" style="color:#991b1b;"
+                                          :title="ev.error || ''" x-text="'failed' + (ev.error ? ': ' + ev.error : '')"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showAuditModal=false">Close</button>
+            </div>
+        </div>
     </div>
 
     <!-- Connect Modal -->
@@ -165,6 +237,11 @@ function connectionsPage() {
         oauthStartError: '',
         oauthOk: false,
         oauthError: '',
+        isAdmin: {{ 'true' if user.role in ('admin', 'superadmin') else 'false' }},
+        showAuditModal: false,
+        auditLoading: false,
+        auditEvents: [],
+        auditConnectionId: '',
         async init() {
             const sp = new URLSearchParams(window.location.search);
             this.oauthOk = sp.get('oauth_ok') === '1';
@@ -172,8 +249,11 @@ function connectionsPage() {
             await this.refresh();
         },
         connectionFor(cid) {
-            return this.connections.find(c => c.connector_id === cid && c.status === 'active')
-                || this.connections.find(c => c.connector_id === cid);
+            const matches = this.connections.filter(c => c.connector_id === cid);
+            // Prefer the user's own active connection over a shared one.
+            return matches.find(c => c.is_owner && c.status === 'active')
+                || matches.find(c => c.status === 'active')
+                || matches[0];
         },
         async refresh() {
             this.loading = true;
@@ -233,9 +313,48 @@ function connectionsPage() {
             }
         },
         async disconnect(connection) {
-            if (!confirm(`Disconnect ${connection.connector_id}?`)) return;
+            const sharedNote = connection.is_shared
+                ? '\n\nThis is shared with the team — every member will lose access.'
+                : '';
+            if (!confirm(`Disconnect ${connection.connector_id}?${sharedNote}`)) return;
             await this._fetch(`/api/connectors/connections/${connection.id}`, { method: 'DELETE' });
             await this.refresh();
+        },
+        async shareConnection(connection) {
+            if (!confirm(
+                `Share your ${connection.connector_id} connection with everyone in this workspace?\n\n` +
+                'They will be able to call its tools and attach skills to it, but not read or edit your credentials.'
+            )) return;
+            try {
+                await this._fetch(
+                    `/api/connectors/connections/${connection.id}/share`,
+                    { method: 'POST', body: JSON.stringify({}) },
+                );
+                await this.refresh();
+            } catch (e) { alert('Share failed: ' + (e.message || e)); }
+        },
+        async unshareConnection(connection) {
+            if (!confirm(`Stop sharing ${connection.connector_id} with the team?`)) return;
+            try {
+                await this._fetch(
+                    `/api/connectors/connections/${connection.id}/unshare`,
+                    { method: 'POST', body: JSON.stringify({}) },
+                );
+                await this.refresh();
+            } catch (e) { alert('Unshare failed: ' + (e.message || e)); }
+        },
+        async openAudit(connection) {
+            this.auditConnectionId = connection.id;
+            this.auditEvents = [];
+            this.showAuditModal = true;
+            this.auditLoading = true;
+            try {
+                const data = await this._fetch(`/api/connectors/connections/${connection.id}/audit`);
+                this.auditEvents = data.events || [];
+            } catch (e) {
+                alert('Could not load audit log: ' + (e.message || e));
+                this.showAuditModal = false;
+            } finally { this.auditLoading = false; }
         },
         async _fetch(url, opts = {}) {
             const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
