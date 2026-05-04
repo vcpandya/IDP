@@ -208,6 +208,118 @@ def test_oauth_redirect_uri_falls_back_to_request_in_dev(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Pluggable OAuth state store
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_db_roundtrip(_env, monkeypatch):
+    """Default DB-backed store: put then pop returns the payload exactly once."""
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    from idpkit.connectors import oauth as oauth_mod
+    from idpkit.db.session import async_session, init_db
+
+    await init_db()
+    oauth_mod.reset_state_store()
+    assert isinstance(oauth_mod.get_state_store(), oauth_mod.DBOAuthStateStore)
+
+    async with async_session() as db:
+        token = await oauth_mod.new_state(db, {"user_id": "u1", "connector_id": "google"})
+    async with async_session() as db:
+        payload = await oauth_mod.consume_state(db, token)
+    assert payload == {"user_id": "u1", "connector_id": "google"}
+    # Second consume must return None (single-use).
+    async with async_session() as db:
+        assert await oauth_mod.consume_state(db, token) is None
+    oauth_mod.reset_state_store()
+
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_uses_redis_when_configured(_env, monkeypatch):
+    """When REDIS_URL is set and the redis package is importable, the Redis
+    backend is selected and a put/pop round-trip works without touching the DB."""
+    from idpkit.connectors import oauth as oauth_mod
+
+    class _FakeRedis:
+        def __init__(self):
+            self.store: dict[str, tuple[str, int | None]] = {}
+            self.set_calls = 0
+            self.getdel_calls = 0
+
+        async def set(self, key, value, ex=None):
+            self.set_calls += 1
+            self.store[key] = (value, ex)
+
+        async def getdel(self, key):
+            self.getdel_calls += 1
+            entry = self.store.pop(key, None)
+            return None if entry is None else entry[0]
+
+    fake = _FakeRedis()
+
+    import sys
+    import types
+    fake_redis_pkg = types.ModuleType("redis")
+    fake_async_mod = types.ModuleType("redis.asyncio")
+
+    def _from_url(url, decode_responses=True):
+        fake._url = url
+        fake._decode_responses = decode_responses
+        return fake
+
+    fake_async_mod.from_url = _from_url
+    fake_redis_pkg.asyncio = fake_async_mod
+    monkeypatch.setitem(sys.modules, "redis", fake_redis_pkg)
+    monkeypatch.setitem(sys.modules, "redis.asyncio", fake_async_mod)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    oauth_mod.reset_state_store()
+    store = oauth_mod.get_state_store()
+    assert isinstance(store, oauth_mod.RedisOAuthStateStore)
+
+    # ``db`` is unused by the Redis backend — pass None to prove it.
+    token = await oauth_mod.new_state(None, {"user_id": "u2", "connector_id": "linear"})
+    assert fake.set_calls == 1
+    # TTL must be applied so Redis expires the key for us (no manual prune).
+    (_, ttl), = list(fake.store.values())
+    assert ttl == int(oauth_mod.STATE_TTL.total_seconds())
+
+    payload = await oauth_mod.consume_state(None, token)
+    assert payload == {"user_id": "u2", "connector_id": "linear"}
+    # Single-use: a second pop returns None.
+    assert await oauth_mod.consume_state(None, token) is None
+
+    oauth_mod.reset_state_store()
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_falls_back_when_redis_missing(_env, monkeypatch):
+    """If REDIS_URL is set but the redis package can't be imported, the store
+    silently falls back to the DB backend rather than crashing on startup."""
+    from idpkit.connectors import oauth as oauth_mod
+
+    import builtins
+    real_import = builtins.__import__
+
+    def _blocked_import(name, *args, **kwargs):
+        if name == "redis" or name.startswith("redis."):
+            raise ImportError("simulated missing redis")
+        return real_import(name, *args, **kwargs)
+
+    import sys
+    monkeypatch.delitem(sys.modules, "redis", raising=False)
+    monkeypatch.delitem(sys.modules, "redis.asyncio", raising=False)
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    oauth_mod.reset_state_store()
+    assert isinstance(oauth_mod.get_state_store(), oauth_mod.DBOAuthStateStore)
+
+    oauth_mod.reset_state_store()
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+
+# ---------------------------------------------------------------------------
 # Runtime OAuth refresh
 # ---------------------------------------------------------------------------
 
