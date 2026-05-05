@@ -236,6 +236,34 @@ def test_cors_fails_closed_in_production_without_origins(monkeypatch):
     assert cfg["allow_credentials"] is False
 
 
+@pytest.mark.asyncio
+async def test_cors_preflight_from_untrusted_origin_is_rejected(monkeypatch):
+    """An OPTIONS preflight from an origin not on the allowlist must NOT
+    receive an Access-Control-Allow-Origin header — the browser will then
+    block the actual request."""
+    import httpx
+    app = _build_app_with_env(
+        monkeypatch,
+        DEPLOYED_DOMAIN="idpkit.example.com",
+        CORS_EXTRA_ORIGINS=None,
+        ALLOWED_ORIGINS=None,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="https://testserver") as c:
+        res = await c.options(
+            "/api/auth/login",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+    # Starlette's CORSMiddleware returns 400 for a disallowed preflight and,
+    # critically, does not echo the Access-Control-Allow-Origin header.
+    assert res.headers.get("access-control-allow-origin") != "https://evil.example"
+    assert "*" not in (res.headers.get("access-control-allow-origin") or "")
+
+
 def test_cors_extra_origins_appended(monkeypatch):
     app = _build_app_with_env(
         monkeypatch,
