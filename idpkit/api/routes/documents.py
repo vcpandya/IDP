@@ -1,11 +1,14 @@
 """IDP Kit Document API routes — upload, list, get, delete, download."""
 
+import asyncio
 import logging
+import re
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote as _urlquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
-from fastapi.responses import Response as RawResponse
+from fastapi.responses import Response as RawResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,6 +146,102 @@ def _storage_key(user_id: str, doc_id: str, ext: str) -> str:
     return f"{user_id}/{doc_id}/original{ext}"
 
 
+def _sniff_format(head: bytes) -> Optional[str]:
+    """Best-effort content-type detection from the first ~512 bytes.
+
+    Returns one of the canonical format names used in ``EXTENSION_FORMAT_MAP``,
+    or ``None`` if the content isn't confidently identifiable. ``None`` means
+    "let the declared extension stand" — used for plain-text formats (md, csv,
+    html when no DOCTYPE) where there is no reliable magic.
+    """
+    if not head:
+        return None
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    # ZIP container — covers DOCX, XLSX, PPTX (all OOXML).
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06") or head.startswith(b"PK\x07\x08"):
+        return "ooxml"
+    # Legacy OLE compound (old .doc/.xls/.ppt).
+    if head.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "ole"
+    # Image magic numbers.
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "image"
+    if head.startswith(b"BM"):
+        return "image"
+    if head[:4] in (b"II*\x00", b"MM\x00*"):
+        return "image"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image"
+    # HTML — sniff a doctype or root tag in the first chunk, case-insensitive.
+    snippet = head[:512].lstrip().lower()
+    if snippet.startswith(b"<!doctype html") or snippet.startswith(b"<html") or b"<html" in snippet[:256]:
+        return "html"
+    return None
+
+
+# Maps declared canonical format -> set of sniff results that are acceptable
+# matches. Anything else for a declared extension is rejected.
+_FORMAT_SNIFF_ALLOW: dict[str, set[Optional[str]]] = {
+    "pdf": {"pdf"},
+    "docx": {"ooxml", "ole"},
+    "xlsx": {"ooxml", "ole"},
+    "pptx": {"ooxml", "ole"},
+    "image": {"image"},
+    # Text-like formats: sniffing is best-effort; allow None (unknown), but
+    # reject if it sniffs as an obviously different binary container.
+    "md": {None},
+    "html": {"html", None},
+    "csv": {None},
+}
+
+
+def _validate_content_matches_extension(content: bytes, fmt: str) -> None:
+    """Raise HTTPException 400 if the file's bytes obviously contradict the
+    declared extension (e.g. an HTML file uploaded as ``.pdf``)."""
+    sniffed = _sniff_format(content[:512])
+    allowed = _FORMAT_SNIFF_ALLOW.get(fmt)
+    if allowed is None:
+        return  # No expectation registered for this format.
+    if sniffed in allowed:
+        return
+    if sniffed is None and None in allowed:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"File content does not match extension. Declared format '{fmt}' "
+            f"but content sniffed as '{sniffed or 'unknown'}'."
+        ),
+    )
+
+
+_UNSAFE_FILENAME_CHARS = re.compile(r'[\r\n\x00-\x1f"\\/]')
+
+
+def _sanitize_filename_for_header(name: str) -> str:
+    """Strip characters unsafe in an HTTP header (CR/LF, NUL, control chars,
+    backslash, quote, slash). Returns a non-empty ASCII-safe display name; the
+    full UTF-8 name is separately exposed via the RFC 5987 ``filename*`` field
+    in ``_content_disposition``."""
+    cleaned = _UNSAFE_FILENAME_CHARS.sub("_", name or "").strip()
+    return cleaned or "download"
+
+
+def _content_disposition(filename: str) -> str:
+    """Build a CR/LF-safe ``Content-Disposition`` value with both an ASCII
+    fallback (``filename=``) and a UTF-8-aware ``filename*=`` form per RFC 5987
+    so emojis/accents/non-Latin names render correctly."""
+    safe = _sanitize_filename_for_header(filename)
+    ascii_fallback = safe.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    encoded = _urlquote(safe.encode("utf-8"), safe="")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
+
+
 def _extract_page_count(content: bytes, fmt: str) -> Optional[int]:
     """Best-effort page count extraction from file bytes."""
     if fmt == "pdf":
@@ -215,6 +314,10 @@ async def upload_document(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File too large ({len(content)} bytes). Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
         )
+
+    # Reject polyglot / disguised uploads where bytes contradict the extension.
+    _validate_content_matches_extension(content, fmt)
+
     key = _storage_key(user.id, doc.id, ext)
 
     try:
@@ -230,8 +333,9 @@ async def upload_document(
     doc.file_path = key
     doc.file_size = len(content)
 
-    # Extract page count for supported formats
-    page_count = _extract_page_count(content, fmt)
+    # Extract page count for supported formats — off the event loop so other
+    # requests stay responsive while parsing multi-MB PDFs.
+    page_count = await asyncio.to_thread(_extract_page_count, content, fmt)
     if page_count is not None:
         doc.page_count = page_count
 
@@ -346,6 +450,8 @@ async def upload_content(
             detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB.",
         )
 
+    _validate_content_matches_extension(content, doc.format or "")
+
     try:
         storage.save(doc.file_path, content)
     except Exception as exc:
@@ -354,7 +460,7 @@ async def upload_content(
 
     doc.file_size = len(content)
     doc.status = "uploaded"
-    page_count = _extract_page_count(content, doc.format)
+    page_count = await asyncio.to_thread(_extract_page_count, content, doc.format)
     if page_count is not None:
         doc.page_count = page_count
     db.add(doc)
@@ -391,6 +497,30 @@ async def confirm_upload(
 
     if not storage.exists(doc.file_path):
         raise HTTPException(status_code=400, detail="File not found in storage. Upload may have failed.")
+
+    # Direct-to-storage uploads bypass the in-process upload routes, so the
+    # MIME magic-byte check that protects upload_document/upload_content was
+    # never run. Re-validate here against the first chunk; if it fails, delete
+    # the rogue object so it can't be served or referenced later.
+    try:
+        head = b""
+        for chunk in storage.iter_bytes(doc.file_path, chunk_size=512):
+            head = chunk
+            break
+    except Exception as exc:  # pragma: no cover - storage backends differ
+        logger.warning("confirm_upload: could not read head bytes for %s: %s", doc.id, exc)
+        head = b""
+    if head:
+        try:
+            _validate_content_matches_extension(head, doc.format or "")
+        except HTTPException:
+            try:
+                storage.delete(doc.file_path)
+            except Exception as del_exc:  # pragma: no cover
+                logger.warning("confirm_upload: failed to delete rogue object %s: %s", doc.file_path, del_exc)
+            await db.delete(doc)
+            await db.flush()
+            raise
 
     doc.status = "uploaded"
     db.add(doc)
@@ -546,15 +676,6 @@ async def download_document(
             detail="Document file not found in storage",
         )
 
-    try:
-        data = storage.load(doc.file_path)
-    except Exception as exc:
-        logger.error("Storage read failed for document %s: %s", doc_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to read document from storage",
-        ) from exc
-
     # Determine content type
     import os
     ext = os.path.splitext(doc.filename)[1].lower()
@@ -563,14 +684,47 @@ async def download_document(
     else:
         content_type = FORMAT_CONTENT_TYPE.get(doc.format or "", "application/octet-stream")
 
-    return RawResponse(
-        content=data,
-        media_type=content_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{doc.filename}"',
-            "Content-Length": str(len(data)),
-        },
-    )
+    headers = {"Content-Disposition": _content_disposition(doc.filename)}
+    if doc.file_size:
+        headers["Content-Length"] = str(doc.file_size)
+
+    file_path = doc.file_path
+
+    # Prime the stream by pulling the first chunk *before* returning the
+    # response. If storage is broken or the object disappeared, this raises
+    # cleanly into a 500/404 HTTPException instead of a half-sent response
+    # body that the client would interpret as a truncated success.
+    try:
+        iterator = storage.iter_bytes(file_path)
+        try:
+            first_chunk = next(iterator)
+        except StopIteration:
+            first_chunk = b""
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not found in storage",
+        )
+    except Exception as exc:
+        logger.error("Storage stream failed to start for document %s: %s", doc_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read document from storage",
+        )
+
+    def _stream():
+        if first_chunk:
+            yield first_chunk
+        try:
+            yield from iterator
+        except Exception as exc:
+            # Response headers/status are already on the wire; we can no
+            # longer convert this to an HTTP error. Log and abort the stream
+            # so the client sees a truncated body rather than silent success.
+            logger.error("Storage stream failed mid-transfer for document %s: %s", doc_id, exc)
+            return
+
+    return StreamingResponse(_stream(), media_type=content_type, headers=headers)
 
 
 class AutoTagRequest(BaseModel):

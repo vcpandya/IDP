@@ -8,7 +8,7 @@ import tempfile
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import BinaryIO, Iterator, Optional
 
 import httpx
 
@@ -42,6 +42,16 @@ class StorageBackend(ABC):
     def load(self, key: str) -> bytes:
         """Load data by key."""
         ...
+
+    def iter_bytes(self, key: str, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        """Yield the object's bytes in chunks without buffering the entire file.
+
+        Default implementation falls back to ``load(key)`` so subclasses that
+        cannot stream remain functional. Override for true streaming.
+        """
+        data = self.load(key)
+        for offset in range(0, len(data), chunk_size):
+            yield data[offset:offset + chunk_size]
 
     @abstractmethod
     def delete(self, key: str) -> None:
@@ -92,6 +102,17 @@ class LocalStorageBackend(StorageBackend):
         if not path.exists():
             raise StorageError(f"File not found: {key}")
         return path.read_bytes()
+
+    def iter_bytes(self, key: str, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        path = self._resolve(key)
+        if not path.exists():
+            raise StorageError(f"File not found: {key}")
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
 
     def delete(self, key: str) -> None:
         path = self._resolve(key)
@@ -202,6 +223,32 @@ class GCSStorageBackend(StorageBackend):
         cache_path.write_bytes(resp.content)
 
         return resp.content
+
+    def iter_bytes(self, key: str, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        cache_path = self._cache_dir / key
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+            return
+
+        obj_name = self._object_name(key)
+        download_url = self._sign_url(obj_name, "GET")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with httpx.stream("GET", download_url, timeout=120) as resp:
+            if resp.status_code == 404:
+                raise StorageError(f"File not found: {key}")
+            if resp.status_code != 200:
+                raise StorageError(
+                    f"Failed to download {key}: status {resp.status_code}"
+                )
+            with open(cache_path, "wb") as cache_f:
+                for chunk in resp.iter_bytes(chunk_size):
+                    cache_f.write(chunk)
+                    yield chunk
 
     def delete(self, key: str) -> None:
         obj_name = self._object_name(key)
