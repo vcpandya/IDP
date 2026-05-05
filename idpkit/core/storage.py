@@ -53,6 +53,14 @@ class StorageBackend(ABC):
         for offset in range(0, len(data), chunk_size):
             yield data[offset:offset + chunk_size]
 
+    def peek_bytes(self, key: str, n: int = 512) -> bytes:
+        """Return up to ``n`` leading bytes without poisoning any download
+        cache. The default implementation uses ``load(key)`` and slices, which
+        is safe for in-memory backends; backends that lazily cache to disk
+        (e.g. GCS) MUST override this so a partial fetch does not leave a
+        truncated cache file behind that subsequent reads would serve."""
+        return self.load(key)[:n]
+
     @abstractmethod
     def delete(self, key: str) -> None:
         """Delete data by key."""
@@ -113,6 +121,13 @@ class LocalStorageBackend(StorageBackend):
                 if not chunk:
                     break
                 yield chunk
+
+    def peek_bytes(self, key: str, n: int = 512) -> bytes:
+        path = self._resolve(key)
+        if not path.exists():
+            raise StorageError(f"File not found: {key}")
+        with open(path, "rb") as f:
+            return f.read(n)
 
     def delete(self, key: str) -> None:
         path = self._resolve(key)
@@ -238,17 +253,54 @@ class GCSStorageBackend(StorageBackend):
         obj_name = self._object_name(key)
         download_url = self._sign_url(obj_name, "GET")
         cache_path.parent.mkdir(parents=True, exist_ok=True)
-        with httpx.stream("GET", download_url, timeout=120) as resp:
-            if resp.status_code == 404:
-                raise StorageError(f"File not found: {key}")
-            if resp.status_code != 200:
-                raise StorageError(
-                    f"Failed to download {key}: status {resp.status_code}"
-                )
-            with open(cache_path, "wb") as cache_f:
-                for chunk in resp.iter_bytes(chunk_size):
-                    cache_f.write(chunk)
-                    yield chunk
+        # Stream into a sibling .tmp file and atomically rename only after
+        # the HTTP body completes — otherwise an interrupted iter_bytes()
+        # (caller breaks early, network error, etc.) would leave a truncated
+        # cache file that subsequent reads would happily serve as the full
+        # object.
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".part")
+        ok = False
+        try:
+            with httpx.stream("GET", download_url, timeout=120) as resp:
+                if resp.status_code == 404:
+                    raise StorageError(f"File not found: {key}")
+                if resp.status_code != 200:
+                    raise StorageError(
+                        f"Failed to download {key}: status {resp.status_code}"
+                    )
+                with open(tmp_path, "wb") as cache_f:
+                    for chunk in resp.iter_bytes(chunk_size):
+                        cache_f.write(chunk)
+                        yield chunk
+            os.replace(tmp_path, cache_path)
+            ok = True
+        finally:
+            if not ok and tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:  # pragma: no cover
+                    pass
+
+    def peek_bytes(self, key: str, n: int = 512) -> bytes:
+        # If we already have the full object cached, slice it locally.
+        cache_path = self._cache_dir / key
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                return f.read(n)
+        # Otherwise issue a Range request so we never write a truncated
+        # cache file. The cache is left untouched; a subsequent download
+        # will fetch the full object.
+        obj_name = self._object_name(key)
+        download_url = self._sign_url(obj_name, "GET")
+        headers = {"Range": f"bytes=0-{max(0, n - 1)}"}
+        resp = httpx.get(download_url, headers=headers, timeout=30)
+        if resp.status_code == 404:
+            raise StorageError(f"File not found: {key}")
+        if resp.status_code not in (200, 206):
+            raise StorageError(
+                f"Failed to peek {key}: status {resp.status_code}"
+            )
+        return resp.content[:n]
 
     def delete(self, key: str) -> None:
         obj_name = self._object_name(key)
