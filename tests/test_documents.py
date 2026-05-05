@@ -252,3 +252,121 @@ async def test_confirm_upload_rejects_disguised_content(auth_client):
 
     # And the rogue object must have been removed from storage.
     assert not storage.exists(storage_key)
+
+
+# ---------------------------------------------------------------------------
+# 7. Lazily-caching backends (GCS) must not get poisoned by head-reads
+# ---------------------------------------------------------------------------
+
+def test_peek_bytes_does_not_poison_lazy_cache():
+    """Regression for the GCS code-review finding: ``confirm_upload`` reads
+    the first chunk to sniff the format. If that read used ``iter_bytes()``,
+    a backend that caches as it streams (GCS) would write a truncated cache
+    file and serve it for every subsequent download. ``peek_bytes()`` must
+    take the no-cache path."""
+    from typing import Iterator
+    from idpkit.core.storage import StorageBackend
+
+    class LazyCachingBackend(StorageBackend):
+        """Mimics the GCS pattern: ``iter_bytes`` writes chunks to a local
+        cache as it yields them; subsequent reads are served from the cache."""
+        def __init__(self):
+            self._objects: dict[str, bytes] = {}
+            self._cache: dict[str, bytes] = {}
+
+        def save(self, key, data):
+            self._objects[key] = data if isinstance(data, bytes) else data.read()
+            return key
+
+        def load(self, key):
+            if key in self._cache:
+                return self._cache[key]
+            data = self._objects[key]
+            self._cache[key] = data
+            return data
+
+        def iter_bytes(self, key, chunk_size=64 * 1024):
+            # The "broken" pattern: writes to cache as it yields. If the
+            # caller breaks early, cache is poisoned with a truncated copy.
+            buf = bytearray()
+            data = self._objects[key]
+            for off in range(0, len(data), chunk_size):
+                chunk = data[off:off + chunk_size]
+                buf.extend(chunk)
+                self._cache[key] = bytes(buf)
+                yield chunk
+
+        def delete(self, key):
+            self._objects.pop(key, None)
+            self._cache.pop(key, None)
+
+        def exists(self, key):
+            return key in self._objects
+
+        def list_keys(self, prefix=""):
+            return [k for k in self._objects if k.startswith(prefix)]
+
+        def get_path(self, key):
+            return None
+
+    be = LazyCachingBackend()
+    full = b"%PDF-1.4\n" + b"X" * 4096
+    be.save("doc1", full)
+
+    # peek_bytes uses the safe (default) load() path, so no streaming and no
+    # partial cache write happens.
+    head = be.peek_bytes("doc1", 512)
+    assert head == full[:512]
+
+    # The full object is still readable via iter_bytes — i.e. the cache was
+    # not poisoned with the 512-byte head.
+    streamed = b"".join(be.iter_bytes("doc1", chunk_size=1024))
+    assert streamed == full
+
+
+def test_gcs_iter_bytes_uses_atomic_cache_rename(tmp_path, monkeypatch):
+    """Verify ``GCSStorageBackend.iter_bytes`` writes to a ``.part`` file and
+    only renames into place after the full body has streamed — so an
+    interrupted iteration cannot leave a truncated cache file on disk."""
+    from idpkit.core.storage import GCSStorageBackend
+
+    class _FakeStreamCtx:
+        status_code = 200
+        def __init__(self, body, chunks):
+            self._body = body
+            self._chunks = chunks
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        def iter_bytes(self, chunk_size):
+            for c in self._chunks:
+                yield c
+
+    body = b"%PDF-1.4\n" + b"A" * 2048
+    chunks = [body[i:i + 256] for i in range(0, len(body), 256)]
+
+    be = GCSStorageBackend.__new__(GCSStorageBackend)
+    be.bucket_id = "x"
+    be.private_dir = "p"
+    be._cache_dir = tmp_path
+
+    monkeypatch.setattr(be, "_sign_url", lambda *a, **k: "http://fake/url")
+    import httpx as _httpx
+    monkeypatch.setattr(_httpx, "stream", lambda *a, **k: _FakeStreamCtx(body, chunks))
+
+    # Simulate the broken caller: only consume the first chunk then break.
+    it = be.iter_bytes("doc1", chunk_size=256)
+    first = next(it)
+    it.close()
+
+    cache_file = tmp_path / "doc1"
+    part_file = tmp_path / "doc1.part"
+    # The .part file was cleaned up; no truncated cache file exists.
+    assert not part_file.exists(), ".part should be removed on interrupted iter"
+    assert not cache_file.exists(), "no truncated cache file should be written"
+
+    # Fresh full read populates the cache atomically.
+    full = b"".join(be.iter_bytes("doc1", chunk_size=256))
+    assert full == body
+    assert cache_file.exists() and cache_file.read_bytes() == body

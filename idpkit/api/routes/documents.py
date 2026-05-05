@@ -504,11 +504,11 @@ async def confirm_upload(
     # the rogue object so it can't be served or referenced later.
     # Fail-closed: if we can't read the head bytes we cannot verify the
     # upload is what the client claimed, so reject rather than accept it.
+    # Use peek_bytes() so backends that lazily cache (GCS) don't write a
+    # truncated cache file that later downloads would serve as the full
+    # object.
     try:
-        head = b""
-        for chunk in storage.iter_bytes(doc.file_path, chunk_size=512):
-            head = chunk
-            break
+        head = storage.peek_bytes(doc.file_path, 512)
     except Exception as exc:
         logger.error("confirm_upload: could not read head bytes for %s: %s", doc.id, exc)
         try:
