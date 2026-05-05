@@ -7,8 +7,12 @@ respective per-connector integration tests once real creds are available).
 from __future__ import annotations
 
 import os
+import time as _time
+import uuid as _uuid
 
 import pytest
+
+from idpkit.connectors.http import request as _http_request
 
 
 # ---------------------------------------------------------------------------
@@ -1151,3 +1155,294 @@ async def test_live_google_drive_search(google_live_creds):
     out = await search_tool.executor({"query": "", "page_size": 5}, google_live_creds)
     assert "files" in out, out
     assert isinstance(out["files"], list)
+
+
+# ---------------------------------------------------------------------------
+# Live integration tests — *mutating* tools (Task #18)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the create/send tools that were intentionally skipped
+# by the read-only suite above. Each one creates exactly one record in a
+# dedicated sandbox target (channel / project / mailbox / page / contact /
+# event / link) and then deletes / archives / trashes / revokes it in a
+# ``finally`` block, so re-running the suite back-to-back keeps the sandbox
+# clean. Tests are gated on the same ``IDPKIT_LIVE_*`` secrets via the
+# ``*_sandbox`` fixtures and skip cleanly when any required env var is unset.
+
+def _stamp() -> str:
+    """Short unique tag embedded in created records so they're easy to spot
+    if a cleanup ever fails on a flaky run."""
+    return f"idpkit-live-{int(_time.time())}-{_uuid.uuid4().hex[:6]}"
+
+
+@pytest.mark.live
+async def test_live_slack_send_message(slack_sandbox):
+    from idpkit.connectors.impl.slack import API, CONNECTOR, _auth_headers
+
+    creds = {"bot_token": slack_sandbox["bot_token"]}
+    channel = slack_sandbox["channel"]
+    tag = _stamp()
+    send_tool = next(t for t in CONNECTOR.tools if t.name == "slack_send_message")
+    out = await send_tool.executor(
+        {"channel": channel, "text": f":robot_face: live-test {tag}"}, creds,
+    )
+    assert out.get("ok") is True, out
+    ts = out.get("ts")
+    assert ts, out
+    try:
+        assert out.get("channel")
+    finally:
+        # Clean up the message so the channel doesn't fill with test pings.
+        del_resp = await _http_request(
+            "POST", f"{API}/chat.delete",
+            headers=_auth_headers(creds),
+            json_body={"channel": out.get("channel") or channel, "ts": ts},
+        )
+        # Best-effort cleanup: tolerate "message_not_found" if Slack already
+        # purged it, but assert the call itself succeeded structurally.
+        assert "ok" in del_resp, del_resp
+
+
+@pytest.mark.live
+async def test_live_github_create_issue(github_sandbox):
+    from idpkit.connectors.impl.github import API, CONNECTOR, _h
+
+    creds = {"token": github_sandbox["token"]}
+    repo = github_sandbox["repo"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "github_create_issue")
+    out = await create.executor(
+        {"repo": repo, "title": f"[idpkit-live] {tag}", "body": "auto-created by test suite"},
+        creds,
+    )
+    assert out.get("number"), out
+    number = out["number"]
+    try:
+        assert out.get("url", "").startswith("https://github.com/")
+    finally:
+        # GitHub doesn't allow API issue deletion; close it as cleanup.
+        await _http_request(
+            "PATCH", f"{API}/repos/{repo}/issues/{number}",
+            headers=_h(creds), json_body={"state": "closed"},
+        )
+
+
+@pytest.mark.live
+async def test_live_linear_create_issue(linear_sandbox):
+    from idpkit.connectors.impl.linear import CONNECTOR, _gql
+
+    creds = {"api_key": linear_sandbox["api_key"]}
+    team_id = linear_sandbox["team_id"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "linear_create_issue")
+    out = await create.executor(
+        {"team_id": team_id, "title": f"[idpkit-live] {tag}", "description": "auto"},
+        creds,
+    )
+    issue_id = out.get("id")
+    assert issue_id, out
+    try:
+        assert out.get("identifier") and out.get("url")
+    finally:
+        await _gql(
+            creds,
+            "mutation ($id: String!) { issueDelete(id: $id) { success } }",
+            {"id": issue_id},
+        )
+
+
+@pytest.mark.live
+async def test_live_jira_create_issue(jira_sandbox):
+    from idpkit.connectors.impl.jira import CONNECTOR, _h, _site
+
+    creds = {k: jira_sandbox[k] for k in ("site", "email", "api_token")}
+    project_key = jira_sandbox["project_key"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "jira_create_issue")
+    out = await create.executor(
+        {
+            "project_key": project_key,
+            "summary": f"[idpkit-live] {tag}",
+            "description": "auto-created by test suite",
+        },
+        creds,
+    )
+    key = out.get("key")
+    assert key, out
+    try:
+        assert key.startswith(f"{project_key}-")
+    finally:
+        await _http_request(
+            "DELETE", f"{_site(creds)}/rest/api/3/issue/{key}",
+            headers=_h(creds), expect_json=False,
+        )
+
+
+@pytest.mark.live
+async def test_live_notion_create_page(notion_sandbox):
+    from idpkit.connectors.impl.notion import API, CONNECTOR, _h
+
+    creds = {"integration_token": notion_sandbox["integration_token"]}
+    parent_page_id = notion_sandbox["parent_page_id"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "notion_create_page")
+    out = await create.executor(
+        {"parent_page_id": parent_page_id, "title": f"[idpkit-live] {tag}", "body": "auto"},
+        creds,
+    )
+    page_id = out.get("id")
+    assert page_id, out
+    try:
+        assert out.get("url")
+    finally:
+        # Notion has no hard delete via API — archive the page so it's removed
+        # from the parent's child list.
+        await _http_request(
+            "PATCH", f"{API}/pages/{page_id}",
+            headers=_h(creds), json_body={"archived": True},
+        )
+
+
+@pytest.mark.live
+async def test_live_hubspot_create_contact(hubspot_sandbox):
+    from idpkit.connectors.impl.hubspot import API, CONNECTOR, _h
+
+    creds = {"access_token": hubspot_sandbox["access_token"]}
+    tag = _stamp()
+    email = f"{tag}@idpkit-sandbox.invalid"
+    create = next(t for t in CONNECTOR.tools if t.name == "hubspot_create_contact")
+    out = await create.executor(
+        {"email": email, "firstname": "Idpkit", "lastname": "Live"}, creds,
+    )
+    contact_id = out.get("id")
+    assert contact_id, out
+    try:
+        assert isinstance(contact_id, str)
+    finally:
+        await _http_request(
+            "DELETE", f"{API}/crm/v3/objects/contacts/{contact_id}",
+            headers=_h(creds), expect_json=False,
+        )
+
+
+@pytest.mark.live
+async def test_live_dropbox_create_shared_link(dropbox_sandbox):
+    from idpkit.connectors.impl.dropbox import API, CONNECTOR, _h
+
+    creds = {"access_token": dropbox_sandbox["access_token"]}
+    path = dropbox_sandbox["path"]
+    create = next(t for t in CONNECTOR.tools if t.name == "dropbox_create_shared_link")
+    out = await create.executor({"path": path}, creds)
+    url = out.get("url")
+    if not url and out.get("error"):
+        # Dropbox returns "shared_link_already_exists" if a link is already
+        # present for this path — fetch the existing one so we still have
+        # something to revoke and assert structure on.
+        existing = await _http_request(
+            "POST", f"{API}/sharing/list_shared_links",
+            headers=_h(creds), json_body={"path": path, "direct_only": True},
+        )
+        links = existing.get("links", [])
+        assert links, f"no shared link returned for {path}: {out} / {existing}"
+        url = links[0].get("url")
+    assert url and url.startswith("https://"), out
+    try:
+        pass
+    finally:
+        await _http_request(
+            "POST", f"{API}/sharing/revoke_shared_link",
+            headers=_h(creds), json_body={"url": url},
+        )
+
+
+@pytest.mark.live
+async def test_live_google_gmail_send(google_sandbox):
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    to = google_sandbox.get("idpkit_live_gmail_to")
+    if not to:
+        pytest.skip("live test skipped — missing env: IDPKIT_LIVE_GMAIL_TO")
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    send = next(t for t in CONNECTOR.tools if t.name == "google_gmail_send")
+    out = await send.executor(
+        {"to": to, "subject": f"[idpkit-live] {tag}", "body": "auto-created by test suite"},
+        creds,
+    )
+    msg_id = out.get("id")
+    assert msg_id, out
+    try:
+        assert out.get("threadId")
+    finally:
+        # Trash the sent message so the sandbox mailbox doesn't accumulate.
+        await _http_request(
+            "POST",
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/trash",
+            headers=_bearer(creds),
+        )
+
+
+@pytest.mark.live
+async def test_live_google_sheets_append_row(google_sandbox):
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    sheet_id = google_sandbox.get("idpkit_live_google_sheet_id")
+    rng = google_sandbox.get("idpkit_live_google_sheet_range")
+    if not sheet_id or not rng:
+        pytest.skip(
+            "live test skipped — missing env: "
+            "IDPKIT_LIVE_GOOGLE_SHEET_ID, IDPKIT_LIVE_GOOGLE_SHEET_RANGE"
+        )
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    append = next(t for t in CONNECTOR.tools if t.name == "google_sheets_append_row")
+    out = await append.executor(
+        {"spreadsheet_id": sheet_id, "range": rng, "values": [tag, "live-test"]},
+        creds,
+    )
+    updated_range = out.get("updated_range")
+    assert updated_range, out
+    try:
+        assert (out.get("updated_rows") or 0) >= 1
+    finally:
+        # Clear exactly the cells we appended so re-runs don't accumulate.
+        await _http_request(
+            "POST",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{updated_range}:clear",
+            headers={**_bearer(creds), "Content-Type": "application/json"},
+            json_body={},
+        )
+
+
+@pytest.mark.live
+async def test_live_google_calendar_create_event(google_sandbox):
+    from datetime import datetime, timedelta, timezone
+
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    calendar_id = google_sandbox.get("idpkit_live_google_calendar_id", "primary")
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(minutes=30)
+    create = next(t for t in CONNECTOR.tools if t.name == "google_calendar_create_event")
+    out = await create.executor(
+        {
+            "calendar_id": calendar_id,
+            "summary": f"[idpkit-live] {tag}",
+            "description": "auto-created by test suite",
+            "start": start.isoformat().replace("+00:00", "Z"),
+            "end": end.isoformat().replace("+00:00", "Z"),
+        },
+        creds,
+    )
+    event_id = out.get("id")
+    assert event_id, out
+    try:
+        assert out.get("htmlLink")
+    finally:
+        await _http_request(
+            "DELETE",
+            f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}",
+            headers=_bearer(creds), expect_json=False,
+        )
