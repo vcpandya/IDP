@@ -26,9 +26,15 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete
+from sqlalchemy import delete, text
 
 from .models import ConnectionAuditLog
+from .session import DATABASE_URL
+
+# Deterministic 31-bit int derived from a stable label, used as the
+# pg_advisory_lock key so every worker in a deployment competes for the
+# same lock. Kept positive to fit Postgres' BIGINT advisory key.
+AUDIT_PRUNE_LOCK_KEY = 0x1DC0DE01
 
 _log = logging.getLogger(__name__)
 
@@ -65,14 +71,39 @@ async def prune_connection_audit_log(session_factory, *, retention_days: int | N
     """
     days = retention_days if retention_days is not None else _retention_days()
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    is_postgres = "postgresql" in DATABASE_URL
     async with session_factory() as db:
         try:
-            result = await db.execute(
-                delete(ConnectionAuditLog).where(
-                    ConnectionAuditLog.created_at < cutoff
+            if is_postgres:
+                # Use a *transaction-scoped* advisory lock so that COMMIT or
+                # ROLLBACK automatically releases it on the same physical
+                # connection. This avoids the lock-leak class of bug where a
+                # session-scoped lock would survive a commit-then-checkin and
+                # block all future workers from ever pruning again.
+                async with db.begin():
+                    got = (await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(:k)"),
+                        {"k": AUDIT_PRUNE_LOCK_KEY},
+                    )).scalar()
+                    if not got:
+                        _log.debug(
+                            "Audit prune skipped: leader lock held elsewhere"
+                        )
+                        return 0
+                    result = await db.execute(
+                        delete(ConnectionAuditLog).where(
+                            ConnectionAuditLog.created_at < cutoff
+                        )
+                    )
+                    # Implicit COMMIT on `async with db.begin()` exit releases
+                    # the advisory lock atomically with the DELETE.
+            else:
+                result = await db.execute(
+                    delete(ConnectionAuditLog).where(
+                        ConnectionAuditLog.created_at < cutoff
+                    )
                 )
-            )
-            await db.commit()
+                await db.commit()
         except Exception as exc:
             await db.rollback()
             _log.warning("Audit-log prune failed: %s", exc)
