@@ -502,25 +502,35 @@ async def confirm_upload(
     # MIME magic-byte check that protects upload_document/upload_content was
     # never run. Re-validate here against the first chunk; if it fails, delete
     # the rogue object so it can't be served or referenced later.
+    # Fail-closed: if we can't read the head bytes we cannot verify the
+    # upload is what the client claimed, so reject rather than accept it.
     try:
         head = b""
         for chunk in storage.iter_bytes(doc.file_path, chunk_size=512):
             head = chunk
             break
-    except Exception as exc:  # pragma: no cover - storage backends differ
-        logger.warning("confirm_upload: could not read head bytes for %s: %s", doc.id, exc)
-        head = b""
-    if head:
+    except Exception as exc:
+        logger.error("confirm_upload: could not read head bytes for %s: %s", doc.id, exc)
         try:
-            _validate_content_matches_extension(head, doc.format or "")
-        except HTTPException:
-            try:
-                storage.delete(doc.file_path)
-            except Exception as del_exc:  # pragma: no cover
-                logger.warning("confirm_upload: failed to delete rogue object %s: %s", doc.file_path, del_exc)
-            await db.delete(doc)
-            await db.flush()
-            raise
+            storage.delete(doc.file_path)
+        except Exception:  # pragma: no cover
+            pass
+        await db.delete(doc)
+        await db.flush()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to verify uploaded file content; upload rejected.",
+        )
+    try:
+        _validate_content_matches_extension(head, doc.format or "")
+    except HTTPException:
+        try:
+            storage.delete(doc.file_path)
+        except Exception as del_exc:  # pragma: no cover
+            logger.warning("confirm_upload: failed to delete rogue object %s: %s", doc.file_path, del_exc)
+        await db.delete(doc)
+        await db.flush()
+        raise
 
     doc.status = "uploaded"
     db.add(doc)
@@ -694,16 +704,26 @@ async def download_document(
     # response. If storage is broken or the object disappeared, this raises
     # cleanly into a 500/404 HTTPException instead of a half-sent response
     # body that the client would interpret as a truncated success.
+    from idpkit.core.exceptions import StorageError
     try:
         iterator = storage.iter_bytes(file_path)
         try:
             first_chunk = next(iterator)
         except StopIteration:
             first_chunk = b""
-    except FileNotFoundError:
+    except (FileNotFoundError, StorageError) as exc:
+        # Race: exists() above passed but the object disappeared (or storage
+        # backend reports not-found via its own exception). Treat as 404.
+        msg = str(exc).lower()
+        if isinstance(exc, FileNotFoundError) or "not found" in msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document file not found in storage",
+            )
+        logger.error("Storage stream failed to start for document %s: %s", doc_id, exc)
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document file not found in storage",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to read document from storage",
         )
     except Exception as exc:
         logger.error("Storage stream failed to start for document %s: %s", doc_id, exc)
