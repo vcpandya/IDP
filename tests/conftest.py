@@ -189,6 +189,75 @@ def google_live_creds() -> dict:
     return creds
 
 
+# ---------------------------------------------------------------------------
+# Sandbox targets for *mutating* live tests (Task #18)
+# ---------------------------------------------------------------------------
+#
+# These extend the read-only ``*_live_creds`` fixtures above with the extra
+# IDs / paths needed to safely create-and-clean a record in a dedicated
+# sandbox project, channel, mailbox, etc. They follow the same naming
+# convention (``IDPKIT_LIVE_<CONNECTOR>_<FIELD>``) and skip cleanly when the
+# extra env vars are missing — so the read-only suite continues to run on
+# nightly even if the sandbox-target secrets are not yet provisioned.
+
+@pytest.fixture
+def slack_sandbox(slack_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_SLACK_CHANNEL")
+    return {**slack_live_creds, "channel": env["IDPKIT_LIVE_SLACK_CHANNEL"]}
+
+
+@pytest.fixture
+def github_sandbox(github_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_GITHUB_REPO")
+    return {**github_live_creds, "repo": env["IDPKIT_LIVE_GITHUB_REPO"]}
+
+
+@pytest.fixture
+def linear_sandbox(linear_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_LINEAR_TEAM_ID")
+    return {**linear_live_creds, "team_id": env["IDPKIT_LIVE_LINEAR_TEAM_ID"]}
+
+
+@pytest.fixture
+def jira_sandbox(jira_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_JIRA_PROJECT_KEY")
+    return {**jira_live_creds, "project_key": env["IDPKIT_LIVE_JIRA_PROJECT_KEY"]}
+
+
+@pytest.fixture
+def notion_sandbox(notion_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_NOTION_PARENT_PAGE_ID")
+    return {**notion_live_creds, "parent_page_id": env["IDPKIT_LIVE_NOTION_PARENT_PAGE_ID"]}
+
+
+@pytest.fixture
+def hubspot_sandbox(hubspot_live_creds) -> dict:
+    # HubSpot needs no extra target — we generate a unique sandbox email per run.
+    return dict(hubspot_live_creds)
+
+
+@pytest.fixture
+def dropbox_sandbox(dropbox_live_creds) -> dict:
+    env = _require_env("IDPKIT_LIVE_DROPBOX_PATH")
+    return {**dropbox_live_creds, "path": env["IDPKIT_LIVE_DROPBOX_PATH"]}
+
+
+@pytest.fixture
+def google_sandbox(google_live_creds) -> dict:
+    # Optional sandbox targets — individual tests _require_env on what they need.
+    creds = dict(google_live_creds)
+    for k in (
+        "IDPKIT_LIVE_GMAIL_TO",
+        "IDPKIT_LIVE_GOOGLE_SHEET_ID",
+        "IDPKIT_LIVE_GOOGLE_SHEET_RANGE",
+        "IDPKIT_LIVE_GOOGLE_CALENDAR_ID",
+    ):
+        v = os.environ.get(k)
+        if v:
+            creds[k.lower()] = v
+    return creds
+
+
 @pytest.fixture
 def sample_pdf_bytes() -> bytes:
     p = Path("tests/pdfs/2023-annual-report-truncated.pdf")
