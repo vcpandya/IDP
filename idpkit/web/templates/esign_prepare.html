@@ -74,6 +74,13 @@
       </div>
 
       <div x-show="docSource==='existing'">
+        <div x-show="documentsError"
+             style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:0.82rem;display:flex;align-items:center;gap:8px;justify-content:space-between">
+          <span><i class="fas fa-exclamation-triangle"></i> <span x-text="documentsError"></span></span>
+          <button type="button" @click="loadDocuments()" class="btn btn-sm">
+            <i class="fas fa-rotate"></i> Try again
+          </button>
+        </div>
         <select x-model="form.document_id" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px">
           <option value="">— Select document —</option>
           <template x-for="doc in documents" :key="doc.id">
@@ -127,7 +134,16 @@
       <div x-show="pagesLoading" style="text-align:center;padding:40px;color:var(--text-muted)">
         <i class="fas fa-spinner fa-spin" style="font-size:2rem"></i><p>Loading document…</p>
       </div>
-      <div x-show="!pagesLoading">
+      <div x-show="!pagesLoading && pagesError" role="alert"
+           style="background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:24px;text-align:center;color:#7f1d1d">
+        <i class="fas fa-exclamation-triangle" style="font-size:2rem;margin-bottom:8px;display:block;color:#dc2626"></i>
+        <p style="font-weight:600;margin:0 0 4px" x-text="pagesError"></p>
+        <p style="font-size:0.82rem;color:#9f1239;margin:0 0 12px">If this keeps happening, the PDF may be corrupt or password-protected.</p>
+        <button type="button" @click="retryLoadPages()" class="btn btn-primary btn-sm">
+          <i class="fas fa-rotate"></i> Try again
+        </button>
+      </div>
+      <div x-show="!pagesLoading && !pagesError">
         <template x-for="pageNum in totalPages" :key="pageNum">
           <div style="margin-bottom:28px">
             <div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:6px;font-weight:600">Page <span x-text="pageNum"></span></div>
@@ -285,6 +301,8 @@ function esignPrepare() {
     saveMsgError: false,
     createError: '',
     documents: [],
+    documentsError: '',
+    pagesError: '',
     selectedField: null,
     draggingFieldType: null,
     dragStartOffset: { x: 0, y: 0 },
@@ -310,13 +328,18 @@ function esignPrepare() {
     },
 
     async loadDocuments() {
+      this.documentsError = '';
       try {
         const res = await fetch('/api/documents/?limit=200');
-        if (res.ok) {
-          const data = await res.json();
-          this.documents = (data.items || []).filter(d => d.format === 'pdf');
+        if (!res.ok) {
+          this.documentsError = `Couldn't load your documents (HTTP ${res.status}).`;
+          return;
         }
-      } catch(e) {}
+        const data = await res.json();
+        this.documents = (data.items || []).filter(d => d.format === 'pdf');
+      } catch(e) {
+        this.documentsError = `Couldn't load your documents: ${e.message}`;
+      }
     },
 
     async loadEnvelope(id) {
@@ -331,16 +354,26 @@ function esignPrepare() {
 
     async loadPages() {
       this.pagesLoading = true;
-      for (let p = 1; p <= this.totalPages; p++) {
-        try {
+      this.pagesError = '';
+      try {
+        for (let p = 1; p <= this.totalPages; p++) {
           const res = await fetch(`/api/esign/envelopes/${this.envelopeId}/pdf-page/${p}`);
-          if (res.ok) {
-            const data = await res.json();
-            this.pages[p] = data.image_b64;
+          if (!res.ok) {
+            throw new Error(`page ${p} returned HTTP ${res.status}`);
           }
-        } catch(e) {}
+          const data = await res.json();
+          this.pages[p] = data.image_b64;
+        }
+      } catch(e) {
+        this.pagesError = `Couldn't render this document — try re-uploading. (${e.message})`;
+        this.pages = {};
+      } finally {
+        this.pagesLoading = false;
       }
-      this.pagesLoading = false;
+    },
+
+    async retryLoadPages() {
+      await this.loadPages();
     },
 
     async createEnvelope() {

@@ -25,7 +25,7 @@
                 <div class="conv-item" :class="{ active: currentConversationId === conv.id }"
                      @click="loadConversation(conv.id)">
                     <span class="conv-title" x-text="conv.title"></span>
-                    <button class="conv-delete" @click.stop="deleteConversation(conv.id)" title="Delete">
+                    <button class="conv-delete" @click.stop="deleteConversation(conv.id)" title="Delete" aria-label="Delete conversation">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -33,7 +33,10 @@
         </div>
     </div>
     <div class="chat-main">
-        <button class="sidebar-toggle-btn" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? 'Hide sidebar' : 'Show conversations'">
+        <button class="sidebar-toggle-btn" @click="sidebarOpen = !sidebarOpen"
+                :title="sidebarOpen ? 'Hide sidebar' : 'Show conversations'"
+                :aria-label="sidebarOpen ? 'Hide conversations sidebar' : 'Show conversations sidebar'"
+                :aria-expanded="sidebarOpen ? 'true' : 'false'">
             <i :class="sidebarOpen ? 'fas fa-chevron-left' : 'fas fa-comments'"></i>
         </button>
         <div class="chat-messages" id="chatMessages">
@@ -58,10 +61,11 @@
                         <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
                     <div class="msg-content">
-                        <!-- Tool messages: collapsed accordion -->
-                        <template x-if="msg.role === 'tool'">
+                        <!-- Tool messages: collapsed accordion (or styled error card on failure) -->
+                        <template x-if="msg.role === 'tool' && !msg.is_error">
                             <div class="tool-accordion" x-data="{ open: false }">
-                                <button class="tool-accordion-header" @click="open = !open">
+                                <button class="tool-accordion-header" @click="open = !open"
+                                        :aria-expanded="open ? 'true' : 'false'">
                                     <i class="fas fa-wrench"></i>
                                     <span x-text="'Tool: ' + (msg.tool_name || 'unknown').replace(/_/g, ' ')"></span>
                                     <i class="fas fa-chevron-down tool-accordion-arrow" :class="open && 'open'"></i>
@@ -69,6 +73,26 @@
                                 <div class="tool-accordion-body" x-show="open" x-cloak x-transition.duration.150ms>
                                     <pre x-text="msg.content"></pre>
                                 </div>
+                            </div>
+                        </template>
+                        <template x-if="msg.role === 'tool' && msg.is_error">
+                            <div class="tool-error-card" role="alert">
+                                <div class="tool-error-header">
+                                    <i class="fas fa-triangle-exclamation"></i>
+                                    <span x-text="(msg.tool_name || 'Tool').replace(/_/g,' ') + ' couldn\'t complete'"></span>
+                                </div>
+                                <div class="tool-error-body" x-text="msg.error_message || 'The tool returned an error.'"></div>
+                                <template x-if="msg.connector_id">
+                                    <a class="tool-error-action"
+                                       :href="'/connections#' + msg.connector_id">
+                                        <i class="fas fa-plug"></i>
+                                        Connect <span x-text="msg.connector_name"></span> →
+                                    </a>
+                                </template>
+                                <details class="tool-error-details" x-data="{ open: false }">
+                                    <summary>Show raw response</summary>
+                                    <pre x-text="msg.content"></pre>
+                                </details>
                             </div>
                         </template>
                         <!-- User & assistant messages -->
@@ -112,20 +136,24 @@
                     <span class="tag-chip" :style="'border-color:' + chip.color">
                         <span class="tag-dot" :style="'background:' + chip.color"></span>
                         <span x-text="chip.name"></span>
-                        <button class="tag-chip-remove" @click="removeTagChip(chip.id)">&times;</button>
+                        <button class="tag-chip-remove" @click="removeTagChip(chip.id)"
+                                :aria-label="'Remove tag ' + chip.name">&times;</button>
                     </span>
                 </template>
                 <template x-for="did in selectedDocs" :key="'doc-'+did">
                     <span class="chat-upload-tag ready" x-show="!uploadFiles.some(u => u.docId === did)">
                         <i class="fas fa-file-alt"></i>
                         <span class="tag-name" x-text="getDocName(did)"></span>
-                        <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit" @click="selectedDocs = selectedDocs.filter(d => d !== did)">&times;</button>
+                        <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit"
+                                @click="selectedDocs = selectedDocs.filter(d => d !== did)"
+                                aria-label="Remove document from selection">&times;</button>
                     </span>
                 </template>
             </div>
             <div class="chat-input">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
-                <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files" :disabled="loading">
+                <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files"
+                        aria-label="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
                 <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
@@ -193,7 +221,7 @@
         <div class="mention-popup" @click.stop>
             <div class="mention-popup-header">
                 <span><i class="fas fa-hashtag"></i> Select a Tag</span>
-                <button class="mention-popup-close" @click="showTagMention = false">&times;</button>
+                <button class="mention-popup-close" @click="showTagMention = false" aria-label="Close tag picker">&times;</button>
             </div>
             <input type="text" class="mention-popup-search" x-model="tagMentionFilter" placeholder="Filter tags..." x-ref="tagSearchInput">
             <div class="mention-popup-list">
@@ -214,7 +242,7 @@
         <div class="mention-popup" @click.stop>
             <div class="mention-popup-header">
                 <span><i class="fas fa-file-alt"></i> Select a Document</span>
-                <button class="mention-popup-close" @click="showDocMention = false">&times;</button>
+                <button class="mention-popup-close" @click="showDocMention = false" aria-label="Close document picker">&times;</button>
             </div>
             <input type="text" class="mention-popup-search" x-model="docMentionFilter" placeholder="Filter documents..." x-ref="docSearchInput">
             <div class="mention-popup-list">
@@ -243,7 +271,7 @@
                         </span>
                     </div>
                 </div>
-                <button class="btn-close" @click="showSourceModal = false">&times;</button>
+                <button class="btn-close" @click="showSourceModal = false" aria-label="Close source detail">&times;</button>
             </div>
             <div class="source-modal-body">
                 <template x-if="sourceModalData.summary">
@@ -278,7 +306,7 @@
         <div class="attach-modal" @click.stop>
             <div class="attach-modal-header">
                 <h3><i class="fas fa-paperclip"></i> Attach Documents</h3>
-                <button class="btn-close" @click="closeAttachModal()">&times;</button>
+                <button class="btn-close" @click="closeAttachModal()" aria-label="Close attach dialog">&times;</button>
             </div>
             <div class="attach-modal-tabs">
                 <button class="attach-tab" :class="attachTab === 'select' && 'active'" @click="attachTab = 'select'">
@@ -577,6 +605,37 @@ function agentChat() {
             }
             event.target.value = '';
         },
+        detectToolError(toolName, result) {
+            if (!result) return null;
+            let payload = result;
+            if (typeof payload === 'string') {
+                try { payload = JSON.parse(payload); } catch (e) { return null; }
+            }
+            if (typeof payload !== 'object') return null;
+            const explicitOk = payload.ok === true || payload.success === true;
+            const errMsg = payload.error || payload.detail || payload.message_error || null;
+            const looksFailed = !!errMsg || payload.ok === false || payload.success === false || !!payload.exception;
+            if (explicitOk || !looksFailed) return null;
+            const message = (typeof errMsg === 'string' && errMsg.trim())
+                ? errMsg
+                : 'The tool returned an error.';
+            const connectors = [
+                ['slack', 'Slack'], ['notion', 'Notion'], ['github', 'GitHub'],
+                ['google_drive', 'Google Drive'], ['google_sheets', 'Google Sheets'],
+                ['google_calendar', 'Google Calendar'], ['gmail', 'Gmail'],
+                ['linear', 'Linear'], ['jira', 'Jira'], ['hubspot', 'HubSpot'],
+                ['dropbox', 'Dropbox'], ['s3', 'S3'], ['confluence', 'Confluence'],
+                ['stripe', 'Stripe'], ['salesforce', 'Salesforce'],
+            ];
+            const hay = ((toolName || '') + ' ' + message).toLowerCase();
+            const match = connectors.find(([id, name]) =>
+                hay.includes(id) || hay.includes(name.toLowerCase()));
+            return {
+                message,
+                connectorId: match ? match[0] : null,
+                connectorName: match ? match[1] : null,
+            };
+        },
         showSources(sources, searchAttempts) {
             this.currentSources = sources || [];
             this.currentSearchAttempts = searchAttempts || [];
@@ -624,7 +683,17 @@ function agentChat() {
                     const data = await res.json();
                     if (data.tool_calls) {
                         for (const tc of data.tool_calls) {
-                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name, sources: null, source_type: null, searchAttempts: null });
+                            const errInfo = this.detectToolError(tc.name, tc.result);
+                            this.messages.push({
+                                role: 'tool',
+                                content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2),
+                                tool_name: tc.name,
+                                is_error: !!errInfo,
+                                error_message: errInfo ? errInfo.message : null,
+                                connector_id: errInfo ? errInfo.connectorId : null,
+                                connector_name: errInfo ? errInfo.connectorName : null,
+                                sources: null, source_type: null, searchAttempts: null,
+                            });
                         }
                     }
                     const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
