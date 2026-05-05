@@ -48,10 +48,19 @@
                 <div class="skill-card-meta" x-show="connectionFor(c.id) && connectionFor(c.id).is_shared"
                      style="color:#1e40af;">
                     <i class="fas fa-users"></i>
-                    <span x-text="connectionFor(c.id) && connectionFor(c.id).is_owner
-                        ? 'Shared with your team'
-                        : 'Shared by your team admin'"></span>
+                    <span x-text="shareSummary(connectionFor(c.id))"></span>
                 </div>
+                <template x-if="connectionFor(c.id) && connectionFor(c.id).is_shared
+                                && connectionFor(c.id).share_audience === 'selected'
+                                && (connectionFor(c.id).is_owner || isAdmin)">
+                    <div class="skill-card-meta" style="color:#1e40af;font-size:12px;">
+                        <i class="fas fa-user-check"></i>
+                        <span>Allowed:</span>
+                        <template x-for="u in connectionFor(c.id).allowed_users" :key="u.id">
+                            <code style="margin-left:4px;" x-text="u.username || u.id"></code>
+                        </template>
+                    </div>
+                </template>
                 <div style="margin-top:8px;font-size:12px;color:var(--text-muted);">
                     <strong>Tools:</strong>
                     <template x-for="t in c.tools" :key="t.name">
@@ -75,9 +84,10 @@
                             <i class="fas fa-unlink"></i> Disconnect
                         </button>
                     </template>
-                    <template x-if="isAdmin && connectionFor(c.id) && connectionFor(c.id).is_owner && !connectionFor(c.id).is_shared">
-                        <button class="btn btn-sm" @click="shareConnection(connectionFor(c.id))">
-                            <i class="fas fa-users"></i> Share with team
+                    <template x-if="isAdmin && connectionFor(c.id) && connectionFor(c.id).is_owner">
+                        <button class="btn btn-sm" @click="openShare(connectionFor(c.id))">
+                            <i class="fas fa-users"></i>
+                            <span x-text="connectionFor(c.id).is_shared ? 'Manage sharing' : 'Share with team'"></span>
                         </button>
                     </template>
                     <template x-if="isAdmin && connectionFor(c.id) && connectionFor(c.id).is_owner && connectionFor(c.id).is_shared">
@@ -149,6 +159,72 @@
             </div>
             <div class="modal-footer">
                 <button class="btn" @click="showAuditModal=false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Share Modal — admin picks who can use a shared connection -->
+    <div class="modal-overlay" x-show="showShareModal" x-cloak x-transition.opacity
+         @click.self="showShareModal=false" @keydown.escape.window="showShareModal=false">
+        <div class="modal skill-modal" @click.stop>
+            <div class="modal-header">
+                <h3><i class="fas fa-users"></i> Share connection</h3>
+                <button @click="showShareModal=false" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">
+                    Pick who can use this connection. Members can call its tools and attach
+                    skills to it, but can't read or edit your credentials.
+                </p>
+                <div style="margin-bottom:14px;">
+                    <label style="display:block;margin-bottom:6px;cursor:pointer;">
+                        <input type="radio" value="everyone" x-model="shareAudience">
+                        Everyone in the workspace
+                    </label>
+                    <label style="display:block;cursor:pointer;">
+                        <input type="radio" value="selected" x-model="shareAudience">
+                        Only selected teammates
+                    </label>
+                </div>
+                <template x-if="shareAudience === 'selected'">
+                    <div>
+                        <input type="text" placeholder="Filter by username..."
+                               x-model="userFilter"
+                               class="skill-textarea"
+                               style="font-family:inherit;height:auto;padding:6px 10px;margin-bottom:8px;">
+                        <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;">
+                            <template x-if="usersLoading">
+                                <div style="color:var(--text-muted);font-size:13px;">Loading users...</div>
+                            </template>
+                            <template x-for="u in filteredUsers()" :key="u.id">
+                                <label style="display:block;padding:4px 2px;cursor:pointer;">
+                                    <input type="checkbox" :value="u.id"
+                                           :checked="shareSelectedIds.includes(u.id)"
+                                           @change="toggleShareUser(u.id)">
+                                    <span x-text="u.username"></span>
+                                    <span style="color:var(--text-muted);font-size:12px;"
+                                          x-text="' (' + u.role + ')'"></span>
+                                </label>
+                            </template>
+                            <template x-if="!usersLoading && filteredUsers().length === 0">
+                                <div style="color:var(--text-muted);font-size:13px;">No matches.</div>
+                            </template>
+                        </div>
+                        <div style="margin-top:6px;font-size:12px;color:var(--text-muted);">
+                            <span x-text="shareSelectedIds.length"></span> selected
+                            (the connection owner is always allowed).
+                        </div>
+                    </div>
+                </template>
+                <p x-show="shareError" style="margin-top:10px;color:#991b1b;font-size:13px;"
+                   x-text="shareError"></p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" @click="showShareModal=false">Cancel</button>
+                <button class="btn btn-primary" @click="saveShare()" :disabled="shareBusy">
+                    <i class="fas fa-save"></i>
+                    <span x-text="shareBusy ? 'Saving...' : 'Save sharing'"></span>
+                </button>
             </div>
         </div>
     </div>
@@ -242,6 +318,15 @@ function connectionsPage() {
         auditLoading: false,
         auditEvents: [],
         auditConnectionId: '',
+        showShareModal: false,
+        shareConnId: '',
+        shareAudience: 'everyone',
+        shareSelectedIds: [],
+        shareError: '',
+        shareBusy: false,
+        users: [],
+        usersLoading: false,
+        userFilter: '',
         async init() {
             const sp = new URLSearchParams(window.location.search);
             this.oauthOk = sp.get('oauth_ok') === '1';
@@ -320,18 +405,64 @@ function connectionsPage() {
             await this._fetch(`/api/connectors/connections/${connection.id}`, { method: 'DELETE' });
             await this.refresh();
         },
-        async shareConnection(connection) {
-            if (!confirm(
-                `Share your ${connection.connector_id} connection with everyone in this workspace?\n\n` +
-                'They will be able to call its tools and attach skills to it, but not read or edit your credentials.'
-            )) return;
+        shareSummary(connection) {
+            if (!connection || !connection.is_shared) return '';
+            const ownerNote = connection.is_owner ? '' : ' by your team admin';
+            if (connection.share_audience === 'selected') {
+                const n = (connection.allowed_users || []).length;
+                return `Shared${ownerNote} with ${n} teammate${n === 1 ? '' : 's'}`;
+            }
+            return connection.is_owner
+                ? 'Shared with your whole team'
+                : 'Shared by your team admin';
+        },
+        async openShare(connection) {
+            this.shareConnId = connection.id;
+            this.shareError = '';
+            this.userFilter = '';
+            const ids = connection.allowed_user_ids || [];
+            this.shareSelectedIds = ids.slice();
+            this.shareAudience = (connection.is_shared && ids.length > 0)
+                ? 'selected' : 'everyone';
+            this.showShareModal = true;
+            // Lazy-load users (admin endpoint).
+            if (this.users.length === 0 && !this.usersLoading) {
+                this.usersLoading = true;
+                try {
+                    const data = await this._fetch('/api/admin/users');
+                    this.users = (data.users || []).filter(u => u.is_active);
+                } catch (e) {
+                    this.shareError = 'Could not load users: ' + (e.message || e);
+                } finally { this.usersLoading = false; }
+            }
+        },
+        filteredUsers() {
+            const q = (this.userFilter || '').toLowerCase().trim();
+            if (!q) return this.users;
+            return this.users.filter(u =>
+                (u.username || '').toLowerCase().includes(q));
+        },
+        toggleShareUser(uid) {
+            const i = this.shareSelectedIds.indexOf(uid);
+            if (i >= 0) this.shareSelectedIds.splice(i, 1);
+            else this.shareSelectedIds.push(uid);
+        },
+        async saveShare() {
+            this.shareBusy = true;
+            this.shareError = '';
+            const body = this.shareAudience === 'selected'
+                ? { allowed_user_ids: this.shareSelectedIds }
+                : { allowed_user_ids: [] };
             try {
                 await this._fetch(
-                    `/api/connectors/connections/${connection.id}/share`,
-                    { method: 'POST', body: JSON.stringify({}) },
+                    `/api/connectors/connections/${this.shareConnId}/share`,
+                    { method: 'POST', body: JSON.stringify(body) },
                 );
+                this.showShareModal = false;
                 await this.refresh();
-            } catch (e) { alert('Share failed: ' + (e.message || e)); }
+            } catch (e) {
+                this.shareError = 'Save failed: ' + (e.message || e);
+            } finally { this.shareBusy = false; }
         },
         async unshareConnection(connection) {
             if (!confirm(`Stop sharing ${connection.connector_id} with the team?`)) return;

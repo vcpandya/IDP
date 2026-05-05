@@ -126,6 +126,10 @@ async def init_db():
                     sync_conn.execute(text(
                         "ALTER TABLE connections ADD COLUMN owner_org VARCHAR(100)"
                     ))
+                if "allowed_user_ids" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE connections ADD COLUMN allowed_user_ids JSON"
+                    ))
 
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
