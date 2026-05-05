@@ -119,7 +119,7 @@
         <div class="modal skill-modal" @click.stop>
             <div class="modal-header">
                 <h3><i class="fas fa-clipboard-list"></i> Shared connection audit log</h3>
-                <button @click="showAuditModal=false" class="modal-close">&times;</button>
+                <button @click="showAuditModal=false" class="modal-close" aria-label="Close audit log">&times;</button>
             </div>
             <div class="modal-body">
                 <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">
@@ -169,7 +169,7 @@
         <div class="modal skill-modal" @click.stop>
             <div class="modal-header">
                 <h3><i class="fas fa-users"></i> Share connection</h3>
-                <button @click="showShareModal=false" class="modal-close">&times;</button>
+                <button @click="showShareModal=false" class="modal-close" aria-label="Close share dialog">&times;</button>
             </div>
             <div class="modal-body">
                 <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;">
@@ -239,7 +239,7 @@
                        style="margin-right:8px;"></i>
                     Connect to <span x-text="currentConnector && currentConnector.display_name"></span>
                 </h3>
-                <button @click="showModal=false" class="modal-close">&times;</button>
+                <button @click="showModal=false" class="modal-close" aria-label="Close connect dialog">&times;</button>
             </div>
             <div class="modal-body">
                 <p style="color:var(--text-secondary);font-size:13px;margin:0 0 12px;"
