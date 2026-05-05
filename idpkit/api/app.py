@@ -197,20 +197,133 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS middleware
+    # CORS middleware — pinned to DEPLOYED_DOMAIN + CORS_EXTRA_ORIGINS in
+    # production. Wildcard ("*") is never combined with allow_credentials=True.
     import os
-    allowed_origins = os.getenv("ALLOWED_ORIGINS", "").split(",")
-    allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
+    from idpkit.api.deps import is_production
+
+    def _normalize_origin(o: str) -> str:
+        o = o.strip().rstrip("/")
+        if not o:
+            return ""
+        if not o.startswith(("http://", "https://")):
+            o = f"https://{o}"
+        return o
+
+    allowed_origins: list[str] = []
+    deployed_domain = os.getenv("DEPLOYED_DOMAIN", "").strip()
+    if deployed_domain:
+        norm = _normalize_origin(deployed_domain)
+        if norm:
+            allowed_origins.append(norm)
+    for src in (
+        os.getenv("CORS_EXTRA_ORIGINS", ""),
+        os.getenv("ALLOWED_ORIGINS", ""),
+    ):
+        for o in src.split(","):
+            n = _normalize_origin(o)
+            if n and n not in allowed_origins:
+                allowed_origins.append(n)
+
+    if not allowed_origins:
+        if is_production():
+            # Fail-closed: in production, no allowed origins means no
+            # cross-origin browser traffic (same-origin requests still work).
+            allow_credentials = False
+        else:
+            # Dev convenience: allow common local origins. We cannot use "*"
+            # together with allow_credentials=True (browsers reject it).
+            allowed_origins = [
+                "http://localhost:5000",
+                "http://127.0.0.1:5000",
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+            allow_credentials = True
+    else:
+        allow_credentials = True
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allowed_origins or ["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    from idpkit.api.deps import limiter, decode_token
+    from idpkit.api.deps import (
+        limiter,
+        decode_token,
+        CSRF_COOKIE_NAME,
+        CSRF_HEADER_NAME,
+        generate_csrf_token,
+    )
     app.state.limiter = limiter
+
+    # CSRF (double-submit cookie) — only enforced for cookie-authenticated
+    # state-changing requests. Bearer / API-key requests are exempt because
+    # they cannot be triggered by another origin's HTML form.
+    _CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+    # /api/auth/login and /register set the cookie themselves; CSRF would
+    # be a chicken-and-egg problem there. Logout via cookie is also exempt
+    # so an expired session can clear itself; the worst case is a cross-
+    # origin attacker logging the user out.
+    _CSRF_EXEMPT_PATHS = {
+        "/api/auth/login",
+        "/api/auth/register",
+        "/api/auth/logout",
+    }
+
+    @app.middleware("http")
+    async def csrf_protect(request: Request, call_next):
+        method = request.method.upper()
+        if method in _CSRF_SAFE_METHODS:
+            response = await call_next(request)
+        else:
+            path = request.url.path
+            has_bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
+            has_api_key = bool(request.headers.get("x-api-key"))
+            session_cookie = request.cookies.get("session_token")
+            if (
+                session_cookie
+                and not has_bearer
+                and not has_api_key
+                and path not in _CSRF_EXEMPT_PATHS
+                # Public e-sign signing API uses a one-time token in the URL
+                # path; there is no logged-in session to protect against.
+                and not path.startswith("/api/esign/sign/")
+            ):
+                cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
+                header_token = request.headers.get(CSRF_HEADER_NAME, "")
+                if not cookie_token or not header_token or cookie_token != header_token:
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": (
+                                "CSRF token missing or invalid. Send the "
+                                "csrftoken cookie's value back in the "
+                                "X-CSRF-Token header."
+                            )
+                        },
+                    )
+            response = await call_next(request)
+
+        # Issue a CSRF cookie for any authenticated browser session that
+        # doesn't yet have one. Non-HttpOnly so JS can read it; tied to the
+        # same Secure/SameSite=Lax policy as the session cookie.
+        if (
+            request.cookies.get("session_token")
+            and not request.cookies.get(CSRF_COOKIE_NAME)
+        ):
+            response.set_cookie(
+                key=CSRF_COOKIE_NAME,
+                value=generate_csrf_token(),
+                httponly=False,
+                secure=True,
+                samesite="lax",
+                max_age=60 * 60 * 24,
+            )
+        return response
 
     @app.middleware("http")
     async def inject_user_role(request: Request, call_next):

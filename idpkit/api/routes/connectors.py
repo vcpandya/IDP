@@ -423,6 +423,11 @@ def _oauth_redirect_uri(request: Request) -> str:
     explicit = os.environ.get("OAUTH_REDIRECT_BASE_URL", "").strip().rstrip("/")
     if explicit:
         return f"{explicit}/api/connectors/oauth/callback"
+    deployed = os.environ.get("DEPLOYED_DOMAIN", "").strip().rstrip("/")
+    if deployed:
+        if not deployed.startswith(("http://", "https://")):
+            deployed = f"https://{deployed}"
+        return f"{deployed}/api/connectors/oauth/callback"
     allowed = [
         h.strip().lower() for h in os.environ.get("OAUTH_ALLOWED_HOSTS", "").split(",")
         if h.strip()
