@@ -6,7 +6,9 @@ top-level exit-code contract that the nightly CI workflow relies on.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -176,3 +178,189 @@ def test_slack_payload_posted(tmp_path, monkeypatch):
     assert rc == 1
     assert sent["url"] == "https://hooks.example/abc"
     assert "GitHub" in sent["summary"]
+
+
+# ---------------------------------------------------------------------------
+# Dedup / state tests
+# ---------------------------------------------------------------------------
+
+
+_FAIL_SLACK_XML = """<?xml version='1.0'?>
+<testsuites><testsuite name='pytest'>
+  <testcase name='test_live_slack_list_channels'>
+    <failure message='401 Unauthorized'/>
+  </testcase>
+</testsuite></testsuites>"""
+
+_FAIL_SLACK_AND_NOTION_XML = """<?xml version='1.0'?>
+<testsuites><testsuite name='pytest'>
+  <testcase name='test_live_slack_list_channels'>
+    <failure message='401 Unauthorized'/>
+  </testcase>
+  <testcase name='test_live_notion_search_pages'>
+    <failure message='boom'/>
+  </testcase>
+</testsuite></testsuites>"""
+
+_CLEAN_XML = """<?xml version='1.0'?>
+<testsuites><testsuite name='pytest'>
+  <testcase name='test_live_slack_list_channels'/>
+</testsuite></testsuites>"""
+
+
+def _strip_channels(monkeypatch):
+    for var in (
+        "SLACK_WEBHOOK_URL",
+        "ALERT_EMAIL_TO",
+        "SMTP_HOST",
+        "PAGERDUTY_ROUTING_KEY",
+        "PYTEST_EXIT_CODE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def _capture_notifications(monkeypatch):
+    """Replace the Slack poster so we can assert exactly which alerts fired."""
+    sent: list[dict] = []
+
+    def fake_post(url, summary):
+        sent.append({"url": url, "summary": summary})
+        return True
+
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.example/abc")
+    monkeypatch.setattr(notify, "_post_slack", fake_post)
+    return sent
+
+
+def test_repeat_failure_within_window_is_silent(tmp_path, monkeypatch):
+    junit = _write(tmp_path, _FAIL_SLACK_XML)
+    state_file = tmp_path / "state.json"
+    _strip_channels(monkeypatch)
+    sent = _capture_notifications(monkeypatch)
+
+    # First run: alerts.
+    assert notify.main(
+        ["notify_live_failures.py", str(junit), "--state-file", str(state_file)]
+    ) == 1
+    assert len(sent) == 1 and "failed" in sent[0]["summary"]
+
+    # Second run, same day, same failure: still exits 1 (CI step stays red)
+    # but no new alert is sent.
+    assert notify.main(
+        ["notify_live_failures.py", str(junit), "--state-file", str(state_file)]
+    ) == 1
+    assert len(sent) == 1, f"expected no extra alert, got: {sent}"
+
+    state = json.loads(state_file.read_text())
+    assert state["connectors"]["Slack"]["status"] == "failing"
+
+
+def test_reminder_fires_after_window(tmp_path, monkeypatch):
+    junit = _write(tmp_path, _FAIL_SLACK_XML)
+    state_file = tmp_path / "state.json"
+    _strip_channels(monkeypatch)
+    sent = _capture_notifications(monkeypatch)
+
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    times = iter([base, base + timedelta(days=8)])
+    monkeypatch.setattr(notify, "_now", lambda: next(times))
+
+    assert notify.main(
+        ["notify_live_failures.py", str(junit),
+         "--state-file", str(state_file), "--reminder-days", "7"]
+    ) == 1
+    assert notify.main(
+        ["notify_live_failures.py", str(junit),
+         "--state-file", str(state_file), "--reminder-days", "7"]
+    ) == 1
+    assert len(sent) == 2
+    assert "Reminder" in sent[1]["summary"]
+
+
+def test_recovery_alert_fires_when_connector_goes_green(tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    _strip_channels(monkeypatch)
+    sent = _capture_notifications(monkeypatch)
+
+    failing = _write(tmp_path, _FAIL_SLACK_XML)
+    assert notify.main(
+        ["notify_live_failures.py", str(failing), "--state-file", str(state_file)]
+    ) == 1
+    assert len(sent) == 1
+
+    clean = tmp_path / "clean.xml"
+    clean.write_text(_CLEAN_XML)
+    rc = notify.main(
+        ["notify_live_failures.py", str(clean), "--state-file", str(state_file)]
+    )
+    assert rc == 0  # pure recovery → green CI step
+    assert len(sent) == 2
+    assert "recovered" in sent[1]["summary"].lower()
+    assert "Slack" in sent[1]["summary"]
+
+    # State should no longer track Slack as failing.
+    state = json.loads(state_file.read_text())
+    assert "Slack" not in state["connectors"]
+
+
+def test_new_connector_failing_alongside_known_failure_alerts(tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    _strip_channels(monkeypatch)
+    sent = _capture_notifications(monkeypatch)
+
+    first = _write(tmp_path, _FAIL_SLACK_XML)
+    assert notify.main(
+        ["notify_live_failures.py", str(first), "--state-file", str(state_file)]
+    ) == 1
+
+    second = tmp_path / "second.xml"
+    second.write_text(_FAIL_SLACK_AND_NOTION_XML)
+    assert notify.main(
+        ["notify_live_failures.py", str(second), "--state-file", str(state_file)]
+    ) == 1
+    # Two alerts total: initial Slack, then a new one when Notion joins.
+    assert len(sent) == 2
+    assert "Notion" in sent[1]["summary"]
+    # And it's framed as a new failure, not a reminder.
+    assert "Reminder" not in sent[1]["summary"]
+
+
+def test_pagerduty_resolve_sent_on_recovery(tmp_path, monkeypatch):
+    state_file = tmp_path / "state.json"
+    _strip_channels(monkeypatch)
+
+    events: list[dict] = []
+
+    def fake_pd(routing_key, *, action, dedup_key, summary, custom_details=None):
+        events.append({"action": action, "dedup_key": dedup_key})
+        return True
+
+    monkeypatch.setenv("PAGERDUTY_ROUTING_KEY", "pd-key")
+    monkeypatch.setattr(notify, "_post_pagerduty_event", fake_pd)
+
+    failing = _write(tmp_path, _FAIL_SLACK_XML)
+    notify.main(
+        ["notify_live_failures.py", str(failing), "--state-file", str(state_file)]
+    )
+    clean = tmp_path / "clean.xml"
+    clean.write_text(_CLEAN_XML)
+    notify.main(
+        ["notify_live_failures.py", str(clean), "--state-file", str(state_file)]
+    )
+
+    actions = [e["action"] for e in events]
+    assert actions == ["trigger", "resolve"]
+    # Same dedup_key both times so PD closes the right incident.
+    assert events[0]["dedup_key"] == events[1]["dedup_key"]
+    assert "slack" in events[0]["dedup_key"]
+
+
+def test_no_state_file_keeps_legacy_every_run_alerts(tmp_path, monkeypatch):
+    junit = _write(tmp_path, _FAIL_SLACK_XML)
+    _strip_channels(monkeypatch)
+    sent = _capture_notifications(monkeypatch)
+
+    # No --state-file and no NOTIFY_STATE_FILE env: every run alerts, as before.
+    assert notify.main(["notify_live_failures.py", str(junit)]) == 1
+    assert notify.main(["notify_live_failures.py", str(junit)]) == 1
+    assert len(sent) == 2
