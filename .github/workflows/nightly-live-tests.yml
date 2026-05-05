@@ -1,0 +1,83 @@
+name: Nightly live connector tests
+
+# Runs the ``@pytest.mark.live`` suite against real third-party sandboxes
+# and pings the team if any connector regresses. A clean run is silent —
+# only failures produce a notification, so the channel stays low-noise.
+
+on:
+  schedule:
+    # 07:00 UTC daily (~midnight PT). Adjust to taste.
+    - cron: "0 7 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  live-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Sandbox credentials for each connector. Configure these as repo
+      # secrets; missing ones simply skip that connector's live test
+      # (see tests/conftest.py).
+      IDPKIT_LIVE_SLACK_BOT_TOKEN: ${{ secrets.IDPKIT_LIVE_SLACK_BOT_TOKEN }}
+      IDPKIT_LIVE_NOTION_TOKEN: ${{ secrets.IDPKIT_LIVE_NOTION_TOKEN }}
+      IDPKIT_LIVE_GITHUB_TOKEN: ${{ secrets.IDPKIT_LIVE_GITHUB_TOKEN }}
+      IDPKIT_LIVE_LINEAR_API_KEY: ${{ secrets.IDPKIT_LIVE_LINEAR_API_KEY }}
+      IDPKIT_LIVE_HUBSPOT_TOKEN: ${{ secrets.IDPKIT_LIVE_HUBSPOT_TOKEN }}
+      IDPKIT_LIVE_DROPBOX_TOKEN: ${{ secrets.IDPKIT_LIVE_DROPBOX_TOKEN }}
+      IDPKIT_LIVE_JIRA_SITE: ${{ secrets.IDPKIT_LIVE_JIRA_SITE }}
+      IDPKIT_LIVE_JIRA_EMAIL: ${{ secrets.IDPKIT_LIVE_JIRA_EMAIL }}
+      IDPKIT_LIVE_JIRA_API_TOKEN: ${{ secrets.IDPKIT_LIVE_JIRA_API_TOKEN }}
+      IDPKIT_LIVE_S3_ACCESS_KEY_ID: ${{ secrets.IDPKIT_LIVE_S3_ACCESS_KEY_ID }}
+      IDPKIT_LIVE_S3_SECRET_ACCESS_KEY: ${{ secrets.IDPKIT_LIVE_S3_SECRET_ACCESS_KEY }}
+      IDPKIT_LIVE_S3_BUCKET: ${{ secrets.IDPKIT_LIVE_S3_BUCKET }}
+      IDPKIT_LIVE_S3_REGION: ${{ secrets.IDPKIT_LIVE_S3_REGION }}
+      IDPKIT_LIVE_GOOGLE_ACCESS_TOKEN: ${{ secrets.IDPKIT_LIVE_GOOGLE_ACCESS_TOKEN }}
+      IDPKIT_LIVE_GOOGLE_REFRESH_TOKEN: ${{ secrets.IDPKIT_LIVE_GOOGLE_REFRESH_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+          pip install pytest pytest-asyncio
+
+      - name: Run live connector tests
+        id: pytest
+        # We capture pytest's real exit code into ``PYTEST_EXIT_CODE`` (and
+        # exit 0 here) so the notify step still runs. The notifier re-fails
+        # the job if pytest failed for *any* reason — including collection
+        # or internal errors that don't show up as parsed testcase failures.
+        run: |
+          set +e
+          pytest -m live --junitxml=live-results.xml -q
+          echo "PYTEST_EXIT_CODE=$?" >> "$GITHUB_ENV"
+          exit 0
+
+      - name: Upload junit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-results
+          path: live-results.xml
+          if-no-files-found: ignore
+
+      - name: Notify on failure (silent on green)
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.LIVE_TESTS_SLACK_WEBHOOK_URL }}
+          PAGERDUTY_ROUTING_KEY: ${{ secrets.LIVE_TESTS_PAGERDUTY_ROUTING_KEY }}
+          ALERT_EMAIL_TO: ${{ secrets.LIVE_TESTS_ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM: ${{ secrets.LIVE_TESTS_ALERT_EMAIL_FROM }}
+          SMTP_HOST: ${{ secrets.LIVE_TESTS_SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.LIVE_TESTS_SMTP_PORT }}
+          SMTP_USER: ${{ secrets.LIVE_TESTS_SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.LIVE_TESTS_SMTP_PASSWORD }}
+        run: python scripts/notify_live_failures.py live-results.xml
