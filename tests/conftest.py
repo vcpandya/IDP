@@ -35,6 +35,23 @@ def _env(_tmp_workspace):
     os.environ["IDP_ADMIN_PASSWORD"] = "test-admin-pw"
     os.environ["ESIGN_EXPIRY_DAYS"] = "30"
     os.environ.setdefault("OBJECT_STORAGE_BUCKET", "")
+    # Force dev mode for the test suite so production fail-closed paths
+    # (CORS, SECRET_KEY) don't engage. Tests that need to exercise the
+    # production paths set DEPLOYED_DOMAIN explicitly via monkeypatch.
+    os.environ.pop("DEPLOYED_DOMAIN", None)
+    os.environ.pop("ENVIRONMENT", None)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """Reset the SlowAPI in-memory bucket between tests so the per-IP
+    login/register rate limit (5/min) doesn't bleed across tests."""
+    try:
+        from idpkit.api.deps import limiter
+        limiter.reset()
+    except Exception:
+        pass
     yield
 
 

@@ -56,14 +56,59 @@ import logging as _logging
 
 _deps_logger = _logging.getLogger(__name__)
 
-_secret = os.getenv("SESSION_SECRET") or os.getenv("IDP_SECRET_KEY")
-if not _secret:
-    _secret = secrets.token_urlsafe(64)
+
+def is_production() -> bool:
+    """Heuristic: are we running in a production deployment?
+
+    We treat the presence of ``DEPLOYED_DOMAIN`` (set automatically by Replit
+    deployments) or ``ENVIRONMENT=production`` as the signal. Anything else
+    (local dev, CI tests) is treated as dev so the ephemeral-secret fallback
+    keeps working.
+    """
+    if os.getenv("ENVIRONMENT", "").strip().lower() == "production":
+        return True
+    if os.getenv("DEPLOYED_DOMAIN", "").strip():
+        return True
+    return False
+
+
+def _load_secret_key() -> str:
+    """Resolve SECRET_KEY from env. Fail-closed in production, ephemeral in dev."""
+    secret = (
+        os.getenv("SECRET_KEY")
+        or os.getenv("SESSION_SECRET")
+        or os.getenv("IDP_SECRET_KEY")
+    )
+    if secret:
+        return secret
+    if is_production():
+        raise RuntimeError(
+            "SECRET_KEY env var is required in production deployments "
+            "(detected via DEPLOYED_DOMAIN or ENVIRONMENT=production). "
+            "Without it the Fernet key used to encrypt connector "
+            "credentials would be regenerated on every restart, "
+            "making every stored connection unreadable. "
+            "Set SECRET_KEY to a stable, random value of at least 32 "
+            "characters in your deployment secrets."
+        )
     _deps_logger.warning(
-        "No SESSION_SECRET env var set — using an ephemeral random key. "
+        "No SECRET_KEY env var set — using an ephemeral random key. "
         "Sessions will not survive server restarts."
     )
-SECRET_KEY = _secret
+    return secrets.token_urlsafe(64)
+
+
+SECRET_KEY = _load_secret_key()
+
+
+# --- CSRF (double-submit cookie) ---
+
+CSRF_COOKIE_NAME = "csrftoken"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+
+
+def generate_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 

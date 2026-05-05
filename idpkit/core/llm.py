@@ -117,8 +117,7 @@ class LLMClient:
             resolved_key = _resolve_api_key_for_model(model)
             if resolved_key:
                 completion_kwargs["api_key"] = resolved_key
-                logger.debug("Resolved API key for model %s: %s...%s (len=%d)",
-                             model, resolved_key[:4], resolved_key[-4:], len(resolved_key))
+                logger.debug("Resolved API key for model %s (len=%d)", model, len(resolved_key))
             else:
                 logger.debug("No API key resolved for model %s, relying on LiteLLM env defaults", model)
         if self.api_base:
