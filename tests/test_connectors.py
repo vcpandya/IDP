@@ -951,6 +951,142 @@ async def test_non_admin_sees_shared_connection_and_cannot_disconnect(auth_clien
 
 
 # ---------------------------------------------------------------------------
+# Selected-user shared connections (Task #15)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_share_with_selected_users_allowlist(auth_client, client, monkeypatch):
+    """Sharing with an allowlist limits visibility & runtime resolution to
+    the listed users (plus the owner). Users not on the list neither see
+    the connection in /api/connectors/connections nor resolve it via the
+    runtime, while admins still see it for management.
+    """
+    from idpkit.api.deps import hash_password
+    from idpkit.connectors.impl import slack as slack_mod
+    from idpkit.connectors.runtime import (
+        get_active_connection, list_active_connections,
+    )
+    from idpkit.db.models import User
+    from idpkit.db.session import async_session
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    # Two regular members so we can include one and exclude the other.
+    async with async_session() as db:
+        included = User(
+            username="picked-member", hashed_password=hash_password("pw"),
+            role="user", is_active=1,
+        )
+        excluded = User(
+            username="other-member", hashed_password=hash_password("pw"),
+            role="user", is_active=1,
+        )
+        db.add_all([included, excluded])
+        await db.commit()
+        await db.refresh(included)
+        await db.refresh(excluded)
+        included_id = included.id
+        excluded_id = excluded.id
+
+    # Admin connects + shares with only ``included``.
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-allowlist"}},
+    )
+    assert res.status_code == 200, res.text
+    conn_id = res.json()["id"]
+
+    shared = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": [included_id]},
+    )
+    assert shared.status_code == 200, shared.text
+    body = shared.json()
+    assert body["scope"] == "org"
+    assert body["share_audience"] == "selected"
+    assert body["allowed_user_ids"] == [included_id]
+    assert body["allowed_users"][0]["username"] == "picked-member"
+
+    # Unknown ids are rejected.
+    bad = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": ["does-not-exist"]},
+    )
+    assert bad.status_code == 400
+
+    async def _login(username: str) -> dict:
+        r = await client.post(
+            "/api/auth/login", json={"username": username, "password": "pw"},
+        )
+        assert r.status_code == 200, r.text
+        return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    incl_h = await _login("picked-member")
+    excl_h = await _login("other-member")
+
+    # Included member sees + resolves the connection.
+    seen = (await client.get(
+        "/api/connectors/connections", headers=incl_h,
+    )).json()["connections"]
+    assert any(c["id"] == conn_id for c in seen)
+
+    # Excluded member must NOT see it.
+    not_seen = (await client.get(
+        "/api/connectors/connections", headers=excl_h,
+    )).json()["connections"]
+    assert all(c["id"] != conn_id for c in not_seen)
+
+    async with async_session() as db:
+        # Runtime resolution honors the allowlist.
+        assert (await get_active_connection(db, included_id, "slack")).id == conn_id
+        assert await get_active_connection(db, excluded_id, "slack") is None
+        # And list_active_connections filters too.
+        ids_in = {c.id for c in await list_active_connections(db, included_id)}
+        ids_ex = {c.id for c in await list_active_connections(db, excluded_id)}
+        assert conn_id in ids_in
+        assert conn_id not in ids_ex
+
+    # Admin still sees the connection in their listing for management,
+    # with the allowlist usernames resolved.
+    admin_seen = (await auth_client.get("/api/connectors/connections")).json()
+    mine = next(c for c in admin_seen["connections"] if c["id"] == conn_id)
+    assert mine["share_audience"] == "selected"
+    assert {u["username"] for u in mine["allowed_users"]} == {"picked-member"}
+
+    # Posting /share with no body (omitted allowed_user_ids) preserves the
+    # existing allowlist — useful when a caller only wants to update
+    # owner_org without touching access.
+    preserved = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share", json={},
+    )
+    assert preserved.status_code == 200
+    assert preserved.json()["allowed_user_ids"] == [included_id]
+
+    # Empty list switches back to org-wide; excluded member can now resolve.
+    back = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": []},
+    )
+    assert back.status_code == 200
+    assert back.json()["share_audience"] == "everyone"
+    async with async_session() as db:
+        assert (await get_active_connection(db, excluded_id, "slack")).id == conn_id
+
+    # Unshare clears the allowlist for next time.
+    unshared = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/unshare"
+    )
+    assert unshared.status_code == 200
+    assert unshared.json()["allowed_user_ids"] == []
+    assert unshared.json()["share_audience"] == "private"
+
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+# ---------------------------------------------------------------------------
 # Live integration tests (Task #12)
 # ---------------------------------------------------------------------------
 #

@@ -23,13 +23,32 @@ from idpkit.db.models import Connection, ConnectionAuditLog, utcnow
 logger = logging.getLogger(__name__)
 
 
+def _user_in_allowlist(connection: Connection, user_id: str) -> bool:
+    """True if ``user_id`` is permitted to use a shared connection.
+
+    The owner is always allowed. When ``allowed_user_ids`` is None or empty
+    the connection is shared with the entire org (legacy behavior). When it
+    contains user ids, only those users (plus the owner) may resolve it.
+    """
+    if connection.owner_id == user_id:
+        return True
+    allow = connection.allowed_user_ids
+    if not allow:  # None or [] → org-wide share
+        return True
+    try:
+        return user_id in allow
+    except TypeError:
+        return False
+
+
 async def list_active_connections(db: AsyncSession, user_id: str) -> list[Connection]:
     """Return active connections visible to ``user_id``.
 
     Includes the user's own connections plus any org-shared (``scope='org'``)
-    connections — so a non-admin can attach skills to a connection an admin
-    has shared with the team. Per-(user, connector) we keep at most one row,
-    preferring the user's own connection when both exist.
+    connections whose allowlist (if any) includes the user — so a non-admin
+    can attach skills to a connection an admin has shared with them. Per
+    (user, connector) we keep at most one row, preferring the user's own
+    connection when both exist.
     """
     rows = (await db.execute(
         select(Connection).where(
@@ -40,8 +59,9 @@ async def list_active_connections(db: AsyncSession, user_id: str) -> list[Connec
             Connection.status == "active",
         ).order_by(Connection.connector_id, Connection.created_at.desc())
     )).scalars().all()
+    visible = [r for r in rows if r.scope != "org" or _user_in_allowlist(r, user_id)]
     by_connector: dict[str, Connection] = {}
-    for row in rows:
+    for row in visible:
         existing = by_connector.get(row.connector_id)
         if existing is None:
             by_connector[row.connector_id] = row
@@ -70,13 +90,17 @@ async def get_active_connection(
     )).scalars().first()
     if own is not None:
         return own
-    return (await db.execute(
+    candidates = (await db.execute(
         select(Connection).where(
             Connection.scope == "org",
             Connection.connector_id == connector_id,
             Connection.status == "active",
         ).order_by(Connection.created_at.desc())
-    )).scalars().first()
+    )).scalars().all()
+    for cand in candidates:
+        if _user_in_allowlist(cand, user_id):
+            return cand
+    return None
 
 
 async def _record_shared_usage(

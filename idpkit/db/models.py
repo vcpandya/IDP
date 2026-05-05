@@ -368,6 +368,11 @@ class Connection(Base):
     # When scope=="org", this records the org/tenant identifier the connection
     # is shared with. Single-tenant deployments use the literal "default".
     owner_org = Column(String(100), nullable=True, index=True)
+    # When scope=="org" and ``allowed_user_ids`` is a non-empty list, only the
+    # owner plus those users may resolve this shared connection at runtime.
+    # When None or [], the connection is shared with everyone in ``owner_org``
+    # (the original org-wide behavior — preserved for backward compatibility).
+    allowed_user_ids = Column(JSON, nullable=True)
 
     __table_args__ = (
         Index("ix_connections_owner_connector", "owner_id", "connector_id"),

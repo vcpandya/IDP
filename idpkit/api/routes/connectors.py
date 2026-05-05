@@ -40,8 +40,14 @@ def _is_admin(user: User) -> bool:
     return user.role in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value)
 
 
-def _serialize_connection(row: Connection, viewer: User) -> dict:
+def _serialize_connection(
+    row: Connection,
+    viewer: User,
+    user_names: Optional[dict[str, str]] = None,
+) -> dict:
     is_owner = row.owner_id == viewer.id
+    allow_ids = list(row.allowed_user_ids or [])
+    names = user_names or {}
     return {
         "id": row.id,
         "connector_id": row.connector_id,
@@ -52,6 +58,15 @@ def _serialize_connection(row: Connection, viewer: User) -> dict:
         "is_shared": (row.scope == "org"),
         "is_owner": is_owner,
         "owner_org": row.owner_org,
+        # Empty list means "shared with everyone" (legacy org-wide).
+        "allowed_user_ids": allow_ids,
+        "allowed_users": [
+            {"id": uid, "username": names.get(uid)} for uid in allow_ids
+        ],
+        "share_audience": (
+            "private" if row.scope != "org"
+            else ("everyone" if not allow_ids else "selected")
+        ),
         "last_checked_at": row.last_checked_at.isoformat() if row.last_checked_at else None,
         "last_error": row.last_error,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -84,7 +99,31 @@ async def list_user_connections(
             _or(Connection.owner_id == user.id, Connection.scope == "org"),
         ).order_by(Connection.created_at.desc())
     )).scalars().all()
-    return {"connections": [_serialize_connection(r, user) for r in rows]}
+    # Filter shared connections by their allowlist: a non-owner, non-admin
+    # member should only see shared connections they're entitled to use.
+    # Admins continue to see *all* shared connections so they can manage them.
+    visible: list[Connection] = []
+    for r in rows:
+        if r.owner_id == user.id or r.scope != "org":
+            visible.append(r)
+            continue
+        allow = r.allowed_user_ids or []
+        if not allow or user.id in allow or _is_admin(user):
+            visible.append(r)
+    # Resolve usernames for any allowed_user_ids referenced (admins/owners
+    # see this in the UI). One round trip total.
+    needed_ids: set[str] = set()
+    for r in visible:
+        if r.scope == "org" and (r.owner_id == user.id or _is_admin(user)):
+            for uid in (r.allowed_user_ids or []):
+                needed_ids.add(uid)
+    name_by_id: dict[str, str] = {}
+    if needed_ids:
+        users = (await db.execute(
+            select(User.id, User.username).where(User.id.in_(needed_ids))
+        )).all()
+        name_by_id = {uid: uname for uid, uname in users}
+    return {"connections": [_serialize_connection(r, user, name_by_id) for r in visible]}
 
 
 class CredentialBody(BaseModel):
@@ -230,11 +269,26 @@ async def disconnect(
 
 class ShareBody(BaseModel):
     owner_org: Optional[str] = None  # tenant identifier; defaults to "default"
+    # Optional allowlist of user ids.
+    #   - Field omitted (None) → preserve any existing allowlist (lets a
+    #     caller update only ``owner_org`` without touching access).
+    #   - Empty list ([])      → reset to org-wide sharing (everyone in the org).
+    #   - Non-empty list       → only those users (plus the owner) may resolve it.
+    allowed_user_ids: Optional[list[str]] = None
+
+
+async def _resolve_user_names(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
+    if not user_ids:
+        return {}
+    rows = (await db.execute(
+        select(User.id, User.username).where(User.id.in_(user_ids))
+    )).all()
+    return {uid: uname for uid, uname in rows}
 
 
 @router.post(
     "/connections/{connection_id}/share",
-    summary="Admin: share a connection org-wide",
+    summary="Admin: share a connection org-wide or with selected users",
 )
 async def share_connection(
     connection_id: str,
@@ -255,9 +309,30 @@ async def share_connection(
         raise HTTPException(403, "Only the connection owner can share it")
     row.scope = "org"
     row.owner_org = (body.owner_org or row.owner_org or "default")[:100]
+    # Validate the allowlist: every id must point at a real, active user.
+    # The owner is always implicitly allowed, so we drop their id if present.
+    if body.allowed_user_ids is not None:
+        cleaned = sorted({
+            uid for uid in body.allowed_user_ids
+            if uid and uid != row.owner_id
+        })
+        if cleaned:
+            existing = (await db.execute(
+                select(User.id).where(User.id.in_(cleaned))
+            )).scalars().all()
+            unknown = sorted(set(cleaned) - set(existing))
+            if unknown:
+                raise HTTPException(
+                    400, f"Unknown user id(s) in allowlist: {', '.join(unknown)}",
+                )
+            row.allowed_user_ids = cleaned
+        else:
+            # Explicit empty list → fall back to org-wide.
+            row.allowed_user_ids = None
     await db.commit()
     await db.refresh(row)
-    return _serialize_connection(row, user)
+    names = await _resolve_user_names(db, row.allowed_user_ids or [])
+    return _serialize_connection(row, user, names)
 
 
 @router.post(
@@ -279,6 +354,8 @@ async def unshare_connection(
     if row.owner_id != user.id:
         raise HTTPException(403, "Only the connection owner can unshare it")
     row.scope = "private"
+    # Drop any per-user allowlist so a future re-share starts fresh.
+    row.allowed_user_ids = None
     await db.commit()
     await db.refresh(row)
     return _serialize_connection(row, user)
