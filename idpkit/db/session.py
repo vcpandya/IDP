@@ -109,12 +109,35 @@ async def init_db():
                 if "requirements" not in cols:
                     sync_conn.execute(text("ALTER TABLE skills ADD COLUMN requirements JSON"))
 
+        def _migrate_connections(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "connections" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("connections")}
+                if "scope" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE connections ADD COLUMN scope VARCHAR(20) "
+                        "NOT NULL DEFAULT 'private'"
+                    ))
+                    sync_conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_connections_scope_connector "
+                        "ON connections (scope, connector_id)"
+                    ))
+                if "owner_org" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE connections ADD COLUMN owner_org VARCHAR(100)"
+                    ))
+                if "allowed_user_ids" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE connections ADD COLUMN allowed_user_ids JSON"
+                    ))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(_migrate_users)
         await conn.run_sync(_migrate_jobs)
         await conn.run_sync(_migrate_esign)
         await conn.run_sync(_migrate_skills)
+        await conn.run_sync(_migrate_connections)
         await conn.run_sync(Base.metadata.create_all)
 
 

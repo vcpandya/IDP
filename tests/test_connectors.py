@@ -7,8 +7,12 @@ respective per-connector integration tests once real creds are available).
 from __future__ import annotations
 
 import os
+import time as _time
+import uuid as _uuid
 
 import pytest
+
+from idpkit.connectors.http import request as _http_request
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +209,118 @@ def test_oauth_redirect_uri_falls_back_to_request_in_dev(monkeypatch):
     )
     uri = _oauth_redirect_uri(fake_req)
     assert uri == "http://localhost:5000/api/connectors/oauth/callback"
+
+
+# ---------------------------------------------------------------------------
+# Pluggable OAuth state store
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_db_roundtrip(_env, monkeypatch):
+    """Default DB-backed store: put then pop returns the payload exactly once."""
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    from idpkit.connectors import oauth as oauth_mod
+    from idpkit.db.session import async_session, init_db
+
+    await init_db()
+    oauth_mod.reset_state_store()
+    assert isinstance(oauth_mod.get_state_store(), oauth_mod.DBOAuthStateStore)
+
+    async with async_session() as db:
+        token = await oauth_mod.new_state(db, {"user_id": "u1", "connector_id": "google"})
+    async with async_session() as db:
+        payload = await oauth_mod.consume_state(db, token)
+    assert payload == {"user_id": "u1", "connector_id": "google"}
+    # Second consume must return None (single-use).
+    async with async_session() as db:
+        assert await oauth_mod.consume_state(db, token) is None
+    oauth_mod.reset_state_store()
+
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_uses_redis_when_configured(_env, monkeypatch):
+    """When REDIS_URL is set and the redis package is importable, the Redis
+    backend is selected and a put/pop round-trip works without touching the DB."""
+    from idpkit.connectors import oauth as oauth_mod
+
+    class _FakeRedis:
+        def __init__(self):
+            self.store: dict[str, tuple[str, int | None]] = {}
+            self.set_calls = 0
+            self.getdel_calls = 0
+
+        async def set(self, key, value, ex=None):
+            self.set_calls += 1
+            self.store[key] = (value, ex)
+
+        async def getdel(self, key):
+            self.getdel_calls += 1
+            entry = self.store.pop(key, None)
+            return None if entry is None else entry[0]
+
+    fake = _FakeRedis()
+
+    import sys
+    import types
+    fake_redis_pkg = types.ModuleType("redis")
+    fake_async_mod = types.ModuleType("redis.asyncio")
+
+    def _from_url(url, decode_responses=True):
+        fake._url = url
+        fake._decode_responses = decode_responses
+        return fake
+
+    fake_async_mod.from_url = _from_url
+    fake_redis_pkg.asyncio = fake_async_mod
+    monkeypatch.setitem(sys.modules, "redis", fake_redis_pkg)
+    monkeypatch.setitem(sys.modules, "redis.asyncio", fake_async_mod)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    oauth_mod.reset_state_store()
+    store = oauth_mod.get_state_store()
+    assert isinstance(store, oauth_mod.RedisOAuthStateStore)
+
+    # ``db`` is unused by the Redis backend — pass None to prove it.
+    token = await oauth_mod.new_state(None, {"user_id": "u2", "connector_id": "linear"})
+    assert fake.set_calls == 1
+    # TTL must be applied so Redis expires the key for us (no manual prune).
+    (_, ttl), = list(fake.store.values())
+    assert ttl == int(oauth_mod.STATE_TTL.total_seconds())
+
+    payload = await oauth_mod.consume_state(None, token)
+    assert payload == {"user_id": "u2", "connector_id": "linear"}
+    # Single-use: a second pop returns None.
+    assert await oauth_mod.consume_state(None, token) is None
+
+    oauth_mod.reset_state_store()
+    monkeypatch.delenv("REDIS_URL", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_oauth_state_store_falls_back_when_redis_missing(_env, monkeypatch):
+    """If REDIS_URL is set but the redis package can't be imported, the store
+    silently falls back to the DB backend rather than crashing on startup."""
+    from idpkit.connectors import oauth as oauth_mod
+
+    import builtins
+    real_import = builtins.__import__
+
+    def _blocked_import(name, *args, **kwargs):
+        if name == "redis" or name.startswith("redis."):
+            raise ImportError("simulated missing redis")
+        return real_import(name, *args, **kwargs)
+
+    import sys
+    monkeypatch.delitem(sys.modules, "redis", raising=False)
+    monkeypatch.delitem(sys.modules, "redis.asyncio", raising=False)
+    monkeypatch.setattr(builtins, "__import__", _blocked_import)
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+
+    oauth_mod.reset_state_store()
+    assert isinstance(oauth_mod.get_state_store(), oauth_mod.DBOAuthStateStore)
+
+    oauth_mod.reset_state_store()
+    monkeypatch.delenv("REDIS_URL", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +553,144 @@ async def test_oauth_start_requires_oauth_connector(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_oauth_start_sets_nonce_cookie_and_callback_requires_it(
+    auth_client, monkeypatch,
+):
+    """The /oauth/start endpoint must set a per-flow nonce cookie, and
+    /oauth/callback must reject when the cookie is absent or doesn't match
+    the state row — even if the attacker has a valid state token."""
+    from idpkit.connectors.oauth import OAUTH_NONCE_COOKIE
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "tok", "scope": "x"}
+
+    fake = Connector(
+        id="fake_oauth_state",
+        display_name="Fake OAuth State",
+        description="t",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_state_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=lambda a, c: None,
+        )],
+        oauth_authorize_url_builder=lambda state, redirect_uri: (
+            f"https://provider.example/auth?state={state}&redirect_uri={redirect_uri}"
+        ),
+        oauth_exchange=_fake_exchange,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        # Start the flow → cookie must be set, state extractable from URL.
+        res = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        assert res.status_code == 200, res.text
+        assert OAUTH_NONCE_COOKIE in res.cookies, res.headers.get("set-cookie")
+        # Cookie should be HttpOnly and path-scoped to the callback.
+        set_cookie = res.headers.get("set-cookie", "")
+        assert "httponly" in set_cookie.lower()
+        assert "/api/connectors/oauth/callback" in set_cookie.lower()
+
+        nonce_value = res.cookies[OAUTH_NONCE_COOKIE]
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(res.json()["authorize_url"]).query)
+        state_token = qs["state"][0]
+
+        # Drop the cookie httpx auto-stored so the next request behaves like
+        # an attacker who only stole the state token.
+        auth_client.cookies.delete(OAUTH_NONCE_COOKIE)
+
+        # Callback WITHOUT the nonce cookie must be rejected.
+        bad = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state_token},
+            follow_redirects=False,
+        )
+        assert bad.status_code == 400
+        assert "invalid or expired state token" in bad.text.lower()
+
+        # That failed callback must have *consumed* the state row, so even a
+        # subsequent request that presents the right cookie can't redeem it.
+        replay = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state_token},
+            cookies={OAUTH_NONCE_COOKIE: nonce_value},
+            follow_redirects=False,
+        )
+        assert replay.status_code == 400
+
+        # And a fresh flow with a *wrong* cookie value is also rejected.
+        res2 = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        state2 = parse_qs(urlparse(res2.json()["authorize_url"]).query)["state"][0]
+        auth_client.cookies.delete(OAUTH_NONCE_COOKIE)
+        wrong = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state2},
+            cookies={OAUTH_NONCE_COOKIE: "tampered-value"},
+            follow_redirects=False,
+        )
+        assert wrong.status_code == 400
+        assert "invalid or expired state token" in wrong.text.lower()
+    finally:
+        REGISTRY.pop(fake.id, None)
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_succeeds_with_matching_nonce_cookie(
+    auth_client, monkeypatch,
+):
+    """End-to-end: when the browser presents both the state and its bound
+    nonce cookie, the callback completes and persists the connection."""
+    from idpkit.connectors.oauth import OAUTH_NONCE_COOKIE
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+
+    async def _fake_exchange(code, redirect_uri):
+        assert code == "the-code"
+        return {"access_token": "good-tok", "scope": "read"}
+
+    fake = Connector(
+        id="fake_oauth_ok",
+        display_name="Fake OAuth OK",
+        description="t",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_ok_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=lambda a, c: None,
+        )],
+        oauth_authorize_url_builder=lambda state, redirect_uri: (
+            f"https://provider.example/auth?state={state}"
+        ),
+        oauth_exchange=_fake_exchange,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        res = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        assert res.status_code == 200
+        from urllib.parse import urlparse, parse_qs
+        state_token = parse_qs(urlparse(res.json()["authorize_url"]).query)["state"][0]
+        # httpx has the cookie stored on the client; the next call sends it
+        # automatically because we're hitting the same host/path.
+        cb = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "the-code", "state": state_token},
+            follow_redirects=False,
+        )
+        assert cb.status_code == 302
+        assert "oauth_ok=1" in cb.headers["location"]
+    finally:
+        REGISTRY.pop(fake.id, None)
+
+
+@pytest.mark.asyncio
 async def test_oauth_start_for_google_without_env_returns_503(auth_client, monkeypatch):
     # Without GOOGLE_OAUTH_CLIENT_ID set, the start endpoint must surface a
     # configuration error rather than crash.
@@ -516,3 +770,815 @@ async def test_skill_import_preview_includes_compatibility(auth_client):
     assert compat is not None
     assert compat["ready"] is False
     assert "slack" in compat["missing_connectors"]
+
+
+# ---------------------------------------------------------------------------
+# Org-wide shared connections (Task #10)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_share_unshare_connection_admin_only(auth_client, monkeypatch):
+    """Admin can share their own connection org-wide and revoke sharing."""
+    from idpkit.connectors.impl import slack as slack_mod
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-share-test"}},
+    )
+    assert res.status_code == 200
+    conn_id = res.json()["id"]
+
+    listing = (await auth_client.get("/api/connectors/connections")).json()
+    me = next(c for c in listing["connections"] if c["id"] == conn_id)
+    assert me["scope"] == "private" and me["is_shared"] is False
+    assert me["is_owner"] is True
+
+    shared = await auth_client.post(f"/api/connectors/connections/{conn_id}/share")
+    assert shared.status_code == 200, shared.text
+    assert shared.json()["scope"] == "org"
+    assert shared.json()["is_shared"] is True
+    assert shared.json()["owner_org"] == "default"
+
+    unshared = await auth_client.post(f"/api/connectors/connections/{conn_id}/unshare")
+    assert unshared.status_code == 200
+    assert unshared.json()["scope"] == "private"
+
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+@pytest.mark.asyncio
+async def test_non_admin_sees_shared_connection_and_cannot_disconnect(auth_client, client, monkeypatch):
+    """A regular user sees shared connections, can use them via the runtime,
+    but cannot share, unshare, or disconnect them; audit rows record the use."""
+    from idpkit.connectors.impl import slack as slack_mod
+    from idpkit.connectors import encrypt_credentials
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.runtime import (
+        build_runtime_executors, get_active_connection, list_active_connections,
+    )
+    from idpkit.db.models import Connection, ConnectionAuditLog, User
+    from idpkit.db.session import async_session
+    from idpkit.api.deps import hash_password
+    from sqlalchemy import select
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    # Admin creates and shares a connection.
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-org-shared"}},
+    )
+    conn_id = res.json()["id"]
+    share = await auth_client.post(f"/api/connectors/connections/{conn_id}/share")
+    assert share.status_code == 200
+
+    # Create a regular (active) user and log in as them.
+    async with async_session() as db:
+        u = User(
+            username="member-user",
+            hashed_password=hash_password("memberpw"),
+            role="user",
+            is_active=1,
+        )
+        db.add(u)
+        await db.commit()
+        await db.refresh(u)
+        member_id = u.id
+
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "member-user", "password": "memberpw"},
+    )
+    member_token = login.json()["access_token"]
+    member_headers = {"Authorization": f"Bearer {member_token}"}
+
+    # Member sees the shared connection.
+    listing = (await client.get(
+        "/api/connectors/connections", headers=member_headers,
+    )).json()
+    seen = next(c for c in listing["connections"] if c["id"] == conn_id)
+    assert seen["is_shared"] is True
+    assert seen["is_owner"] is False
+
+    # Member cannot share/unshare or disconnect.
+    assert (await client.post(
+        f"/api/connectors/connections/{conn_id}/share", headers=member_headers,
+    )).status_code == 403
+    assert (await client.post(
+        f"/api/connectors/connections/{conn_id}/unshare", headers=member_headers,
+    )).status_code == 403
+    assert (await client.delete(
+        f"/api/connectors/connections/{conn_id}", headers=member_headers,
+    )).status_code == 403
+
+    # Runtime lookup: member resolves the shared connection.
+    async with async_session() as db:
+        active = await list_active_connections(db, member_id)
+        assert any(c.id == conn_id for c in active)
+        resolved = await get_active_connection(db, member_id, "slack")
+        assert resolved is not None and resolved.id == conn_id
+
+    # Register an audit-friendly fake connector and a shared connection.
+    calls = {"n": 0}
+
+    async def _ok(args, creds):
+        calls["n"] += 1
+        return {"ok": True}
+
+    fake = Connector(
+        id="fake_shared",
+        display_name="Fake Shared",
+        description="t",
+        auth_type=ConnectorAuthType.API_KEY,
+        tools=[ConnectorTool(
+            name="fake_shared_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=_ok,
+        )],
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        async with async_session() as db:
+            row = Connection(
+                owner_id="some-other-admin",
+                connector_id="fake_shared",
+                encrypted_credentials=encrypt_credentials({"k": "v"}),
+                status="active",
+                scope="org",
+                owner_org="default",
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+            shared_conn_id = row.id
+
+            execs = build_runtime_executors(db, member_id)
+            result = await execs["fake_shared_do"]({}, None, db)
+            assert result == {"ok": True}
+
+            audit_rows = (await db.execute(
+                select(ConnectionAuditLog).where(
+                    ConnectionAuditLog.connection_id == shared_conn_id,
+                )
+            )).scalars().all()
+            assert len(audit_rows) == 1
+            assert audit_rows[0].user_id == member_id
+            assert audit_rows[0].tool_name == "fake_shared_do"
+            assert audit_rows[0].success == 1
+    finally:
+        REGISTRY.pop("fake_shared", None)
+
+    # Audit endpoint visible to the admin (connection owner is admin).
+    audit = await auth_client.get(f"/api/connectors/connections/{conn_id}/audit")
+    assert audit.status_code == 200
+    # No usage on this particular connection (slack one) yet, so empty list.
+    assert audit.json()["events"] == []
+
+    # Cleanup the slack connection.
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+# ---------------------------------------------------------------------------
+# Selected-user shared connections (Task #15)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_share_with_selected_users_allowlist(auth_client, client, monkeypatch):
+    """Sharing with an allowlist limits visibility & runtime resolution to
+    the listed users (plus the owner). Users not on the list neither see
+    the connection in /api/connectors/connections nor resolve it via the
+    runtime, while admins still see it for management.
+    """
+    from idpkit.api.deps import hash_password
+    from idpkit.connectors.impl import slack as slack_mod
+    from idpkit.connectors.runtime import (
+        get_active_connection, list_active_connections,
+    )
+    from idpkit.db.models import User
+    from idpkit.db.session import async_session
+
+    async def _fake_health(creds):
+        return True, "fake-team"
+
+    monkeypatch.setattr(slack_mod.CONNECTOR, "health_check", _fake_health)
+
+    # Two regular members so we can include one and exclude the other.
+    async with async_session() as db:
+        included = User(
+            username="picked-member", hashed_password=hash_password("pw"),
+            role="user", is_active=1,
+        )
+        excluded = User(
+            username="other-member", hashed_password=hash_password("pw"),
+            role="user", is_active=1,
+        )
+        db.add_all([included, excluded])
+        await db.commit()
+        await db.refresh(included)
+        await db.refresh(excluded)
+        included_id = included.id
+        excluded_id = excluded.id
+
+    # Admin connects + shares with only ``included``.
+    res = await auth_client.post(
+        "/api/connectors/slack/connect",
+        json={"credentials": {"bot_token": "xoxb-allowlist"}},
+    )
+    assert res.status_code == 200, res.text
+    conn_id = res.json()["id"]
+
+    shared = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": [included_id]},
+    )
+    assert shared.status_code == 200, shared.text
+    body = shared.json()
+    assert body["scope"] == "org"
+    assert body["share_audience"] == "selected"
+    assert body["allowed_user_ids"] == [included_id]
+    assert body["allowed_users"][0]["username"] == "picked-member"
+
+    # Unknown ids are rejected.
+    bad = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": ["does-not-exist"]},
+    )
+    assert bad.status_code == 400
+
+    async def _login(username: str) -> dict:
+        r = await client.post(
+            "/api/auth/login", json={"username": username, "password": "pw"},
+        )
+        assert r.status_code == 200, r.text
+        return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+    incl_h = await _login("picked-member")
+    excl_h = await _login("other-member")
+
+    # Included member sees + resolves the connection.
+    seen = (await client.get(
+        "/api/connectors/connections", headers=incl_h,
+    )).json()["connections"]
+    assert any(c["id"] == conn_id for c in seen)
+
+    # Excluded member must NOT see it.
+    not_seen = (await client.get(
+        "/api/connectors/connections", headers=excl_h,
+    )).json()["connections"]
+    assert all(c["id"] != conn_id for c in not_seen)
+
+    async with async_session() as db:
+        # Runtime resolution honors the allowlist.
+        assert (await get_active_connection(db, included_id, "slack")).id == conn_id
+        assert await get_active_connection(db, excluded_id, "slack") is None
+        # And list_active_connections filters too.
+        ids_in = {c.id for c in await list_active_connections(db, included_id)}
+        ids_ex = {c.id for c in await list_active_connections(db, excluded_id)}
+        assert conn_id in ids_in
+        assert conn_id not in ids_ex
+
+    # Admin still sees the connection in their listing for management,
+    # with the allowlist usernames resolved.
+    admin_seen = (await auth_client.get("/api/connectors/connections")).json()
+    mine = next(c for c in admin_seen["connections"] if c["id"] == conn_id)
+    assert mine["share_audience"] == "selected"
+    assert {u["username"] for u in mine["allowed_users"]} == {"picked-member"}
+
+    # Posting /share with no body (omitted allowed_user_ids) preserves the
+    # existing allowlist — useful when a caller only wants to update
+    # owner_org without touching access.
+    preserved = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share", json={},
+    )
+    assert preserved.status_code == 200
+    assert preserved.json()["allowed_user_ids"] == [included_id]
+
+    # Empty list switches back to org-wide; excluded member can now resolve.
+    back = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/share",
+        json={"allowed_user_ids": []},
+    )
+    assert back.status_code == 200
+    assert back.json()["share_audience"] == "everyone"
+    async with async_session() as db:
+        assert (await get_active_connection(db, excluded_id, "slack")).id == conn_id
+
+    # Unshare clears the allowlist for next time.
+    unshared = await auth_client.post(
+        f"/api/connectors/connections/{conn_id}/unshare"
+    )
+    assert unshared.status_code == 200
+    assert unshared.json()["allowed_user_ids"] == []
+    assert unshared.json()["share_audience"] == "private"
+
+    await auth_client.delete(f"/api/connectors/connections/{conn_id}")
+
+
+# ---------------------------------------------------------------------------
+# Live integration tests (Task #12)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise one read-only tool per connector against a real sandbox
+# account. They are gated on per-connector env vars (see the ``*_live_creds``
+# fixtures in conftest.py) — when the secret is not set the test is silently
+# skipped, so local ``pytest`` runs and CI jobs without the secrets stay green.
+#
+# Run only the live suite (e.g. on a nightly job):    pytest -m live
+# Skip the live suite (default for fast feedback):    pytest -m "not live"
+#
+# Each test deliberately calls a non-mutating tool (list / search / health) so
+# repeated runs don't pollute the sandbox account.
+
+@pytest.mark.live
+async def test_live_slack_list_channels(slack_live_creds):
+    from idpkit.connectors.impl.slack import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(slack_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "slack_list_channels")
+    out = await list_tool.executor({"limit": 5}, slack_live_creds)
+    assert "channels" in out, out
+    assert isinstance(out["channels"], list)
+
+
+@pytest.mark.live
+async def test_live_notion_search_pages(notion_live_creds):
+    from idpkit.connectors.impl.notion import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(notion_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "notion_search_pages")
+    out = await search_tool.executor({"query": "", "page_size": 5}, notion_live_creds)
+    assert "results" in out, out
+    assert isinstance(out["results"], list)
+
+
+@pytest.mark.live
+async def test_live_github_list_repos(github_live_creds):
+    from idpkit.connectors.impl.github import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(github_live_creds)
+    assert ok and label.startswith("@")
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "github_list_repos")
+    out = await list_tool.executor({"per_page": 5}, github_live_creds)
+    assert "repos" in out, out
+    assert isinstance(out["repos"], list)
+
+
+@pytest.mark.live
+async def test_live_linear_list_issues(linear_live_creds):
+    from idpkit.connectors.impl.linear import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(linear_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "linear_list_issues")
+    out = await list_tool.executor({"first": 5}, linear_live_creds)
+    assert "issues" in out, out
+    assert isinstance(out["issues"], list)
+
+
+@pytest.mark.live
+async def test_live_hubspot_search_contacts(hubspot_live_creds):
+    from idpkit.connectors.impl.hubspot import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(hubspot_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "hubspot_search_contacts")
+    out = await search_tool.executor({"query": "test", "limit": 5}, hubspot_live_creds)
+    assert "results" in out, out
+    assert isinstance(out["results"], list)
+
+
+@pytest.mark.live
+async def test_live_dropbox_list_files(dropbox_live_creds):
+    from idpkit.connectors.impl.dropbox import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(dropbox_live_creds)
+    assert ok and label
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "dropbox_list_files")
+    out = await list_tool.executor({"path": "", "limit": 5}, dropbox_live_creds)
+    assert "entries" in out, out
+    assert isinstance(out["entries"], list)
+
+
+@pytest.mark.live
+async def test_live_jira_health_and_search(jira_live_creds):
+    from idpkit.connectors.impl.jira import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(jira_live_creds)
+    assert ok and label
+    # ``order by created DESC`` is universally valid JQL even on empty projects.
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "jira_search_issues")
+    out = await search_tool.executor(
+        {"jql": "order by created DESC", "max_results": 5}, jira_live_creds,
+    )
+    assert "issues" in out, out
+    assert isinstance(out["issues"], list)
+
+
+@pytest.mark.live
+async def test_live_s3_list_objects(s3_live_creds):
+    from idpkit.connectors.impl.s3 import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(s3_live_creds)
+    assert ok and label.startswith("s3://")
+    list_tool = next(t for t in CONNECTOR.tools if t.name == "s3_list_objects")
+    out = await list_tool.executor({"prefix": "", "max_keys": 5}, s3_live_creds)
+    assert "objects" in out, out
+    assert isinstance(out["objects"], list)
+
+
+# ---------------------------------------------------------------------------
+# Audit-log retention / pruning
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prune_connection_audit_log_respects_retention(_env, monkeypatch):
+    """Rows older than the retention window are deleted; recent rows survive,
+    and the retention window honours the env var override."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from idpkit.db.models import Connection, ConnectionAuditLog
+    from idpkit.db.session import async_session, init_db
+    from idpkit.db.audit_prune import prune_connection_audit_log
+    from idpkit.connectors import encrypt_credentials
+
+    await init_db()
+
+    async with async_session() as db:
+        conn = Connection(
+            owner_id="prune-owner",
+            connector_id="fake_prune",
+            encrypted_credentials=encrypt_credentials({"k": "v"}),
+            status="active",
+            scope="org",
+            owner_org="default",
+        )
+        db.add(conn)
+        await db.commit()
+        await db.refresh(conn)
+        cid = conn.id
+
+        now = datetime.now(timezone.utc)
+        old = ConnectionAuditLog(
+            connection_id=cid, connector_id="fake_prune",
+            user_id=None, tool_name="t",
+            created_at=now - timedelta(days=120),
+        )
+        recent = ConnectionAuditLog(
+            connection_id=cid, connector_id="fake_prune",
+            user_id=None, tool_name="t",
+            created_at=now - timedelta(days=5),
+        )
+        db.add_all([old, recent])
+        await db.commit()
+        old_id, recent_id = old.id, recent.id
+
+    # Default 90-day window: only the 120-day-old row should be deleted.
+    deleted = await prune_connection_audit_log(async_session)
+    assert deleted == 1
+
+    async with async_session() as db:
+        remaining_ids = set((await db.execute(
+            select(ConnectionAuditLog.id).where(
+                ConnectionAuditLog.connection_id == cid
+            )
+        )).scalars().all())
+    assert recent_id in remaining_ids
+    assert old_id not in remaining_ids
+
+    # Env var override: a 1-day window prunes the 5-day-old row too.
+    monkeypatch.setenv("CONNECTION_AUDIT_RETENTION_DAYS", "1")
+    deleted2 = await prune_connection_audit_log(async_session)
+    assert deleted2 == 1
+
+    async with async_session() as db:
+        leftover = (await db.execute(
+            select(ConnectionAuditLog).where(
+                ConnectionAuditLog.connection_id == cid
+            )
+        )).scalars().all()
+    assert leftover == []
+
+    # Cleanup the test connection row.
+    async with async_session() as db:
+        row = (await db.execute(
+            select(Connection).where(Connection.id == cid)
+        )).scalar_one()
+        await db.delete(row)
+        await db.commit()
+
+
+@pytest.mark.live
+async def test_live_google_drive_search(google_live_creds):
+    from idpkit.connectors.impl.google import CONNECTOR
+
+    ok, label = await CONNECTOR.health_check(google_live_creds)
+    assert ok and label
+    search_tool = next(t for t in CONNECTOR.tools if t.name == "google_drive_search")
+    out = await search_tool.executor({"query": "", "page_size": 5}, google_live_creds)
+    assert "files" in out, out
+    assert isinstance(out["files"], list)
+
+
+# ---------------------------------------------------------------------------
+# Live integration tests — *mutating* tools (Task #18)
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the create/send tools that were intentionally skipped
+# by the read-only suite above. Each one creates exactly one record in a
+# dedicated sandbox target (channel / project / mailbox / page / contact /
+# event / link) and then deletes / archives / trashes / revokes it in a
+# ``finally`` block, so re-running the suite back-to-back keeps the sandbox
+# clean. Tests are gated on the same ``IDPKIT_LIVE_*`` secrets via the
+# ``*_sandbox`` fixtures and skip cleanly when any required env var is unset.
+
+def _stamp() -> str:
+    """Short unique tag embedded in created records so they're easy to spot
+    if a cleanup ever fails on a flaky run."""
+    return f"idpkit-live-{int(_time.time())}-{_uuid.uuid4().hex[:6]}"
+
+
+@pytest.mark.live
+async def test_live_slack_send_message(slack_sandbox):
+    from idpkit.connectors.impl.slack import API, CONNECTOR, _auth_headers
+
+    creds = {"bot_token": slack_sandbox["bot_token"]}
+    channel = slack_sandbox["channel"]
+    tag = _stamp()
+    send_tool = next(t for t in CONNECTOR.tools if t.name == "slack_send_message")
+    out = await send_tool.executor(
+        {"channel": channel, "text": f":robot_face: live-test {tag}"}, creds,
+    )
+    assert out.get("ok") is True, out
+    ts = out.get("ts")
+    assert ts, out
+    try:
+        assert out.get("channel")
+    finally:
+        # Clean up the message so the channel doesn't fill with test pings.
+        del_resp = await _http_request(
+            "POST", f"{API}/chat.delete",
+            headers=_auth_headers(creds),
+            json_body={"channel": out.get("channel") or channel, "ts": ts},
+        )
+        # Best-effort cleanup: tolerate "message_not_found" if Slack already
+        # purged it, but assert the call itself succeeded structurally.
+        assert "ok" in del_resp, del_resp
+
+
+@pytest.mark.live
+async def test_live_github_create_issue(github_sandbox):
+    from idpkit.connectors.impl.github import API, CONNECTOR, _h
+
+    creds = {"token": github_sandbox["token"]}
+    repo = github_sandbox["repo"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "github_create_issue")
+    out = await create.executor(
+        {"repo": repo, "title": f"[idpkit-live] {tag}", "body": "auto-created by test suite"},
+        creds,
+    )
+    assert out.get("number"), out
+    number = out["number"]
+    try:
+        assert out.get("url", "").startswith("https://github.com/")
+    finally:
+        # GitHub doesn't allow API issue deletion; close it as cleanup.
+        await _http_request(
+            "PATCH", f"{API}/repos/{repo}/issues/{number}",
+            headers=_h(creds), json_body={"state": "closed"},
+        )
+
+
+@pytest.mark.live
+async def test_live_linear_create_issue(linear_sandbox):
+    from idpkit.connectors.impl.linear import CONNECTOR, _gql
+
+    creds = {"api_key": linear_sandbox["api_key"]}
+    team_id = linear_sandbox["team_id"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "linear_create_issue")
+    out = await create.executor(
+        {"team_id": team_id, "title": f"[idpkit-live] {tag}", "description": "auto"},
+        creds,
+    )
+    issue_id = out.get("id")
+    assert issue_id, out
+    try:
+        assert out.get("identifier") and out.get("url")
+    finally:
+        await _gql(
+            creds,
+            "mutation ($id: String!) { issueDelete(id: $id) { success } }",
+            {"id": issue_id},
+        )
+
+
+@pytest.mark.live
+async def test_live_jira_create_issue(jira_sandbox):
+    from idpkit.connectors.impl.jira import CONNECTOR, _h, _site
+
+    creds = {k: jira_sandbox[k] for k in ("site", "email", "api_token")}
+    project_key = jira_sandbox["project_key"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "jira_create_issue")
+    out = await create.executor(
+        {
+            "project_key": project_key,
+            "summary": f"[idpkit-live] {tag}",
+            "description": "auto-created by test suite",
+        },
+        creds,
+    )
+    key = out.get("key")
+    assert key, out
+    try:
+        assert key.startswith(f"{project_key}-")
+    finally:
+        await _http_request(
+            "DELETE", f"{_site(creds)}/rest/api/3/issue/{key}",
+            headers=_h(creds), expect_json=False,
+        )
+
+
+@pytest.mark.live
+async def test_live_notion_create_page(notion_sandbox):
+    from idpkit.connectors.impl.notion import API, CONNECTOR, _h
+
+    creds = {"integration_token": notion_sandbox["integration_token"]}
+    parent_page_id = notion_sandbox["parent_page_id"]
+    tag = _stamp()
+    create = next(t for t in CONNECTOR.tools if t.name == "notion_create_page")
+    out = await create.executor(
+        {"parent_page_id": parent_page_id, "title": f"[idpkit-live] {tag}", "body": "auto"},
+        creds,
+    )
+    page_id = out.get("id")
+    assert page_id, out
+    try:
+        assert out.get("url")
+    finally:
+        # Notion has no hard delete via API — archive the page so it's removed
+        # from the parent's child list.
+        await _http_request(
+            "PATCH", f"{API}/pages/{page_id}",
+            headers=_h(creds), json_body={"archived": True},
+        )
+
+
+@pytest.mark.live
+async def test_live_hubspot_create_contact(hubspot_sandbox):
+    from idpkit.connectors.impl.hubspot import API, CONNECTOR, _h
+
+    creds = {"access_token": hubspot_sandbox["access_token"]}
+    tag = _stamp()
+    email = f"{tag}@idpkit-sandbox.invalid"
+    create = next(t for t in CONNECTOR.tools if t.name == "hubspot_create_contact")
+    out = await create.executor(
+        {"email": email, "firstname": "Idpkit", "lastname": "Live"}, creds,
+    )
+    contact_id = out.get("id")
+    assert contact_id, out
+    try:
+        assert isinstance(contact_id, str)
+    finally:
+        await _http_request(
+            "DELETE", f"{API}/crm/v3/objects/contacts/{contact_id}",
+            headers=_h(creds), expect_json=False,
+        )
+
+
+@pytest.mark.live
+async def test_live_dropbox_create_shared_link(dropbox_sandbox):
+    from idpkit.connectors.impl.dropbox import API, CONNECTOR, _h
+
+    creds = {"access_token": dropbox_sandbox["access_token"]}
+    path = dropbox_sandbox["path"]
+    create = next(t for t in CONNECTOR.tools if t.name == "dropbox_create_shared_link")
+    out = await create.executor({"path": path}, creds)
+    url = out.get("url")
+    if not url and out.get("error"):
+        # Dropbox returns "shared_link_already_exists" if a link is already
+        # present for this path — fetch the existing one so we still have
+        # something to revoke and assert structure on.
+        existing = await _http_request(
+            "POST", f"{API}/sharing/list_shared_links",
+            headers=_h(creds), json_body={"path": path, "direct_only": True},
+        )
+        links = existing.get("links", [])
+        assert links, f"no shared link returned for {path}: {out} / {existing}"
+        url = links[0].get("url")
+    assert url and url.startswith("https://"), out
+    try:
+        pass
+    finally:
+        await _http_request(
+            "POST", f"{API}/sharing/revoke_shared_link",
+            headers=_h(creds), json_body={"url": url},
+        )
+
+
+@pytest.mark.live
+async def test_live_google_gmail_send(google_sandbox):
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    to = google_sandbox.get("idpkit_live_gmail_to")
+    if not to:
+        pytest.skip("live test skipped — missing env: IDPKIT_LIVE_GMAIL_TO")
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    send = next(t for t in CONNECTOR.tools if t.name == "google_gmail_send")
+    out = await send.executor(
+        {"to": to, "subject": f"[idpkit-live] {tag}", "body": "auto-created by test suite"},
+        creds,
+    )
+    msg_id = out.get("id")
+    assert msg_id, out
+    try:
+        assert out.get("threadId")
+    finally:
+        # Trash the sent message so the sandbox mailbox doesn't accumulate.
+        await _http_request(
+            "POST",
+            f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}/trash",
+            headers=_bearer(creds),
+        )
+
+
+@pytest.mark.live
+async def test_live_google_sheets_append_row(google_sandbox):
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    sheet_id = google_sandbox.get("idpkit_live_google_sheet_id")
+    rng = google_sandbox.get("idpkit_live_google_sheet_range")
+    if not sheet_id or not rng:
+        pytest.skip(
+            "live test skipped — missing env: "
+            "IDPKIT_LIVE_GOOGLE_SHEET_ID, IDPKIT_LIVE_GOOGLE_SHEET_RANGE"
+        )
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    append = next(t for t in CONNECTOR.tools if t.name == "google_sheets_append_row")
+    out = await append.executor(
+        {"spreadsheet_id": sheet_id, "range": rng, "values": [tag, "live-test"]},
+        creds,
+    )
+    updated_range = out.get("updated_range")
+    assert updated_range, out
+    try:
+        assert (out.get("updated_rows") or 0) >= 1
+    finally:
+        # Clear exactly the cells we appended so re-runs don't accumulate.
+        await _http_request(
+            "POST",
+            f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{updated_range}:clear",
+            headers={**_bearer(creds), "Content-Type": "application/json"},
+            json_body={},
+        )
+
+
+@pytest.mark.live
+async def test_live_google_calendar_create_event(google_sandbox):
+    from datetime import datetime, timedelta, timezone
+
+    from idpkit.connectors.impl.google import CONNECTOR, _bearer
+
+    calendar_id = google_sandbox.get("idpkit_live_google_calendar_id", "primary")
+    creds = {k: v for k, v in google_sandbox.items() if k in ("access_token", "refresh_token")}
+    tag = _stamp()
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    end = start + timedelta(minutes=30)
+    create = next(t for t in CONNECTOR.tools if t.name == "google_calendar_create_event")
+    out = await create.executor(
+        {
+            "calendar_id": calendar_id,
+            "summary": f"[idpkit-live] {tag}",
+            "description": "auto-created by test suite",
+            "start": start.isoformat().replace("+00:00", "Z"),
+            "end": end.isoformat().replace("+00:00", "Z"),
+        },
+        creds,
+    )
+    event_id = out.get("id")
+    assert event_id, out
+    try:
+        assert out.get("htmlLink")
+    finally:
+        await _http_request(
+            "DELETE",
+            f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events/{event_id}",
+            headers=_bearer(creds), expect_json=False,
+        )

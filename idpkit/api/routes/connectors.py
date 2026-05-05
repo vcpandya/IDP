@@ -18,7 +18,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -29,8 +29,48 @@ from idpkit.connectors import (
     ConnectorAuthError, ConnectorAuthType, ConnectorError,
     decrypt_credentials, encrypt_credentials, get_connector, list_connectors,
 )
-from idpkit.connectors.oauth import consume_state, new_state
-from idpkit.db.models import Connection, User, utcnow
+from idpkit.connectors.oauth import (
+    OAUTH_NONCE_COOKIE, OAUTH_NONCE_COOKIE_PATH, STATE_TTL,
+    consume_state, issue_nonce, new_state, verify_nonce,
+)
+from idpkit.db.models import Connection, ConnectionAuditLog, User, UserRole, utcnow
+
+
+def _is_admin(user: User) -> bool:
+    return user.role in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value)
+
+
+def _serialize_connection(
+    row: Connection,
+    viewer: User,
+    user_names: Optional[dict[str, str]] = None,
+) -> dict:
+    is_owner = row.owner_id == viewer.id
+    allow_ids = list(row.allowed_user_ids or [])
+    names = user_names or {}
+    return {
+        "id": row.id,
+        "connector_id": row.connector_id,
+        "display_name": row.display_name,
+        "status": row.status,
+        "metadata": row.connection_metadata or {},
+        "scope": row.scope or "private",
+        "is_shared": (row.scope == "org"),
+        "is_owner": is_owner,
+        "owner_org": row.owner_org,
+        # Empty list means "shared with everyone" (legacy org-wide).
+        "allowed_user_ids": allow_ids,
+        "allowed_users": [
+            {"id": uid, "username": names.get(uid)} for uid in allow_ids
+        ],
+        "share_audience": (
+            "private" if row.scope != "org"
+            else ("everyone" if not allow_ids else "selected")
+        ),
+        "last_checked_at": row.last_checked_at.isoformat() if row.last_checked_at else None,
+        "last_error": row.last_error,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/connectors", tags=["connectors"])
@@ -41,27 +81,49 @@ async def list_all(user: User = Depends(get_current_user)):
     return {"connectors": [c.public_metadata() for c in list_connectors()]}
 
 
-@router.get("/connections", summary="List the current user's connections")
+@router.get("/connections", summary="List connections visible to the current user")
 async def list_user_connections(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List all connections this user can see.
+
+    Includes the user's own connections plus any connection an admin has
+    shared at org level (``scope='org'``). Non-owners may attach skills
+    to a shared connection but cannot edit, disconnect, or read its
+    credentials.
+    """
+    from sqlalchemy import or_ as _or
     rows = (await db.execute(
-        select(Connection).where(Connection.owner_id == user.id).order_by(Connection.created_at.desc())
+        select(Connection).where(
+            _or(Connection.owner_id == user.id, Connection.scope == "org"),
+        ).order_by(Connection.created_at.desc())
     )).scalars().all()
-    return {"connections": [
-        {
-            "id": r.id,
-            "connector_id": r.connector_id,
-            "display_name": r.display_name,
-            "status": r.status,
-            "metadata": r.connection_metadata or {},
-            "last_checked_at": r.last_checked_at.isoformat() if r.last_checked_at else None,
-            "last_error": r.last_error,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]}
+    # Filter shared connections by their allowlist: a non-owner, non-admin
+    # member should only see shared connections they're entitled to use.
+    # Admins continue to see *all* shared connections so they can manage them.
+    visible: list[Connection] = []
+    for r in rows:
+        if r.owner_id == user.id or r.scope != "org":
+            visible.append(r)
+            continue
+        allow = r.allowed_user_ids or []
+        if not allow or user.id in allow or _is_admin(user):
+            visible.append(r)
+    # Resolve usernames for any allowed_user_ids referenced (admins/owners
+    # see this in the UI). One round trip total.
+    needed_ids: set[str] = set()
+    for r in visible:
+        if r.scope == "org" and (r.owner_id == user.id or _is_admin(user)):
+            for uid in (r.allowed_user_ids or []):
+                needed_ids.add(uid)
+    name_by_id: dict[str, str] = {}
+    if needed_ids:
+        users = (await db.execute(
+            select(User.id, User.username).where(User.id.in_(needed_ids))
+        )).all()
+        name_by_id = {uid: uname for uid, uname in users}
+    return {"connections": [_serialize_connection(r, user, name_by_id) for r in visible]}
 
 
 class CredentialBody(BaseModel):
@@ -187,13 +249,161 @@ async def disconnect(
     db: AsyncSession = Depends(get_db),
 ):
     row = (await db.execute(
-        select(Connection).where(Connection.id == connection_id, Connection.owner_id == user.id)
+        select(Connection).where(Connection.id == connection_id)
     )).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "Connection not found")
+    # The owner can always remove their own connection. Admins may also
+    # remove an org-shared connection that another admin set up.
+    if row.owner_id != user.id and not (row.scope == "org" and _is_admin(user)):
+        raise HTTPException(403, "Not allowed to disconnect this connection")
     await db.delete(row)
     await db.commit()
     return {"deleted": True, "id": connection_id}
+
+
+# ---------------------------------------------------------------------------
+# Org-level sharing — admins can promote a connection to "scope=org" so
+# any user in the deployment may attach skills to it.
+# ---------------------------------------------------------------------------
+
+class ShareBody(BaseModel):
+    owner_org: Optional[str] = None  # tenant identifier; defaults to "default"
+    # Optional allowlist of user ids.
+    #   - Field omitted (None) → preserve any existing allowlist (lets a
+    #     caller update only ``owner_org`` without touching access).
+    #   - Empty list ([])      → reset to org-wide sharing (everyone in the org).
+    #   - Non-empty list       → only those users (plus the owner) may resolve it.
+    allowed_user_ids: Optional[list[str]] = None
+
+
+async def _resolve_user_names(db: AsyncSession, user_ids: list[str]) -> dict[str, str]:
+    if not user_ids:
+        return {}
+    rows = (await db.execute(
+        select(User.id, User.username).where(User.id.in_(user_ids))
+    )).all()
+    return {uid: uname for uid, uname in rows}
+
+
+@router.post(
+    "/connections/{connection_id}/share",
+    summary="Admin: share a connection org-wide or with selected users",
+)
+async def share_connection(
+    connection_id: str,
+    body: ShareBody = ShareBody(),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin(user):
+        raise HTTPException(403, "Only admins can share connections org-wide")
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    # Only the connection's owner (who is also an admin) can share — this
+    # avoids one admin silently exposing another admin's personal connection.
+    if row.owner_id != user.id:
+        raise HTTPException(403, "Only the connection owner can share it")
+    row.scope = "org"
+    row.owner_org = (body.owner_org or row.owner_org or "default")[:100]
+    # Validate the allowlist: every id must point at a real, active user.
+    # The owner is always implicitly allowed, so we drop their id if present.
+    if body.allowed_user_ids is not None:
+        cleaned = sorted({
+            uid for uid in body.allowed_user_ids
+            if uid and uid != row.owner_id
+        })
+        if cleaned:
+            existing = (await db.execute(
+                select(User.id).where(User.id.in_(cleaned))
+            )).scalars().all()
+            unknown = sorted(set(cleaned) - set(existing))
+            if unknown:
+                raise HTTPException(
+                    400, f"Unknown user id(s) in allowlist: {', '.join(unknown)}",
+                )
+            row.allowed_user_ids = cleaned
+        else:
+            # Explicit empty list → fall back to org-wide.
+            row.allowed_user_ids = None
+    await db.commit()
+    await db.refresh(row)
+    names = await _resolve_user_names(db, row.allowed_user_ids or [])
+    return _serialize_connection(row, user, names)
+
+
+@router.post(
+    "/connections/{connection_id}/unshare",
+    summary="Admin: revoke org-wide sharing",
+)
+async def unshare_connection(
+    connection_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not _is_admin(user):
+        raise HTTPException(403, "Only admins can change sharing")
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    if row.owner_id != user.id:
+        raise HTTPException(403, "Only the connection owner can unshare it")
+    row.scope = "private"
+    # Drop any per-user allowlist so a future re-share starts fresh.
+    row.allowed_user_ids = None
+    await db.commit()
+    await db.refresh(row)
+    return _serialize_connection(row, user)
+
+
+@router.get(
+    "/connections/{connection_id}/audit",
+    summary="Owner/admin: list audit events for a shared connection",
+)
+async def connection_audit(
+    connection_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    row = (await db.execute(
+        select(Connection).where(Connection.id == connection_id)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Connection not found")
+    if row.owner_id != user.id and not _is_admin(user):
+        raise HTTPException(403, "Not allowed to view audit log")
+    events = (await db.execute(
+        select(ConnectionAuditLog)
+        .where(ConnectionAuditLog.connection_id == connection_id)
+        .order_by(ConnectionAuditLog.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+    # Resolve usernames in one round-trip for nicer display.
+    user_ids = sorted({e.user_id for e in events if e.user_id})
+    name_by_id: dict[str, str] = {}
+    if user_ids:
+        users = (await db.execute(
+            select(User.id, User.username).where(User.id.in_(user_ids))
+        )).all()
+        name_by_id = {uid: uname for uid, uname in users}
+    return {"events": [
+        {
+            "id": e.id,
+            "user_id": e.user_id,
+            "username": name_by_id.get(e.user_id) if e.user_id else None,
+            "tool_name": e.tool_name,
+            "success": bool(e.success),
+            "error": e.error,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in events
+    ]}
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +441,7 @@ def _oauth_redirect_uri(request: Request) -> str:
 async def oauth_start(
     connector_id: str,
     request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -239,12 +450,28 @@ async def oauth_start(
         raise HTTPException(400, "Connector does not use OAuth2")
     if not connector.oauth_authorize_url_builder:
         raise HTTPException(500, "Connector OAuth not configured")
-    state = await new_state(db, {"user_id": user.id, "connector_id": connector_id})
+    nonce, nonce_hash = issue_nonce()
+    state = await new_state(db, {
+        "user_id": user.id,
+        "connector_id": connector_id,
+        "nonce_hash": nonce_hash,
+    })
     redirect_uri = _oauth_redirect_uri(request)
     try:
         auth_url = connector.oauth_authorize_url_builder(state, redirect_uri)
     except ConnectorError as exc:
         raise HTTPException(503, str(exc))
+    # Bind the state token to *this* browser: a stolen state value can't be
+    # redeemed without the matching short-TTL, http-only cookie.
+    response.set_cookie(
+        key=OAUTH_NONCE_COOKIE,
+        value=nonce,
+        max_age=int(STATE_TTL.total_seconds()),
+        httponly=True,
+        secure=(request.url.scheme == "https"),
+        samesite="lax",
+        path=OAUTH_NONCE_COOKIE_PATH,
+    )
     return {"authorize_url": auth_url}
 
 
@@ -260,8 +487,14 @@ async def oauth_callback(
         return RedirectResponse(f"/connections?oauth_error={error}", status_code=302)
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
+    # Read the per-flow nonce cookie *before* consuming the state row so a
+    # missing/mismatched cookie still spends the state token (preventing
+    # offline brute-forcing of the cookie value against a valid state).
+    nonce_cookie = request.cookies.get(OAUTH_NONCE_COOKIE)
     payload = await consume_state(db, state)
     if not payload:
+        raise HTTPException(400, "Invalid or expired state token")
+    if not verify_nonce(nonce_cookie, payload.get("nonce_hash")):
         raise HTTPException(400, "Invalid or expired state token")
     connector = get_connector(payload["connector_id"])
     if not connector or not connector.oauth_exchange:
@@ -281,4 +514,6 @@ async def oauth_callback(
         db, payload["user_id"], connector.id, token_payload,
         display_name=label, metadata={"granted_scopes": token_payload.get("scope")},
     )
-    return RedirectResponse("/connections?oauth_ok=1", status_code=302)
+    redirect = RedirectResponse("/connections?oauth_ok=1", status_code=302)
+    redirect.delete_cookie(OAUTH_NONCE_COOKIE, path=OAUTH_NONCE_COOKIE_PATH)
+    return redirect

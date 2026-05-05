@@ -362,9 +362,45 @@ class Connection(Base):
     created_at = Column(TZDateTime, default=utcnow)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 
+    # Sharing scope: "private" (default — only owner) or "org"
+    # (any user in this deployment may use it via runtime executors).
+    scope = Column(String(20), default="private", nullable=False, index=True)
+    # When scope=="org", this records the org/tenant identifier the connection
+    # is shared with. Single-tenant deployments use the literal "default".
+    owner_org = Column(String(100), nullable=True, index=True)
+    # When scope=="org" and ``allowed_user_ids`` is a non-empty list, only the
+    # owner plus those users may resolve this shared connection at runtime.
+    # When None or [], the connection is shared with everyone in ``owner_org``
+    # (the original org-wide behavior — preserved for backward compatibility).
+    allowed_user_ids = Column(JSON, nullable=True)
+
     __table_args__ = (
         Index("ix_connections_owner_connector", "owner_id", "connector_id"),
+        Index("ix_connections_scope_connector", "scope", "connector_id"),
     )
+
+
+class ConnectionAuditLog(Base):
+    """Audit trail for shared (org-level) connection usage.
+
+    One row is written each time a non-owner user invokes a tool through a
+    connection whose scope is "org". This satisfies the task requirement to
+    record *who* used a shared connection for each call.
+    """
+
+    __tablename__ = "connection_audit_log"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    connection_id = Column(
+        String, ForeignKey("connections.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    connector_id = Column(String(50), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name = Column(String(100), nullable=True)
+    success = Column(Integer, default=1)
+    error = Column(Text, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow, index=True)
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.

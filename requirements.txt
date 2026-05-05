@@ -31,3 +31,4 @@ python-jose[cryptography]
 e2b
 e2b-code-interpreter
 qrcode[pil]
+redis>=5.0.0
