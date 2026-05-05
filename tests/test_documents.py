@@ -32,7 +32,8 @@ def _helpers():
     )
 
 
-pytestmark = pytest.mark.asyncio
+# Note: async tests are individually decorated below to avoid the global
+# ``pytestmark = pytest.mark.asyncio`` warning on the sync helper tests.
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +113,7 @@ def test_validate_passes_text_when_unknown():
 # 3. Upload-time MIME mismatch rejection (end-to-end through the route)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
 async def test_upload_html_disguised_as_pdf_is_rejected(auth_client):
     fake_pdf = b"<!DOCTYPE html><html><body>I am HTML, not a PDF.</body></html>"
     res = await auth_client.post(
@@ -122,6 +124,7 @@ async def test_upload_html_disguised_as_pdf_is_rejected(auth_client):
     assert "does not match" in res.json()["detail"].lower()
 
 
+@pytest.mark.asyncio
 async def test_upload_real_pdf_succeeds(auth_client, sample_pdf_bytes):
     res = await auth_client.post(
         "/api/documents/",
@@ -137,6 +140,7 @@ async def test_upload_real_pdf_succeeds(auth_client, sample_pdf_bytes):
 # 4. Download streams without materializing the whole blob into memory
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
 async def test_download_uses_streaming_and_sanitizes_filename(
     auth_client, sample_pdf_bytes, monkeypatch
 ):
@@ -183,6 +187,7 @@ async def test_download_uses_streaming_and_sanitizes_filename(
 # 5. PDF parsing happens off the event loop
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
 async def test_pdf_parsing_does_not_block_event_loop(auth_client, sample_pdf_bytes, monkeypatch):
     """While a slow page-count call is running, an unrelated request must
     still complete promptly. We replace ``_extract_page_count`` with a sync
@@ -222,6 +227,7 @@ async def test_pdf_parsing_does_not_block_event_loop(auth_client, sample_pdf_byt
 # 6. Direct-to-storage (signed-URL) confirmation re-validates content
 # ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
 async def test_confirm_upload_rejects_disguised_content(auth_client):
     """The signed-URL upload flow bypasses the in-process upload routes,
     so ``confirm_upload`` must re-sniff the bytes that the client wrote
