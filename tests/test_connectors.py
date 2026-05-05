@@ -1281,6 +1281,119 @@ async def test_prune_connection_audit_log_respects_retention(_env, monkeypatch):
         await db.commit()
 
 
+def test_composite_indexes_present_in_metadata():
+    """Task #32: composite indexes must be registered on Base.metadata so that
+    create_all (and Alembic-style inspection) keep them in sync with the DB."""
+    from idpkit.db.models import Base
+
+    expected = {
+        "documents": "ix_documents_owner_created",
+        "conversations": "ix_conversations_owner_created",
+        "conversation_messages": "ix_conv_messages_conv_created",
+        "batch_items": "ix_batch_items_job_status",
+        "connection_audit_log": "ix_conn_audit_conn_created",
+    }
+    for table_name, index_name in expected.items():
+        table = Base.metadata.tables[table_name]
+        names = {ix.name for ix in table.indexes}
+        assert index_name in names, f"{index_name} missing from {table_name}"
+
+
+@pytest.mark.asyncio
+async def test_audit_prune_leader_lock_serializes_workers(_env, monkeypatch):
+    """Task #32: with two scheduler instances racing the same transaction-
+    scoped advisory lock, exactly one performs the DELETE; the other observes
+    the lock-held branch and no-ops cleanly. The lock is auto-released on
+    transaction commit, so no manual unlock call is expected.
+    """
+    import asyncio as _asyncio
+    from idpkit.db import audit_prune as ap_mod
+    from idpkit.db.session import async_session, init_db
+
+    await init_db()
+
+    monkeypatch.setattr(ap_mod, "DATABASE_URL", "postgresql://fake/test")
+
+    state = {"held": False, "deletes": 0, "unlock_calls": 0}
+
+    from sqlalchemy.ext.asyncio import AsyncSession as _AS
+
+    orig_execute = _AS.execute
+
+    async def _patched_execute(self, statement, params=None, *a, **kw):
+        sql = str(getattr(statement, "text", statement))
+        if "pg_try_advisory_xact_lock" in sql:
+            class _R:
+                def scalar(_self):
+                    if state["held"]:
+                        return False
+                    state["held"] = True
+                    return True
+            return _R()
+        if "pg_advisory_unlock" in sql:
+            state["unlock_calls"] += 1
+            state["held"] = False
+            class _R2:
+                def scalar(_self):
+                    return True
+            return _R2()
+        if "DELETE" in sql.upper() and "connection_audit_log" in sql:
+            state["deletes"] += 1
+            await _asyncio.sleep(0.05)  # let the second caller race in
+            # Simulate the auto-release on commit at end of `async with db.begin()`
+            state["held"] = False
+        if params is None:
+            return await orig_execute(self, statement, *a, **kw)
+        return await orig_execute(self, statement, params, *a, **kw)
+
+    monkeypatch.setattr(_AS, "execute", _patched_execute)
+
+    results = await _asyncio.gather(
+        ap_mod.prune_connection_audit_log(async_session),
+        ap_mod.prune_connection_audit_log(async_session),
+    )
+    # One worker held the lock first and ran the DELETE; the other saw the
+    # lock held and short-circuited (returns 0 deletions).
+    assert state["deletes"] == 1, "Only the lock holder should run the DELETE"
+    assert 0 in results, "Loser must report 0 deletions"
+    # Transaction-scoped lock: no explicit unlock call expected on the happy path.
+    assert state["unlock_calls"] == 0
+    assert state["held"] is False, "Lock must be released after commit"
+
+
+@pytest.mark.asyncio
+async def test_migrate_indexes_creates_db_indexes(_env):
+    """Task #32: after init_db, the composite indexes must exist in the live
+    database (not just in Base.metadata). Catches regressions where the
+    CREATE INDEX statements silently fail."""
+    from sqlalchemy import inspect as sa_inspect
+    from idpkit.db.session import async_session, init_db, engine
+
+    await init_db()
+
+    expected = {
+        "documents": "ix_documents_owner_created",
+        "conversations": "ix_conversations_owner_created",
+        "conversation_messages": "ix_conv_messages_conv_created",
+        "batch_items": "ix_batch_items_job_status",
+        "connection_audit_log": "ix_conn_audit_conn_created",
+    }
+
+    async with engine.connect() as conn:
+        def _check(sync_conn):
+            insp = sa_inspect(sync_conn)
+            results = {}
+            for table, ix in expected.items():
+                names = {row["name"] for row in insp.get_indexes(table)}
+                results[table] = (ix, names)
+            return results
+
+        got = await conn.run_sync(_check)
+
+    for table, (ix, names) in got.items():
+        assert ix in names, f"Index {ix} missing from {table}; saw {names}"
+
+
 @pytest.mark.live
 async def test_live_google_drive_search(google_live_creds):
     from idpkit.connectors.impl.google import CONNECTOR

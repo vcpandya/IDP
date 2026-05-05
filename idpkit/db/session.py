@@ -18,13 +18,24 @@ def _get_database_url() -> str:
 
 DATABASE_URL = _get_database_url()
 
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+        return val if val > 0 else default
+    except ValueError:
+        return default
+
+
 _engine_kwargs = {"echo": False}
 if "postgresql" in DATABASE_URL:
     _engine_kwargs.update(
         pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=3,
-        max_overflow=5,
+        pool_recycle=_int_env("DB_POOL_RECYCLE", 1800),
+        pool_size=_int_env("DB_POOL_SIZE", 20),
+        max_overflow=_int_env("DB_MAX_OVERFLOW", 20),
     )
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
@@ -139,6 +150,40 @@ async def init_db():
         await conn.run_sync(_migrate_skills)
         await conn.run_sync(_migrate_connections)
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_indexes)
+
+
+def _migrate_indexes(sync_conn):
+    """Idempotently create composite indexes on hot query paths.
+
+    ``CREATE INDEX IF NOT EXISTS`` is supported by both PostgreSQL and SQLite,
+    so existing deployments pick these up on next startup without an explicit
+    migration step.
+    """
+    from sqlalchemy import text
+
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_documents_owner_created "
+        "ON documents (owner_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_conversations_owner_created "
+        "ON conversations (owner_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_conv_messages_conv_created "
+        "ON conversation_messages (conversation_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_batch_items_job_status "
+        "ON batch_items (batch_job_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_conn_audit_conn_created "
+        "ON connection_audit_log (connection_id, created_at)",
+    ]
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    for stmt in statements:
+        try:
+            sync_conn.execute(text(stmt))
+        except Exception as exc:
+            # A pre-existing index with the same name on a different shape
+            # shouldn't kill startup — log-and-continue is safer than failing,
+            # but we log loudly so operators notice missing perf indexes.
+            _log.warning("Index migration skipped (%s): %s", stmt, exc)
 
 
 async def get_db():

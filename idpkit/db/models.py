@@ -110,6 +110,10 @@ class Document(Base):
     tags = relationship("Tag", secondary=document_tags, back_populates="documents")
     jobs = relationship("Job", back_populates="document", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        Index("ix_documents_owner_created", "owner_id", "created_at"),
+    )
+
 
 class Job(Base):
     __tablename__ = "jobs"
@@ -178,6 +182,10 @@ class Conversation(Base):
         order_by="ConversationMessage.created_at",
     )
 
+    __table_args__ = (
+        Index("ix_conversations_owner_created", "owner_id", "created_at"),
+    )
+
 
 class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
@@ -197,6 +205,10 @@ class ConversationMessage(Base):
     created_at = Column(TZDateTime, default=utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+    __table_args__ = (
+        Index("ix_conv_messages_conv_created", "conversation_id", "created_at"),
+    )
 
 
 class ProcessingTemplate(Base):
@@ -270,6 +282,10 @@ class BatchItem(Base):
     created_at = Column(TZDateTime, default=utcnow)
     started_at = Column(TZDateTime, nullable=True)
     completed_at = Column(TZDateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_batch_items_job_status", "batch_job_id", "status"),
+    )
 
     batch_job = relationship("BatchJob", back_populates="items")
     document = relationship("Document")
@@ -401,6 +417,10 @@ class ConnectionAuditLog(Base):
     success = Column(Integer, default=1)
     error = Column(Text, nullable=True)
     created_at = Column(TZDateTime, default=utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_conn_audit_conn_created", "connection_id", "created_at"),
+    )
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.
