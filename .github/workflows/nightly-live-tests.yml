@@ -42,6 +42,24 @@ jobs:
           python-version: "3.11"
           cache: pip
 
+      # Persist the notifier's dedup state between nightly runs. We use
+      # the *explicit* restore/save pair (rather than the combined
+      # ``actions/cache`` action) because the notify step deliberately
+      # exits non-zero when connectors are broken, and the combined
+      # action's post-step save is not guaranteed to run after a failed
+      # job. Pairing ``cache/restore`` here with a ``cache/save`` step
+      # gated on ``if: always()`` after the notifier guarantees the new
+      # state file is uploaded even on failing runs — which is exactly
+      # the case we need to dedupe.
+      - name: Restore notifier dedup state
+        id: restore-notifier-state
+        uses: actions/cache/restore@v4
+        with:
+          path: .nightly-notifier-state.json
+          key: nightly-notifier-state-${{ github.run_id }}
+          restore-keys: |
+            nightly-notifier-state-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -80,4 +98,36 @@ jobs:
           SMTP_PORT: ${{ secrets.LIVE_TESTS_SMTP_PORT }}
           SMTP_USER: ${{ secrets.LIVE_TESTS_SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.LIVE_TESTS_SMTP_PASSWORD }}
+          # Persist dedup state in the workspace so the cache step above
+          # captures it. Without this, every nightly run would alert on
+          # the same broken connector.
+          NOTIFY_STATE_FILE: .nightly-notifier-state.json
+          # Re-ping a still-failing connector at most once per N days.
+          NOTIFY_REMINDER_DAYS: "7"
         run: python scripts/notify_live_failures.py live-results.xml
+
+      # Belt-and-braces: prove the state file actually got rewritten by
+      # this run, so a future regression where the notifier silently
+      # stops persisting state shows up as a CI log line instead of as
+      # a flood of duplicate alerts a week later.
+      - name: Show notifier dedup state
+        if: always()
+        run: |
+          if [ -f .nightly-notifier-state.json ]; then
+            echo "Notifier state after run:"
+            ls -l .nightly-notifier-state.json
+            cat .nightly-notifier-state.json
+          else
+            echo "No notifier state file written this run."
+          fi
+
+      # Save the (possibly updated) state back to the cache. ``if: always()``
+      # is critical: failing nightly runs are exactly the runs whose state
+      # we need to remember, and without this gate the save step would be
+      # skipped whenever the notify step exits non-zero.
+      - name: Save notifier dedup state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .nightly-notifier-state.json
+          key: nightly-notifier-state-${{ github.run_id }}
