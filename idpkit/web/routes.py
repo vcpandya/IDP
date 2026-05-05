@@ -151,8 +151,13 @@ async def esign_prepare(request: Request, envelope_id: str, user=Depends(get_cur
 
 
 @router.get("/esign/{envelope_id}/detail", response_class=HTMLResponse)
-async def esign_detail(request: Request, envelope_id: str):
-    return templates.TemplateResponse("esign_detail.html", {"request": request, "envelope_id": envelope_id})
+async def esign_detail(request: Request, envelope_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "esign_detail.html",
+        {"request": request, "user": user, "envelope_id": envelope_id},
+    )
 
 
 @router.get("/sign/{token}", response_class=HTMLResponse)
