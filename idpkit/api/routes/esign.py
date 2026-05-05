@@ -262,6 +262,7 @@ async def create_envelope(
 ):
     """Create a new envelope from either an uploaded PDF file or an existing document_id."""
     from idpkit.esign.pdf_utils import compute_sha256, get_page_count
+    import asyncio as _asyncio
     import json as _json
 
     if not title or not title.strip():
@@ -274,9 +275,11 @@ async def create_envelope(
         content = await file.read()
         if len(content) > 50 * 1024 * 1024:
             raise HTTPException(status_code=413, detail="File too large (max 50MB)")
-        sha = compute_sha256(content)
+        # Hash + parse off the event loop to keep the worker responsive on
+        # multi-MB PDFs.
+        sha = await _asyncio.to_thread(compute_sha256, content)
         try:
-            pages = get_page_count(content)
+            pages = await _asyncio.to_thread(get_page_count, content)
         except Exception:
             pages = 1
         env_id = str(uuid.uuid4())
@@ -299,8 +302,8 @@ async def create_envelope(
                 detail="Only PDF documents are supported for e-signature. Please upload a PDF file instead.",
             )
         content = storage.load(doc.file_path)
-        sha = compute_sha256(content)
-        pages = get_page_count(content)
+        sha = await _asyncio.to_thread(compute_sha256, content)
+        pages = await _asyncio.to_thread(get_page_count, content)
         env_id = str(uuid.uuid4())
         # Make an immutable envelope-local snapshot so changes to the source
         # document do not affect rendering, finalization, or SHA-256 provenance
