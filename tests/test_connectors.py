@@ -922,6 +922,87 @@ async def test_live_s3_list_objects(s3_live_creds):
     assert isinstance(out["objects"], list)
 
 
+# ---------------------------------------------------------------------------
+# Audit-log retention / pruning
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_prune_connection_audit_log_respects_retention(_env, monkeypatch):
+    """Rows older than the retention window are deleted; recent rows survive,
+    and the retention window honours the env var override."""
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy import select
+    from idpkit.db.models import Connection, ConnectionAuditLog
+    from idpkit.db.session import async_session, init_db
+    from idpkit.db.audit_prune import prune_connection_audit_log
+    from idpkit.connectors import encrypt_credentials
+
+    await init_db()
+
+    async with async_session() as db:
+        conn = Connection(
+            owner_id="prune-owner",
+            connector_id="fake_prune",
+            encrypted_credentials=encrypt_credentials({"k": "v"}),
+            status="active",
+            scope="org",
+            owner_org="default",
+        )
+        db.add(conn)
+        await db.commit()
+        await db.refresh(conn)
+        cid = conn.id
+
+        now = datetime.now(timezone.utc)
+        old = ConnectionAuditLog(
+            connection_id=cid, connector_id="fake_prune",
+            user_id=None, tool_name="t",
+            created_at=now - timedelta(days=120),
+        )
+        recent = ConnectionAuditLog(
+            connection_id=cid, connector_id="fake_prune",
+            user_id=None, tool_name="t",
+            created_at=now - timedelta(days=5),
+        )
+        db.add_all([old, recent])
+        await db.commit()
+        old_id, recent_id = old.id, recent.id
+
+    # Default 90-day window: only the 120-day-old row should be deleted.
+    deleted = await prune_connection_audit_log(async_session)
+    assert deleted == 1
+
+    async with async_session() as db:
+        remaining_ids = set((await db.execute(
+            select(ConnectionAuditLog.id).where(
+                ConnectionAuditLog.connection_id == cid
+            )
+        )).scalars().all())
+    assert recent_id in remaining_ids
+    assert old_id not in remaining_ids
+
+    # Env var override: a 1-day window prunes the 5-day-old row too.
+    monkeypatch.setenv("CONNECTION_AUDIT_RETENTION_DAYS", "1")
+    deleted2 = await prune_connection_audit_log(async_session)
+    assert deleted2 == 1
+
+    async with async_session() as db:
+        leftover = (await db.execute(
+            select(ConnectionAuditLog).where(
+                ConnectionAuditLog.connection_id == cid
+            )
+        )).scalars().all()
+    assert leftover == []
+
+    # Cleanup the test connection row.
+    async with async_session() as db:
+        row = (await db.execute(
+            select(Connection).where(Connection.id == cid)
+        )).scalar_one()
+        await db.delete(row)
+        await db.commit()
+
+
 @pytest.mark.live
 async def test_live_google_drive_search(google_live_creds):
     from idpkit.connectors.impl.google import CONNECTOR

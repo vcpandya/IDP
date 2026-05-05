@@ -158,6 +158,9 @@ async def lifespan(app: FastAPI):
     resumable = await _recover_stale_jobs(async_session)
     plugin_manager.load_entry_points()
 
+    from idpkit.db.audit_prune import start_audit_prune_scheduler
+    audit_prune_task = start_audit_prune_scheduler(async_session)
+
     if resumable:
         import logging
         from idpkit.api.routes.indexing import _run_indexing_task
@@ -172,7 +175,14 @@ async def lifespan(app: FastAPI):
                 params=info["params"],
             ))
 
-    yield
+    try:
+        yield
+    finally:
+        audit_prune_task.cancel()
+        try:
+            await audit_prune_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 def create_app() -> FastAPI:
