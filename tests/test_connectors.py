@@ -549,6 +549,144 @@ async def test_oauth_start_requires_oauth_connector(auth_client):
 
 
 @pytest.mark.asyncio
+async def test_oauth_start_sets_nonce_cookie_and_callback_requires_it(
+    auth_client, monkeypatch,
+):
+    """The /oauth/start endpoint must set a per-flow nonce cookie, and
+    /oauth/callback must reject when the cookie is absent or doesn't match
+    the state row — even if the attacker has a valid state token."""
+    from idpkit.connectors.oauth import OAUTH_NONCE_COOKIE
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+
+    async def _fake_exchange(code, redirect_uri):
+        return {"access_token": "tok", "scope": "x"}
+
+    fake = Connector(
+        id="fake_oauth_state",
+        display_name="Fake OAuth State",
+        description="t",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_state_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=lambda a, c: None,
+        )],
+        oauth_authorize_url_builder=lambda state, redirect_uri: (
+            f"https://provider.example/auth?state={state}&redirect_uri={redirect_uri}"
+        ),
+        oauth_exchange=_fake_exchange,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        # Start the flow → cookie must be set, state extractable from URL.
+        res = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        assert res.status_code == 200, res.text
+        assert OAUTH_NONCE_COOKIE in res.cookies, res.headers.get("set-cookie")
+        # Cookie should be HttpOnly and path-scoped to the callback.
+        set_cookie = res.headers.get("set-cookie", "")
+        assert "httponly" in set_cookie.lower()
+        assert "/api/connectors/oauth/callback" in set_cookie.lower()
+
+        nonce_value = res.cookies[OAUTH_NONCE_COOKIE]
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(res.json()["authorize_url"]).query)
+        state_token = qs["state"][0]
+
+        # Drop the cookie httpx auto-stored so the next request behaves like
+        # an attacker who only stole the state token.
+        auth_client.cookies.delete(OAUTH_NONCE_COOKIE)
+
+        # Callback WITHOUT the nonce cookie must be rejected.
+        bad = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state_token},
+            follow_redirects=False,
+        )
+        assert bad.status_code == 400
+        assert "invalid or expired state token" in bad.text.lower()
+
+        # That failed callback must have *consumed* the state row, so even a
+        # subsequent request that presents the right cookie can't redeem it.
+        replay = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state_token},
+            cookies={OAUTH_NONCE_COOKIE: nonce_value},
+            follow_redirects=False,
+        )
+        assert replay.status_code == 400
+
+        # And a fresh flow with a *wrong* cookie value is also rejected.
+        res2 = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        state2 = parse_qs(urlparse(res2.json()["authorize_url"]).query)["state"][0]
+        auth_client.cookies.delete(OAUTH_NONCE_COOKIE)
+        wrong = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "anything", "state": state2},
+            cookies={OAUTH_NONCE_COOKIE: "tampered-value"},
+            follow_redirects=False,
+        )
+        assert wrong.status_code == 400
+        assert "invalid or expired state token" in wrong.text.lower()
+    finally:
+        REGISTRY.pop(fake.id, None)
+
+
+@pytest.mark.asyncio
+async def test_oauth_callback_succeeds_with_matching_nonce_cookie(
+    auth_client, monkeypatch,
+):
+    """End-to-end: when the browser presents both the state and its bound
+    nonce cookie, the callback completes and persists the connection."""
+    from idpkit.connectors.oauth import OAUTH_NONCE_COOKIE
+    from idpkit.connectors.registry import REGISTRY
+    from idpkit.connectors.base import (
+        Connector, ConnectorAuthType, ConnectorTool,
+    )
+
+    async def _fake_exchange(code, redirect_uri):
+        assert code == "the-code"
+        return {"access_token": "good-tok", "scope": "read"}
+
+    fake = Connector(
+        id="fake_oauth_ok",
+        display_name="Fake OAuth OK",
+        description="t",
+        auth_type=ConnectorAuthType.OAUTH2,
+        tools=[ConnectorTool(
+            name="fake_oauth_ok_do",
+            description="x",
+            parameters={"type": "object", "properties": {}},
+            executor=lambda a, c: None,
+        )],
+        oauth_authorize_url_builder=lambda state, redirect_uri: (
+            f"https://provider.example/auth?state={state}"
+        ),
+        oauth_exchange=_fake_exchange,
+    )
+    REGISTRY[fake.id] = fake
+    try:
+        res = await auth_client.get(f"/api/connectors/{fake.id}/oauth/start")
+        assert res.status_code == 200
+        from urllib.parse import urlparse, parse_qs
+        state_token = parse_qs(urlparse(res.json()["authorize_url"]).query)["state"][0]
+        # httpx has the cookie stored on the client; the next call sends it
+        # automatically because we're hitting the same host/path.
+        cb = await auth_client.get(
+            "/api/connectors/oauth/callback",
+            params={"code": "the-code", "state": state_token},
+            follow_redirects=False,
+        )
+        assert cb.status_code == 302
+        assert "oauth_ok=1" in cb.headers["location"]
+    finally:
+        REGISTRY.pop(fake.id, None)
+
+
+@pytest.mark.asyncio
 async def test_oauth_start_for_google_without_env_returns_503(auth_client, monkeypatch):
     # Without GOOGLE_OAUTH_CLIENT_ID set, the start endpoint must surface a
     # configuration error rather than crash.

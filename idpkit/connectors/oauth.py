@@ -17,6 +17,8 @@ which worker began the flow:
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -39,6 +41,37 @@ logger = logging.getLogger(__name__)
 
 # OAuth state tokens are short-lived; users typically complete consent in <2 min.
 STATE_TTL = timedelta(minutes=10)
+
+# Cookie name for the per-flow browser-binding nonce. The cookie is scoped to
+# the OAuth callback path so it is only ever transmitted on the redirect-back
+# request and is invisible to the rest of the app.
+OAUTH_NONCE_COOKIE = "idpkit_oauth_nonce"
+OAUTH_NONCE_COOKIE_PATH = "/api/connectors/oauth/callback"
+
+
+def _nonce_secret() -> bytes:
+    return (os.environ.get("SECRET_KEY") or "").encode("utf-8")
+
+
+def issue_nonce() -> tuple[str, str]:
+    """Generate a per-flow nonce and the HMAC hash to persist with the state.
+
+    Returns ``(raw_nonce, nonce_hash)``. The raw nonce goes into a short-TTL,
+    http-only cookie on the originating browser; the hash is stored in the
+    state-row payload so the callback can verify the browser matches.
+    """
+    nonce = secrets.token_urlsafe(24)
+    return nonce, hash_nonce(nonce)
+
+
+def hash_nonce(nonce: str) -> str:
+    return hmac.new(_nonce_secret(), nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def verify_nonce(cookie_value: Optional[str], expected_hash: Optional[str]) -> bool:
+    if not cookie_value or not expected_hash:
+        return False
+    return hmac.compare_digest(hash_nonce(cookie_value), expected_hash)
 
 
 @dataclass

@@ -18,7 +18,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -29,7 +29,10 @@ from idpkit.connectors import (
     ConnectorAuthError, ConnectorAuthType, ConnectorError,
     decrypt_credentials, encrypt_credentials, get_connector, list_connectors,
 )
-from idpkit.connectors.oauth import consume_state, new_state
+from idpkit.connectors.oauth import (
+    OAUTH_NONCE_COOKIE, OAUTH_NONCE_COOKIE_PATH, STATE_TTL,
+    consume_state, issue_nonce, new_state, verify_nonce,
+)
 from idpkit.db.models import Connection, ConnectionAuditLog, User, UserRole, utcnow
 
 
@@ -361,6 +364,7 @@ def _oauth_redirect_uri(request: Request) -> str:
 async def oauth_start(
     connector_id: str,
     request: Request,
+    response: Response,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -369,12 +373,28 @@ async def oauth_start(
         raise HTTPException(400, "Connector does not use OAuth2")
     if not connector.oauth_authorize_url_builder:
         raise HTTPException(500, "Connector OAuth not configured")
-    state = await new_state(db, {"user_id": user.id, "connector_id": connector_id})
+    nonce, nonce_hash = issue_nonce()
+    state = await new_state(db, {
+        "user_id": user.id,
+        "connector_id": connector_id,
+        "nonce_hash": nonce_hash,
+    })
     redirect_uri = _oauth_redirect_uri(request)
     try:
         auth_url = connector.oauth_authorize_url_builder(state, redirect_uri)
     except ConnectorError as exc:
         raise HTTPException(503, str(exc))
+    # Bind the state token to *this* browser: a stolen state value can't be
+    # redeemed without the matching short-TTL, http-only cookie.
+    response.set_cookie(
+        key=OAUTH_NONCE_COOKIE,
+        value=nonce,
+        max_age=int(STATE_TTL.total_seconds()),
+        httponly=True,
+        secure=(request.url.scheme == "https"),
+        samesite="lax",
+        path=OAUTH_NONCE_COOKIE_PATH,
+    )
     return {"authorize_url": auth_url}
 
 
@@ -390,8 +410,14 @@ async def oauth_callback(
         return RedirectResponse(f"/connections?oauth_error={error}", status_code=302)
     if not code or not state:
         raise HTTPException(400, "Missing code or state")
+    # Read the per-flow nonce cookie *before* consuming the state row so a
+    # missing/mismatched cookie still spends the state token (preventing
+    # offline brute-forcing of the cookie value against a valid state).
+    nonce_cookie = request.cookies.get(OAUTH_NONCE_COOKIE)
     payload = await consume_state(db, state)
     if not payload:
+        raise HTTPException(400, "Invalid or expired state token")
+    if not verify_nonce(nonce_cookie, payload.get("nonce_hash")):
         raise HTTPException(400, "Invalid or expired state token")
     connector = get_connector(payload["connector_id"])
     if not connector or not connector.oauth_exchange:
@@ -411,4 +437,6 @@ async def oauth_callback(
         db, payload["user_id"], connector.id, token_payload,
         display_name=label, metadata={"granted_scopes": token_payload.get("scope")},
     )
-    return RedirectResponse("/connections?oauth_ok=1", status_code=302)
+    redirect = RedirectResponse("/connections?oauth_ok=1", status_code=302)
+    redirect.delete_cookie(OAUTH_NONCE_COOKIE, path=OAUTH_NONCE_COOKIE_PATH)
+    return redirect
