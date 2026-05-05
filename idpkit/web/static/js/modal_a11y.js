@@ -38,6 +38,13 @@
     if (st.open) return;
     const prevTrigger = document.activeElement;
     const handler = (e) => {
+      if (e.key === 'Escape') {
+        // Click the close button if one exists; per-template Alpine handlers
+        // typically wire the actual close logic.
+        const closer = el.querySelector('.modal-close, .btn-close, .mention-popup-close');
+        if (closer) { closer.click(); e.stopPropagation(); }
+        return;
+      }
       if (e.key !== 'Tab') return;
       const fs = focusables(el);
       if (fs.length === 0) { e.preventDefault(); return; }
@@ -50,7 +57,8 @@
       }
     };
     el.addEventListener('keydown', handler);
-    state.set(el, { open: true, prevTrigger, handler });
+    document.addEventListener('keydown', handler);
+    state.set(el, { open: true, prevTrigger, handler, docHandler: handler });
     // Defer to allow Alpine transitions to settle.
     setTimeout(() => {
       const fs = focusables(el);
@@ -68,6 +76,7 @@
     const st = state.get(el);
     if (!st || !st.open) return;
     el.removeEventListener('keydown', st.handler);
+    if (st.docHandler) document.removeEventListener('keydown', st.docHandler);
     state.set(el, { open: false });
     if (st.prevTrigger && typeof st.prevTrigger.focus === 'function'
         && document.contains(st.prevTrigger)) {
