@@ -1,80 +1,87 @@
-# IDP Kit — Intelligent Document Processing Toolkit & AI Agent
+# IDP Kit
 
-## Overview
-IDP Kit is a Python-based intelligent document processing toolkit designed for document parsing, indexing, retrieval, processing, and generation. It features an AI agent and is delivered as a FastAPI web application with a Jinja2 template-based frontend. The project aims to provide comprehensive tools for managing and extracting insights from various document types, supporting an end-to-end intelligent document processing workflow.
+IDP Kit is a Python-based intelligent document processing toolkit and AI agent for parsing, indexing, retrieving, processing, and generating documents.
 
-## User Preferences
+## Run & Operate
+
+```bash
+# Run the application
+uvicorn idpkit.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Production with Gunicorn
+gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120
+```
+
+**Required Environment Variables:**
+- `SECRET_KEY`: Stable random value (≥32 chars) for JWT signing and credential encryption.
+- `DEPLOYED_DOMAIN`: Canonical production hostname (e.g., `idpkit.example.com`).
+- `DATABASE_URL`: PostgreSQL async connection URL.
+- `IDP_ADMIN_PASSWORD`: Initial password for the seeded `admin` user.
+
+**Optional Environment Variables:**
+- `CORS_EXTRA_ORIGINS`: Comma-separated additional browser origins.
+- `OAUTH_REDIRECT_BASE_URL`: Overrides the OAuth callback base URL.
+- `EMAIL_API_KEY`: API key for sending e-sign invitations.
+- `VISION_MODEL`: Model used for document verification (default `gpt-4o`).
+- `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE`: PostgreSQL connection pool settings.
+
+## Stack
+
+- **Framework**: FastAPI
+- **Runtime**: Python 3.10+
+- **ORM**: SQLAlchemy (async)
+- **Validation**: Pydantic
+- **Build Tool**: Gunicorn, Uvicorn
+
+## Where things live
+
+- `/idpkit`: Core application source code.
+    - `/idpkit/api/routes`: API endpoints.
+    - `/idpkit/agent`: AI agent implementation and tools.
+    - `/idpkit/batch`: Batch processing logic.
+    - `/idpkit/connectors`: SaaS connector implementations.
+    - `/idpkit/db/models.py`: Database schema definitions.
+    - `/idpkit/esign`: E-signature workflow.
+    - `/idpkit/verifier`: Document verification engine.
+    - `/idpkit/web/templates`: Jinja2 frontend templates.
+- `idpkit/core/llm.py`: LLM API key resolution logic.
+- `idpkit/core/web_search.py`: Jina AI web search utility.
+- `docs/skill-authoring.md`: Guide for creating connector-aware skills.
+- `tests/test_esign_e2e.py`: E-signature end-to-end tests.
+
+## Architecture decisions
+
+- **No external vector database**: Retrieval system uses a tree-based approach, loading document content on-demand without a separate vector store.
+- **Dynamic Connector Tooling**: Agent dynamically registers tools for *active* user connections only, injecting "Connector Availability" into the system prompt.
+- **Secure Credential Handling**: SaaS connector credentials are encrypted with Fernet (key derived from `SECRET_KEY`), decrypted just-in-time, and never logged or exposed to LLM context.
+- **Robust E-Signature System**: Implements a full envelope-based e-sign workflow with parallel/sequential signing, bulk-apply fields, HMAC-signed audit certificates, and a detailed activity timeline.
+- **Leader-locked daily audit prune**: Ensures `connection_audit_log` pruning runs safely and efficiently across multiple Gunicorn workers using PostgreSQL advisory locks.
+
+## Product
+
+- **Document Processing**: Parsing (PDF, DOCX, HTML, PPTX, YouTube transcripts), indexing, and AI auto-tagging.
+- **AI Agent (IDA)**: Equipped with 18 specialized tools for document interaction, knowledge graph querying, report generation, web search, and sandboxed code/browser execution. Supports user-created custom skills.
+- **SaaS Connectors**: Pluggable framework with 9 out-of-the-box integrations (Slack, Notion, GitHub, Linear, HubSpot, Dropbox, Jira, AWS S3, Google Workspace), supporting org-wide sharing and user-specific allowlists.
+- **Knowledge Graph**: Entity extraction, cross-document linking, visualization, bulk generation, and deep analysis with web enrichment.
+- **Batch Processing**: 3-step workflow for processing documents, schema generation from prompts, and formatted DOCX output.
+- **E-Signature**: DocuSign-like workflow with sender/signer UIs, field placement, secure signing, audit trails, and bulk-apply field propagation.
+- **Document Verifier**: Multimodal AI verification of documents against expected descriptions, supporting various file types and real-time streaming results.
+- **Per-User Model Preferences**: Users can set default LLM providers and models, with a clear override chain.
+
+## User preferences
+
 I prefer clear, concise, and structured communication. When making changes, please outline the proposed modifications and their rationale before implementation. For complex features or architectural decisions, provide detailed explanations and consider potential impacts. I favor iterative development and expect regular updates on progress. Do not make changes to files outside the `idpkit/` directory unless explicitly instructed.
 
-## System Architecture
-The application follows a client-server architecture:
--   **Backend**: Python FastAPI application.
--   **Frontend**: Server-Side Rendered (SSR) Jinja2 templates for the web UI.
--   **Database**: PostgreSQL is the primary database, managed with SQLAlchemy (async). It includes tables for core data, knowledge graphs, batch processing, and tags. The schema is auto-created on startup.
--   **File Storage**: An abstract `StorageBackend` interface supports Google Cloud Storage (GCS) via Replit sidecar for production and local filesystem for development. GCS supports direct client uploads via signed URLs.
--   **Authentication & Authorization**: Features a three-tier role hierarchy (`superadmin`, `admin`, `user`), JWT-based authentication, API key support, and a user approval workflow for new registrations. An admin panel facilitates user management and rate limit configuration.
--   **Security**: Employs JWT signing, CORS configuration, sanitized API error responses, rate limiting, and restricts file uploads to prevent XSS. LLM API keys are strictly loaded from environment variables. The `_resolve_api_key_for_model()` function in `idpkit/core/llm.py` auto-selects the correct provider API key based on model prefix (`gemini/` → `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `gpt-`/`o1-`/`o3-`/`o4-` → `OPENAI_API_KEY`, `claude-` → `ANTHROPIC_API_KEY`, `openrouter/` → `OPENROUTER_API_KEY`). Authentication errors from LLM providers fail immediately without retrying.
--   **Document Processing**: Includes parsers for various document types (PDF, DOCX, HTML, PPTX, YouTube transcripts), an indexing engine (`PageIndex`), and an AI auto-tagger.
--   **Retrieval**: Utilizes a tree-based retrieval system without an external vector database, where search results load document content on-demand.
--   **AI Agent**: The IDA agent (`idpkit/agent/agent.py`) is equipped with 18 specialized tools for document interaction, knowledge graph querying, smart tool execution, report generation, web search (Jina AI), E2B code execution, E2B browser automation, and custom skills. E2B tools (`idpkit/agent/e2b_tools.py`) provide `execute_python`, `install_package`, and `browse_web` via sandboxed cloud execution. The Skills system (`idpkit/agent/skills.py`) loads user-created custom skills from the database and injects them into the system prompt; the `use_skill` tool lets IDA load full skill instructions on demand.
--   **SaaS Connectors**: A pluggable connector framework (`idpkit/connectors/`) ships nine integrations out of the box — Slack, Notion, GitHub, Linear, HubSpot, Dropbox (API-key/token); Jira, AWS S3 (composite credentials); and Google Workspace (OAuth2, Drive + Gmail). Credentials are stored in a `connections` table encrypted with Fernet (key derived from `SECRET_KEY` via sha256), decrypted just-in-time on every tool call, and never appear in logs or LLM context. The agent dynamically registers tools for each user's *active* connections only and injects a "Connector Availability" section into the system prompt so the model knows which integrations are connected vs. unavailable. Auth failures auto-mark a connection `disconnected` and prompt re-auth — no silent retries. Skill manifests (`SKILL.md` frontmatter `requires.connectors`/`requires.tools`/`allowed-tools`) are parsed by `idpkit/agent/skill_requirements.py` and surfaced as a pre-install compatibility checklist in the import-preview UI. Endpoints under `/api/connectors/*` (list, connect, test, disconnect, OAuth start/callback) back a `/connections` web page. Connections also support **org-wide sharing** (`Connection.scope` ∈ `private|org`, with `owner_org` for the tenant id): an admin can promote their own connection via `POST /api/connectors/connections/{id}/share` (and revoke via `…/unshare`); other users in the deployment then see it on `/connections`, may attach skills to it, and the runtime resolves it as a fallback when they have no personal connection — but cannot read its credentials, edit, disconnect, or unshare it. Sharing additionally accepts a **per-user allowlist** (`Connection.allowed_user_ids` JSON column, settable via the same `…/share` endpoint with `{"allowed_user_ids": [user_id, ...]}`) — when populated, only the owner plus those users see and can resolve the connection; an empty list (or `null`) preserves the legacy share-with-everyone behavior. The allowlist is enforced both in `list_active_connections`/`get_active_connection` and in the `/api/connectors/connections` listing (admins still see all shared rows for management); the `/connections` page exposes a "Manage sharing" modal with a teammate picker. Every non-owner invocation is recorded in the `connection_audit_log` table (user, tool, success, error) and surfaced via `GET /api/connectors/connections/{id}/audit` for the owner/admins. OAuth client IDs/secrets come from env (e.g. `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`); CSRF state is stored in-process (single-worker assumption). See `docs/skill-authoring.md` for connector-aware skill authoring.
--   **Knowledge Graph**: A dedicated module for building and querying knowledge graphs, including entity extraction, cross-document linking, visualization, and bulk graph generation. The `POST /api/graph/build-bulk` endpoint accepts `{ "document_ids": [...] }` and sequentially builds graphs for multiple documents, auto-indexing unindexed docs first, skipping those already built. Both the Knowledge Graph page and Knowledge Base tag detail view offer "Index & Build Graphs" buttons with real-time progress feedback. The `POST /api/graph/insights` endpoint returns structured JSON insights with 8 analytical dimensions: overview, hidden connections, cross-document patterns, temporal/dimensional analysis, knowledge gaps (with search queries), cross-source triangulation, recommendations (with ready-to-use chat prompts), and **deep analysis** (web-enriched investigative findings with severity levels, categories like contradiction/power_dynamic/hidden_connection/strategic_implication/blind_spot, evidence citations, and a meta-observation). Deep analysis runs targeted web searches on top entities and cross-document patterns, then uses a second LLM pass for hard-hitting findings. Server-side analytics include entity type distribution, relationship type distribution, scope breakdown (intra vs inter-document), confidence stats, top entities, and source type breakdown. The frontend insights panel features a 7-tab layout (Overview, Connections, Cross-Doc, Dimensions, Gaps & Sources, Deep Analysis, Recommendations) with CSS bar charts, entity type visualizations, scope breakdown bars, confidence meters, and interactive entity chips that highlight nodes in the graph. Knowledge gap cards include "Ask About This" and "Ask IDA" buttons. A follow-up chat bar at the bottom of the insights panel allows inline questions with suggested question chips; the `POST /api/graph/insights/followup` endpoint handles conversational follow-ups with graph data context, **web search enrichment** (Jina AI), and **entity-aware context** (auto-detects mentioned entities, loads their mentions/relationships/document content for richer answers). The frontend passes entity context when an entity detail panel is open or when the question mentions a known entity. Web sources are displayed alongside AI answers. Graceful fallback handles both JSON and markdown LLM responses. YouTube video mentions include clickable timestamped links that open the video at the exact position (timestamps use `start_time`/`end_time` seconds from transcript segments). The entity detail panel shows rich connection cards with the connected entity's type badge, relation type, scope (same-doc/cross-doc), confidence indicator, and context snippet; clicking a connection navigates to that entity. Entity type filter buttons in the sidebar also ghost non-matching nodes in the D3 graph visualization. **Fullscreen Mode**: a toolbar button toggles distraction-free fullscreen graph exploration (hides sidebar/header, Escape to exit). **Smart Focus** uses numeric indices and entity names for robust LLM-to-entity matching (fallback substring matching avoids UUID hallucination issues). The `GET /api/graph/export` endpoint returns the complete knowledge graph (all entities/edges, no view limit) in JSON, CSV entities, or CSV relationships format — download options appear in the toolbar dropdown under "Full Graph (All Data)". **Focused Exploration Mode**: toggled via toolbar button, allows multi-select of nodes; selected nodes get purple glow, their connected neighbors stay fully visible, and all unrelated nodes/edges become ghostly transparent (opacity ~0.08); supports adding/removing nodes from the focus set and clearing selection. **AI Smart Focus**: `POST /api/graph/smart-focus` accepts a natural language prompt and document IDs, uses the LLM to score entity relevance, and returns focus_entity_ids + summary; the frontend toolbar has a text input that triggers Smart Focus, automatically activating Focused Exploration Mode to highlight relevant nodes and ghost unrelated ones. All per-document graph endpoints (`/documents/{doc_id}/entities`, `/links`, `/summary`, `/build`, `/visualization`) enforce document ownership checks.
--   **Batch Processing**: A redesigned 3-step workflow for processing documents in batches, supporting schema generation from prompts. Batch outputs are persisted to app storage as formatted DOCX files (`batch_outputs/{batch_id}/{item_id}.docx`) and JSON backups, with the storage key saved in `BatchItem.output_file`. The DOCX formatter (`idpkit/batch/formatter.py`) has tool-specific layouts for each of the 13 smart tools. Features include: individual DOCX result download, bulk ZIP download of all results, and batch job deletion with storage cleanup.
--   **E-Signature (DocuSign-like)**: Full envelope-based e-sign workflow under `/api/esign/*` with a sender UI at `/esign` and a public signer UI at `/esign/sign/{token}`. Envelopes can be created by uploading a PDF or by referencing an existing `document_id` (PDF only); the source bytes are always copied to an immutable per-envelope snapshot (`esign/{owner_id}/{envelope_id}/original.pdf`) before signing. Supports parallel and sequential signing orders, drag/drop + resize field placement (signature/initials/date/text), server-side enforcement of consent, required fields, and signer-field assignment. **Bulk-apply across pages** (opt-in per field via the sender's Field Properties panel: "Apply to all N pages" or "Apply from page X onward") clones a field across the chosen pages with a shared `bulk_group_id`; the signer fills it once and the value is propagated to every cloned sibling — server-side enforcement runs before the required-field check, with a `bulk_apply_propagated` audit event recorded per group. Status lifecycle: `draft → sent → viewed → partially_signed → completed` with side transitions to `declined`, `voided`, `expired` (auto-expire on access). Tokens (signing + completion-download) are stored as SHA-256 hashes; raw values exist only in emails. Finalized PDF gets an appended audit-certificate page (with a QR code linking to `/esign/{id}/detail`) and a standalone audit-report PDF — both HMAC-signed with `SECRET_KEY` (required, fail-closed). The envelope detail page renders a full **Activity Timeline** of audit events (icon, actor, timestamp, IP, browser, geo, notes). Audit events on public `/sign/*` paths consistently capture IP + User-Agent. Email is delivered via `https://myutils.replit.app/send_email` using `EMAIL_API_KEY`; when the key is absent, the full email body is logged as a fallback. A "E-Sign this document" entry point appears on the document detail page and the knowledge-base list (PDF docs only). E2E test coverage in `tests/test_esign_e2e.py` walks happy path, bulk-apply propagation, void, decline, consent enforcement, required-field enforcement, and post-send field-edit lockout. Files: `idpkit/api/routes/esign.py`, `idpkit/esign/{models,pdf_utils,email}.py`, templates `esign_dashboard.html`, `esign_prepare.html`, `esign_sign.html`, `esign_detail.html`. Per-route OpenAPI summaries are auto-published at `/docs`.
--   **Document Verifier**: A multimodal AI verification feature (`idpkit/verifier/engine.py`) that checks uploaded documents against expected descriptions. Supports images (base64), PDFs (rendered as images via PyMuPDF), and text documents (DOCX, TXT, HTML, CSV). API routes at `POST /api/verify` (SSE for multi-file, JSON for single) and `POST /api/verify/single`. Uses the `VISION_MODEL` env var (default `gpt-4o`). Max 20MB per file. Returns structured results: `{ status, matches: [{expected, result, details, confidence}], summary }`. Web UI at `/verifier` with drag-and-drop upload, multiple expectations input, real-time SSE streaming results, and model selector. Files: `idpkit/verifier/engine.py`, `idpkit/api/routes/verifier.py`, `idpkit/web/templates/verifier.html`.
--   **Per-User Model Preferences**: Users can set a default LLM provider and model via the Settings page. Preferences are persisted to the database (`users.default_provider`, `users.default_model`) and synced via `GET/POST /api/settings/default-model`. The override chain (highest to lowest priority): 1) explicit model selected per-request/UI section, 2) user's DB-persisted default model, 3) `IDP_DEFAULT_MODEL` env var, 4) hardcoded fallback (`gpt-4o-mini`). The `get_llm_for_user()` dependency in `idpkit/api/deps.py` handles the fallback chain. Agent chat, tools, verifier, and batch all respect the user's saved default model.
--   **UI/UX**: Features an SVG favicon, interactive agent chat with collapsible tool calls and source citations, dashboard tiles for quick access to features, a dedicated Knowledge Graph explorer with D3 visualization and export options, and YouTube ingestion with a video preview/selection modal. Knowledge Base filtering, bulk actions, and AI auto-tagging are also integrated. The document viewer supports tree, outline, and JSON views. LLM model lists are dynamically fetched.
--   **Live Log Streaming**: During indexing, pipeline output is streamed to the UI in real-time. The `JsonLogger` accepts an `on_log` callback that pipes entries into a thread-safe buffer (with `threading.Lock`) in `_run_indexing_task`. A periodic `asyncio` task flushes the buffer to the `Job.logs` JSON column every 4 seconds, ensuring entries from thread-pool workers (LLM calls) appear promptly. The status API (`GET /api/indexing/documents/{id}/index/status`) supports `last_log_index` for incremental fetching. The document page shows a collapsible dark-themed terminal panel with color-coded log levels, auto-scrolling, and persistent output after completion/failure. Per-group iteration logging in `process_no_toc`, `process_toc_no_page_numbers`, and `process_toc_with_page_numbers` shows "Processing page group X of Y" progress. The model name, document info, and pipeline stage transitions are prominently logged.
--   **Performance**: N+1 query fixes and query limits are implemented in list endpoints.
+## Gotchas
 
-## External Dependencies
--   **Database Drivers**: `asyncpg`
--   **Web Framework**: `FastAPI`, `Uvicorn`, `Gunicorn` (production deployment with UvicornWorker)
--   **ORM**: `SQLAlchemy`
--   **Templating**: `Jinja2`
--   **LLM Integration**: `OpenAI`, `LiteLLM`, `tiktoken` (for tokenization)
--   **Document Parsing**: `PyMuPDF`, `PyPDF2`, `python-docx`, `beautifulsoup4`
--   **Authentication**: `passlib`, `bcrypt`, `python-jose`
--   **Rate Limiting**: `slowapi`
--   **HTTP Client**: `httpx`
--   **Data Validation**: `Pydantic`
--   **Graph Analytics**: `NetworkX` (optional)
--   **YouTube Integration**: `youtube-transcript-api`, `google-api-python-client` (YouTube Data API v3)
--   **E2B SDK**: `e2b-code-interpreter`, `e2b` (cloud sandboxes for code execution and browser automation)
--   **Third-Party APIs**:
-    -   `Jina AI` (for `web_search` and `fetch_url` — shared utility in `idpkit/core/web_search.py`, used by both agent tools and graph insights)
-    -   `E2B` (sandboxed Python execution and browser automation for IDA agent)
-    -   `Supadata API` (fallback for YouTube transcript extraction)
-    -   `Webshare Proxy` (for proxied YouTube transcript fetching)
--   **Skills Framework**: User-uploadable custom skills following the Anthropic Agent Skills spec. Skills are stored in the `skills` DB table with SKILL.md content (YAML frontmatter + instructions); auxiliary scripts and resource files are persisted in the `Skill.scripts` JSON column. CRUD API at `/api/skills`, management UI at `/skills`. Active skills are injected into IDA's system prompt per conversation. The `use_skill` agent tool loads full skill content on demand. **Importer (`/api/skills/import`)** accepts single `SKILL.md` files, full `.zip` bundles (max 5MB / 50 files, no path traversal, no symlinks), and public HTTPS URLs (raw `.md`, GitHub blob/tree links auto-rewritten to raw, or `.zip` downloads). All URL fetches are SSRF-defended: HTTPS only, redirects re-validated per hop, hostnames must resolve to public IPs (private/loopback/link-local/multicast blocked), 5-redirect cap, 10s connect / 30s total timeout. Resource files >64KB are dropped with a warning; non-UTF8 files are skipped. The endpoint supports `preview=true` (parse without saving) and `overwrite=true` (replace an existing skill of the same name). **Community catalog (`/api/skills/community`)** browses agentskills.io with a 5-minute in-process cache and graceful fallback to last-good data on network failure; `/api/skills/community/install` reuses the same URL importer. The validator (`_validate_skill_name` + `_parse_frontmatter`) is shared with the legacy single-file create flow (`POST /api/skills`).
+- **Production Startup**: The app refuses to start in production without `SECRET_KEY`, `DEPLOYED_DOMAIN`, `DATABASE_URL`, and `IDP_ADMIN_PASSWORD` environment variables set.
+- **MIME Type Validation**: Document uploads are rigorously validated; files with content that contradicts their declared extension will be rejected.
+- **LLM API Key Selection**: LLM API keys are auto-selected based on model prefix and loaded strictly from environment variables. Authentication errors fail immediately without retrying.
+- **Nix Layer Caching**: Keep Nix packages list minimal to prevent deployment timeouts if layers become uncached.
 
-## Production Checklist
-Before publishing, the deployment must have:
-- **`SECRET_KEY`** — stable random value (≥32 chars). Used to derive the Fernet key that encrypts connector credentials and to sign JWTs. The app refuses to start in production (i.e. when `DEPLOYED_DOMAIN` is set, or `ENVIRONMENT=production`) without it; in dev it falls back to an ephemeral key with a warning. Aliases `SESSION_SECRET` / `IDP_SECRET_KEY` are still accepted.
-- **`DEPLOYED_DOMAIN`** — the canonical production hostname (e.g. `idpkit.example.com`). Used as the single source of truth for: the CORS allowlist, the OAuth callback base URL (when `OAUTH_REDIRECT_BASE_URL` is unset), and the production-mode signal that enables the fail-closed behaviours above.
-- **`DATABASE_URL`** — Postgres async URL.
-- **`IDP_ADMIN_PASSWORD`** — initial admin password for the seeded `admin` user.
-- Optional: `CORS_EXTRA_ORIGINS` (comma-sep additional browser origins), `OAUTH_REDIRECT_BASE_URL` (override the OAuth base), `EMAIL_API_KEY` (for e-sign invitations).
+## Pointers
 
-**Security model on top of the env vars**:
-- CORS is pinned to `DEPLOYED_DOMAIN` + `CORS_EXTRA_ORIGINS`; wildcard `*` is never combined with credentialed cookies. With no allowlist configured in production, cross-origin browser traffic is denied (same-origin still works).
-- `/api/auth/login` and `/api/auth/register` are rate-limited at 5/min per IP via SlowAPI to make brute-force impractical.
-- State-changing routes authenticated by the `session_token` cookie require a matching `X-CSRF-Token` header (double-submit cookie pattern); Bearer-token and API-key requests bypass CSRF.
-- `/esign/{envelope_id}/detail` requires a logged-in session and 302-redirects to `/login` otherwise.
-- LLM provider API keys are never logged (not even as redacted prefixes).
-
-## Deployment Notes
--   **Nix layer caching**: Deployment works best when Nix layers are cached. Keep the Nix packages list minimal — only include runtime dependencies, not build-time tools. Heavy build-only packages (`cargo`, `rustc`, `swig`, `xcbuild`) were removed to reduce layer size. The `build.sh` script copies needed shared libraries (`libstdc++.so.6`, `libgcc_s.so.1`) into `.deploy-libs/` so `gcc` is only needed in the dev environment. If Nix layers become uncached (e.g., after a channel update), a smaller package list ensures the push completes within the deployment timeout.
--   **Deployment target**: `autoscale` with Gunicorn + UvicornWorker, 2 workers, 120s timeout. A self-keep-alive mechanism pings `http://127.0.0.1:{port}/health` every 60 seconds during active indexing jobs to prevent the autoscale container from idling out (15-minute timeout). The keep-alive task is cancelled automatically when the job completes or fails.
--   **Auto-resume on restart**: On startup, `_recover_stale_jobs` detects indexing jobs stuck in `pending`/`running` and automatically re-queues them via `asyncio.create_task(_run_indexing_task(...))`. A "Resuming after server restart..." log entry is appended to the existing job logs. Non-indexing stuck jobs are marked as failed. This ensures long-running indexing tasks survive container restarts from autoscale or redeployment.
--   **Event loop protection**: All synchronous blocking LLM calls in the indexing pipeline (`page_index.py`) are wrapped with `asyncio.to_thread()` at the async→sync boundaries (`check_toc`, `process_toc_with_page_numbers`, `process_toc_no_page_numbers`, `process_no_toc`, `single_toc_item_index_fixer`, `generate_doc_description`). This prevents Gunicorn worker timeouts during indexing by keeping the Uvicorn event loop free for healthchecks. LiteLLM is configured with `drop_params=True` to auto-strip unsupported parameters (e.g., `temperature=0` for GPT-5 models), and `UnsupportedParamsError` is caught immediately without retrying.
-## Document Upload/Download Hardening (Task #31)
-- **MIME magic-byte sniffing** (`idpkit/api/routes/documents.py::_sniff_format` + `_validate_content_matches_extension`): every upload path — synchronous (`upload_document`), local-fallback (`upload_content`), and direct-to-storage (`confirm_upload`) — now rejects files whose first 512 bytes contradict the declared extension. Disguised content (e.g. HTML uploaded as `.pdf`) is rejected with HTTP 400; for the signed-URL path, the rogue object is also deleted from storage.
-- **Filename safety on download** (`_sanitize_filename_for_header` + `_content_disposition`): downloads emit an RFC 5987 `Content-Disposition` header with both an ASCII-safe `filename="..."` and a UTF-8 percent-encoded `filename*=UTF-8''...`. CR/LF/quote/backslash/path-separator characters are stripped from the ASCII fallback to prevent header-injection attacks.
-- **Streaming downloads**: `download_document` returns a `StreamingResponse` over `StorageBackend.iter_bytes(key, chunk_size=64KB)` (added on `LocalStorage` and `GCSStorage` via `httpx.stream`). The first chunk is pulled before the response starts so storage failures convert to a clean 404/500 HTTPException instead of a half-sent body.
-- **Async PDF parsing**: blocking page-count and SHA-256 computations (`_extract_page_count`, `compute_sha256`, `get_page_count`) are dispatched via `asyncio.to_thread` from the document upload routes and from `esign.create_envelope`, keeping the event loop responsive under concurrent uploads.
-
-## Database Tuning (Task #32)
-- **Composite indexes** on hot query paths are declared in `idpkit/db/models.py` and (re)created idempotently on startup by `_migrate_indexes` in `idpkit/db/session.py` using `CREATE INDEX IF NOT EXISTS` (works on both PostgreSQL and SQLite): `documents(owner_id, created_at)`, `conversations(owner_id, created_at)`, `conversation_messages(conversation_id, created_at)`, `batch_items(batch_job_id, status)`, `connection_audit_log(connection_id, created_at)`. Listing documents on a 100k-row table now returns in tens of ms instead of full-scanning.
-- **Async pool defaults** (Postgres only): `pool_size=20`, `max_overflow=20`, `pool_pre_ping=True`, `pool_recycle=1800`. Overridable per-deployment via `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE`. The previous `3 + 5` pool starved a `-w 2` Gunicorn deploy under as few as 8 concurrent in-flight DB calls.
-- **Leader-locked daily audit prune** (`idpkit/db/audit_prune.py`): the daily `connection_audit_log` sweep now runs inside an explicit transaction (`async with db.begin()`) and gates its `DELETE` behind a Postgres **transaction-scoped** advisory lock (`pg_try_advisory_xact_lock(AUDIT_PRUNE_LOCK_KEY)`). Whichever Gunicorn worker acquires the lock first performs the prune; the other workers observe the held-lock branch and no-op cleanly. Because the lock is transaction-scoped, COMMIT (or ROLLBACK on error) atomically releases it on the same physical connection — eliminating the lock-leak risk that a session-scoped lock would carry across the SQLAlchemy connection pool. A single missing-leader process therefore still produces a daily prune. SQLite (tests, dev) has no advisory locks and falls through to the existing always-run behaviour.
+- **OpenAPI Docs**: `/docs`
+- **Skill Authoring Guide**: `docs/skill-authoring.md`
+- **E2B SDK Documentation**: _Populate as you build_
+- **Jina AI Documentation**: _Populate as you build_
