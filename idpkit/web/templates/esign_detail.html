@@ -198,7 +198,11 @@ function esignDetail() {
         envelope_declined: 'Envelope declined',
         signer_declined: 'Signer declined',
         envelope_expired: 'Envelope expired',
+        envelope_reactivated: 'Envelope reactivated',
+        envelope_extended: 'Expiry extended',
+        envelope_deleted: 'Envelope deleted',
         download_completed: 'Signed PDF downloaded',
+        signed_document_downloaded: 'Signed PDF downloaded',
       }[t] || (t || '').replace(/_/g, ' ');
     },
 
@@ -210,6 +214,8 @@ function esignDetail() {
         envelope_completed:'fa-check-circle', envelope_voided:'fa-ban',
         envelope_declined:'fa-times-circle', signer_declined:'fa-times',
         envelope_expired:'fa-hourglass-end', download_completed:'fa-download',
+        signed_document_downloaded:'fa-download', envelope_reactivated:'fa-rotate-left',
+        envelope_extended:'fa-clock', envelope_deleted:'fa-trash',
       }[t] || 'fa-circle';
     },
 
