@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Templates — IDP Kit{% endblock %}
+{% block content %}
+<div x-data="esignTemplates()" x-init="load()">
+  <div class="page-header">
+    <h2><i class="fas fa-clone"></i> E-Sign</h2>
+  </div>
+  {% with active="templates" %}{% include "_esign_tabs.html" %}{% endwith %}
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px">
+    <div>
+      <h3 style="margin:0">Templates</h3>
+      <div style="color:var(--text-muted);font-size:0.88rem;margin-top:4px">
+        Reusable envelope blueprints. Create one from any draft envelope, then "Use" or "Bulk Send" to many recipients.
+      </div>
+    </div>
+    <a href="/esign/new" class="btn btn-secondary"><i class="fas fa-plus"></i> New Envelope (then save as template)</a>
+  </div>
+
+  <div x-show="loading" style="text-align:center;padding:40px;color:var(--text-muted)">
+    <i class="fas fa-spinner fa-spin" style="font-size:2rem"></i>
+    <p>Loading templates…</p>
+  </div>
+
+  <div x-show="!loading && templates.length === 0" style="text-align:center;padding:60px 20px">
+    <div style="font-size:4rem;margin-bottom:16px;opacity:0.3"><i class="fas fa-clone"></i></div>
+    <h3 style="color:var(--text-secondary);margin-bottom:8px">No templates yet</h3>
+    <p style="color:var(--text-muted);margin-bottom:24px">
+      Open any draft envelope, place fields and signers, then click <strong>Save as Template</strong>.
+    </p>
+    <a href="/esign/new" class="btn btn-primary"><i class="fas fa-plus"></i> Create First Envelope</a>
+  </div>
+
+  <div x-show="!loading && templates.length > 0" style="display:grid;gap:14px">
+    <template x-for="t in templates" :key="t.id">
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px 22px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+          <div style="flex:1;min-width:240px">
+            <h4 style="margin:0 0 4px" x-text="t.name"></h4>
+            <div style="color:var(--text-muted);font-size:0.82rem">
+              <span x-text="(t.roles||[]).length + ' role(s)'"></span> ·
+              <span x-text="(t.fields||[]).length + ' field(s)'"></span> ·
+              <span x-text="t.page_count + ' page(s)'"></span>
+              <template x-if="(t.merge_fields||[]).length > 0">
+                <span> · <span x-text="t.merge_fields.length"></span> merge field(s)</span>
+              </template>
+            </div>
+            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+              <template x-for="r in t.roles" :key="r.id">
+                <span style="background:var(--bg-secondary,#f9fafb);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:0.78rem">
+                  <i class="fas fa-user" style="opacity:0.6;margin-right:4px"></i><span x-text="r.role_label"></span>
+                </span>
+              </template>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <a :href="'/esign/templates/' + t.id + '/use'" class="btn btn-sm btn-primary">
+              <i class="fas fa-play"></i> Use
+            </a>
+            <a :href="'/esign/templates/' + t.id + '/bulk'" class="btn btn-sm" style="background:#6366f1;color:#fff;border-color:#6366f1">
+              <i class="fas fa-layer-group"></i> Bulk Send
+            </a>
+            <a :href="'/esign/templates/' + t.id + '/edit'" class="btn btn-sm">
+              <i class="fas fa-pen"></i> Edit
+            </a>
+            <button @click="del(t)" class="btn btn-sm btn-danger">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+function esignTemplates() {
+  return {
+    loading: true,
+    templates: [],
+    async load() {
+      this.loading = true;
+      try {
+        const r = await fetch('/api/esign/templates', {credentials:'include'});
+        this.templates = r.ok ? await r.json() : [];
+      } catch (e) { this.templates = []; }
+      this.loading = false;
+    },
+    async del(t) {
+      if (!confirm(`Delete template "${t.name}"? Existing envelopes already created from it are unaffected.`)) return;
+      const r = await fetch('/api/esign/templates/' + t.id, {method:'DELETE', credentials:'include'});
+      if (r.status === 204) this.load();
+      else alert('Delete failed: ' + r.status);
+    },
+  };
+}
+</script>
+{% endblock %}

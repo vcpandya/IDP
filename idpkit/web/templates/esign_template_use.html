@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}Use Template — IDP Kit{% endblock %}
+{% block content %}
+<div x-data="tplUse('{{ template_id }}')" x-init="load()">
+  <div class="page-header"><h2><i class="fas fa-play"></i> Send from Template</h2></div>
+  {% with active="templates" %}{% include "_esign_tabs.html" %}{% endwith %}
+
+  <div style="margin-bottom:16px">
+    <a href="/esign/templates" style="color:var(--text-muted);font-size:0.88rem"><i class="fas fa-arrow-left"></i> All templates</a>
+  </div>
+
+  <div x-show="loading" style="text-align:center;padding:40px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading…</div>
+
+  <div x-show="!loading && tpl" style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+    <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px">
+      <h3 style="margin:0 0 4px" x-text="tpl && tpl.name"></h3>
+      <div style="color:var(--text-muted);font-size:0.85rem;margin-bottom:12px" x-text="tpl && (tpl.page_count + ' page · ' + (tpl.roles||[]).length + ' role(s) · ' + (tpl.fields||[]).length + ' field(s)')"></div>
+      <iframe :src="'/api/esign/templates/' + id + '/pdf'" style="width:100%;height:520px;border:1px solid var(--border);border-radius:8px"></iframe>
+    </div>
+
+    <div style="display:grid;gap:16px">
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px">
+        <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-users"></i> Recipients</div>
+        <template x-for="r in tpl.roles" :key="r.role_key">
+          <div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:8px;margin-bottom:8px;align-items:center">
+            <div style="font-weight:500" x-text="r.role_label"></div>
+            <input type="text" placeholder="Name" class="form-input"
+                   x-model="assignments[r.role_key].name" style="padding:6px 8px">
+            <input type="email" placeholder="email@example.com" class="form-input"
+                   x-model="assignments[r.role_key].email" style="padding:6px 8px">
+          </div>
+        </template>
+      </div>
+
+      <div x-show="mergeFields.length > 0" style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px">
+        <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-tags"></i> Merge field values</div>
+        <template x-for="m in mergeFields" :key="m.key">
+          <div style="display:grid;grid-template-columns:160px 1fr;gap:8px;margin-bottom:8px;align-items:center">
+            <div>
+              <span x-text="m.label || m.key"></span>
+              <span x-show="m.required" style="color:#ef4444">*</span>
+              <div style="font-size:0.7rem;color:var(--text-muted)" x-text="'{{' + m.key + '}}'"></div>
+            </div>
+            <input type="text" class="form-input" x-model="mergeValues[m.key]" style="padding:6px 8px">
+          </div>
+        </template>
+      </div>
+
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px">
+        <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-cog"></i> Overrides (optional)</div>
+        <div class="form-group">
+          <label>Title override</label>
+          <input type="text" x-model="titleOverride" class="form-input" :placeholder="tpl && tpl.title">
+        </div>
+        <div class="form-group">
+          <label>Message override</label>
+          <textarea x-model="messageOverride" class="form-input" rows="2" :placeholder="tpl && tpl.message"></textarea>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button @click="submit(false)" class="btn btn-secondary" :disabled="busy">
+          <i class="fas fa-pen"></i> Create Draft
+        </button>
+        <button @click="submit(true)" class="btn btn-primary" :disabled="busy">
+          <i class="fas fa-paper-plane"></i> <span x-text="busy ? 'Sending…' : 'Send Now'"></span>
+        </button>
+      </div>
+      <div x-show="message" :style="'padding:8px;border-radius:6px;font-size:0.85rem;background:' + (error ? '#fef2f2' : '#ecfdf5') + ';color:' + (error ? '#991b1b' : '#065f46')" x-text="message"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function tplUse(id) {
+  return {
+    id, loading: true, busy: false, error: false, message: '', tpl: null,
+    assignments: {}, mergeValues: {}, mergeFields: [],
+    titleOverride: '', messageOverride: '',
+    async load() {
+      this.loading = true;
+      const r = await fetch('/api/esign/templates/' + this.id, {credentials:'include'});
+      if (!r.ok) { this.message='Template not found'; this.error=true; this.loading=false; return; }
+      this.tpl = await r.json();
+      for (const role of this.tpl.roles) {
+        this.assignments[role.role_key] = {
+          name: role.default_name || '', email: role.default_email || '',
+        };
+      }
+      // Merge fields = declared schema ∪ detected keys
+      const seen = new Set();
+      const out = [];
+      for (const m of (this.tpl.merge_fields || [])) {
+        seen.add(m.key.toLowerCase()); out.push(m);
+      }
+      for (const k of (this.tpl.detected_merge_keys || [])) {
+        if (!seen.has(k.toLowerCase())) out.push({key:k, label:k, type:'text', required:false});
+      }
+      this.mergeFields = out;
+      for (const m of out) this.mergeValues[m.key] = '';
+      this.loading = false;
+    },
+    async submit(send) {
+      this.busy = true; this.message = ''; this.error = false;
+      const body = {
+        role_assignments: this.assignments,
+        merge_values: this.mergeValues,
+        title_override: this.titleOverride || null,
+        message_override: this.messageOverride || null,
+        send_immediately: !!send,
+      };
+      try {
+        const r = await fetch('/api/esign/templates/' + this.id + '/instantiate', {
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (r.ok) {
+          if (send) {
+            this.message = 'Sent! Redirecting to envelope…';
+            setTimeout(() => location.href = '/esign/' + j.envelope_id + '/detail', 700);
+          } else {
+            this.message = 'Draft created. Redirecting to prepare…';
+            setTimeout(() => location.href = '/esign/' + j.envelope_id + '/prepare', 700);
+          }
+        } else {
+          this.message = 'Error: ' + (j.detail || r.status); this.error = true;
+        }
+      } catch (e) { this.message = 'Error: ' + e; this.error = true; }
+      this.busy = false;
+    },
+  };
+}
+</script>
+{% endblock %}
