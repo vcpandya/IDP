@@ -54,7 +54,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - **No external vector database**: Retrieval system uses a tree-based approach, loading document content on-demand without a separate vector store.
 - **Dynamic Connector Tooling**: Agent dynamically registers tools for *active* user connections only, injecting "Connector Availability" into the system prompt.
 - **Secure Credential Handling**: SaaS connector credentials are encrypted with Fernet (key derived from `SECRET_KEY`), decrypted just-in-time, and never logged or exposed to LLM context.
-- **Robust E-Signature System**: Implements a full envelope-based e-sign workflow with parallel/sequential signing, bulk-apply fields, HMAC-signed audit certificates, and a detailed activity timeline.
+- **Robust E-Signature System**: Full envelope-based e-sign with parallel/sequential signing, bulk-apply fields, HMAC-signed audit certificates, per-token rate limiting (`ESIGN_TOKEN_RATE_*`), one-time public download tokens, geo TTL caching, payload size caps (`ESIGN_MAX_SIG_VALUE_CHARS` / `ESIGN_MAX_TEXT_VALUE_CHARS`), background expiry sweep with PG advisory lock (`ESIGN_EXPIRY_SWEEP_INTERVAL`), envelope delete/extend/reactivate flows, and DocuSign-style typed-signature font picker.
 - **Leader-locked daily audit prune**: Ensures `connection_audit_log` pruning runs safely and efficiently across multiple Gunicorn workers using PostgreSQL advisory locks.
 
 ## Product
