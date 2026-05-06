@@ -163,3 +163,59 @@ async def esign_detail(request: Request, envelope_id: str, user=Depends(get_curr
 @router.get("/sign/{token}", response_class=HTMLResponse)
 async def esign_sign(request: Request, token: str):
     return templates.TemplateResponse("esign_sign.html", {"request": request, "token": token})
+
+
+# ---- E-Sign Templates + Batch Signing pages ----
+
+@router.get("/esign/templates", response_class=HTMLResponse)
+async def esign_templates_list(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("esign_templates.html", {"request": request, "user": user})
+
+
+@router.get("/esign/templates/{template_id}/edit", response_class=HTMLResponse)
+async def esign_template_edit(request: Request, template_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "esign_template_edit.html",
+        {"request": request, "user": user, "template_id": template_id},
+    )
+
+
+@router.get("/esign/templates/{template_id}/use", response_class=HTMLResponse)
+async def esign_template_use(request: Request, template_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "esign_template_use.html",
+        {"request": request, "user": user, "template_id": template_id},
+    )
+
+
+@router.get("/esign/templates/{template_id}/bulk", response_class=HTMLResponse)
+async def esign_template_bulk(request: Request, template_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "esign_bulk_new.html",
+        {"request": request, "user": user, "template_id": template_id},
+    )
+
+
+@router.get("/esign/batches", response_class=HTMLResponse)
+async def esign_batches_list(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("esign_batches.html", {"request": request, "user": user})
+
+
+@router.get("/esign/batches/{batch_id}", response_class=HTMLResponse)
+async def esign_batch_detail(request: Request, batch_id: str, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse(
+        "esign_batch_detail.html",
+        {"request": request, "user": user, "batch_id": batch_id},
+    )
