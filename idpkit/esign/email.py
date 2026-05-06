@@ -60,13 +60,21 @@ async def send_signing_invitation(
     signing_url: str,
     message: Optional[str] = None,
     expires_at: Optional[str] = None,
+    is_resend: bool = False,
 ) -> bool:
     """Send a signing invitation email to a signer."""
     msg_block = f'<blockquote style="border-left:3px solid #4f46e5;margin:16px 0;padding:8px 16px;color:#374151;font-style:italic;">{message}</blockquote>' if message else ""
     expiry_block = f'<p style="font-size:13px;color:#9ca3af;">This link expires on {expires_at}.</p>' if expires_at else ""
+    resend_block = (
+        '<p style="background:#fef3c7;border-left:3px solid #f59e0b;padding:8px 12px;margin:0 0 12px;color:#92400e;font-size:13px;">'
+        '<strong>This is a fresh invitation.</strong> Any earlier signing link you received for this document is no longer valid — please use the button below.'
+        '</p>'
+        if is_resend else ""
+    )
 
     body_html = f"""
     <p style="font-size:16px;color:#374151;">Hello <strong>{signer_name}</strong>,</p>
+    {resend_block}
     <p style="color:#374151;"><strong>{sender_name}</strong> has requested your electronic signature on:</p>
     <div class="meta">
       <strong>Document:</strong> {envelope_title}
@@ -80,9 +88,10 @@ async def send_signing_invitation(
     <p style="font-size:12px;color:#9ca3af;">If the button does not work, copy and paste this link: <br>{signing_url}</p>
     """
 
+    subject_prefix = "Reminder: Please sign" if is_resend else "Action Required: Please sign"
     return await _send(
         to=signer_email,
-        subject=f"Action Required: Please sign \"{envelope_title}\"",
+        subject=f"{subject_prefix} \"{envelope_title}\"",
         body=_html_wrapper(body_html),
         signing_url=signing_url,
     )
@@ -122,6 +131,78 @@ async def send_completion_notice(
         body=_html_wrapper(body_html),
         attachments=attachments,
         signing_url=download_url,
+    )
+
+
+async def send_decline_notice(
+    recipient_email: str,
+    recipient_name: str,
+    envelope_title: str,
+    declined_by_name: str,
+    declined_by_email: str,
+    reason: Optional[str] = None,
+    is_owner: bool = False,
+) -> bool:
+    """Notify the owner (and remaining signers) that a signer has declined.
+    All user-supplied strings are HTML-escaped before interpolation so a
+    malicious decline reason or signer name cannot inject markup or scripts
+    into the rendered email."""
+    import html as _html
+    e_recipient = _html.escape(recipient_name or "")
+    e_title = _html.escape(envelope_title or "")
+    e_decl_name = _html.escape(declined_by_name or "")
+    e_decl_email = _html.escape(declined_by_email or "")
+    e_reason = _html.escape(reason) if reason else None
+    reason_block = (
+        f'<blockquote style="border-left:3px solid #ef4444;margin:16px 0;padding:8px 16px;color:#374151;font-style:italic;">{e_reason}</blockquote>'
+        if e_reason else ""
+    )
+    if is_owner:
+        intro = (
+            f"<strong>{e_decl_name}</strong> &lt;{e_decl_email}&gt; has <strong>declined</strong> to sign "
+            f"<strong>{e_title}</strong>. The envelope has been marked as declined and will not be completed."
+        )
+    else:
+        intro = (
+            f"The envelope <strong>{e_title}</strong> has been declined by another signer "
+            f"(<strong>{e_decl_name}</strong>). No further action is required from you — any signing link "
+            f"you previously received is now inactive."
+        )
+    body_html = f"""
+    <p style="font-size:16px;color:#374151;">Hello <strong>{e_recipient}</strong>,</p>
+    <p style="color:#374151;">{intro}</p>
+    {reason_block}
+    <p style="font-size:12px;color:#9ca3af;">If you believe this was in error, please contact the sender directly.</p>
+    """
+    return await _send(
+        to=recipient_email,
+        subject=f"Declined: \"{envelope_title}\"",
+        body=_html_wrapper(body_html),
+        signing_url=None,
+    )
+
+
+async def send_reactivate_notice(
+    recipient_email: str,
+    recipient_name: str,
+    envelope_title: str,
+    reactivated_by: str,
+) -> bool:
+    """Notify a prior signer that a previously-declined envelope has been reset to draft."""
+    import html as _html
+    e_recipient = _html.escape(recipient_name or "")
+    e_title = _html.escape(envelope_title or "")
+    e_by = _html.escape(reactivated_by or "")
+    body_html = f"""
+    <p style="font-size:16px;color:#374151;">Hello <strong>{e_recipient}</strong>,</p>
+    <p style="color:#374151;">The envelope <strong>{e_title}</strong> has been reactivated by <strong>{e_by}</strong>.</p>
+    <p style="color:#9ca3af;font-size:13px;">You will receive a fresh signing invitation when the envelope is sent again. Any earlier signing link you received is no longer valid.</p>
+    """
+    return await _send(
+        to=recipient_email,
+        subject=f"Reactivated: \"{envelope_title}\"",
+        body=_html_wrapper(body_html),
+        signing_url=None,
     )
 
 

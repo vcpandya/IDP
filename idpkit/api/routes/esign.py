@@ -1,5 +1,6 @@
 """E-Signature API routes."""
 
+import asyncio
 import hashlib
 import io
 import logging
@@ -13,7 +14,7 @@ import httpx
 from fastapi import APIRouter, Depends, Form as fastapi_Form, HTTPException, Request, UploadFile, File, status
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,6 +38,58 @@ router = APIRouter(prefix="/api/esign", tags=["esign"])
 
 ESIGN_EXPIRY_DAYS = int(os.getenv("ESIGN_EXPIRY_DAYS", "30"))
 
+# Hard cap on a single signature/initials base64 payload (after data: prefix).
+# 256 KB is generous for a hand-drawn or typed-name PNG and blocks accidental
+# multi-MB canvas dumps from causing DoS / storage bloat on the public route.
+MAX_SIG_VALUE_CHARS = int(os.getenv("ESIGN_MAX_SIG_VALUE_CHARS", str(384 * 1024)))
+MAX_TEXT_VALUE_CHARS = int(os.getenv("ESIGN_MAX_TEXT_VALUE_CHARS", "2000"))
+
+# Per-signing-token submit/decline rate limit: max N attempts within WINDOW seconds.
+_RATE_LIMIT_MAX = int(os.getenv("ESIGN_TOKEN_RATE_MAX", "10"))
+_RATE_LIMIT_WINDOW = int(os.getenv("ESIGN_TOKEN_RATE_WINDOW", "60"))
+_token_attempts: dict[str, list[float]] = {}
+_token_attempts_lock = asyncio.Lock()
+
+# In-process geo lookup cache: ip -> (expires_at_unix, dict). Keeps the public
+# audit-log path from issuing one HTTP call to ip-api.com per event.
+_GEO_TTL_SEC = int(os.getenv("ESIGN_GEO_CACHE_TTL", str(6 * 60 * 60)))  # 6h
+_geo_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _check_token_rate(token_hash: str) -> None:
+    """Per-token sliding-window rate limiter. Async-lock-protected so concurrent
+    requests can't both pass the window-size check before the bucket is updated.
+    Note: still per-process — for true horizontal-scale enforcement back this
+    with Redis. Adequate as a DoS speed-bump in front of the public route."""
+    import time as _time
+    async with _token_attempts_lock:
+        now = _time.monotonic()
+        bucket = [t for t in _token_attempts.get(token_hash, []) if now - t < _RATE_LIMIT_WINDOW]
+        if len(bucket) >= _RATE_LIMIT_MAX:
+            raise HTTPException(status_code=429, detail="Too many attempts on this signing link. Please wait a minute and try again.")
+        bucket.append(now)
+        _token_attempts[token_hash] = bucket
+        # Opportunistic cleanup so the dict can't grow unbounded
+        if len(_token_attempts) > 5000:
+            for k in list(_token_attempts.keys())[:1000]:
+                if not _token_attempts[k] or now - _token_attempts[k][-1] > _RATE_LIMIT_WINDOW:
+                    _token_attempts.pop(k, None)
+
+
+def _validate_field_value(field_type: str, value: str) -> None:
+    """Reject oversized payloads early on the public submit endpoint."""
+    if not value:
+        return
+    if field_type in ("signature", "initials"):
+        if len(value) > MAX_SIG_VALUE_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Signature image too large (max {MAX_SIG_VALUE_CHARS // 1024} KB encoded). Try a smaller image.",
+            )
+    elif field_type in ("text", "date"):
+        if len(value) > MAX_TEXT_VALUE_CHARS:
+            raise HTTPException(status_code=413, detail="Text value too long")
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -44,8 +97,12 @@ ESIGN_EXPIRY_DAYS = int(os.getenv("ESIGN_EXPIRY_DAYS", "30"))
 
 class SignerIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    email: str = Field(..., min_length=3)
+    email: EmailStr
     order_index: int = 0
+
+
+class ExtendExpiryIn(BaseModel):
+    days: int = Field(..., ge=1, le=365)
 
 
 class FieldIn(BaseModel):
@@ -144,19 +201,32 @@ def _parse_ua(ua: str) -> dict:
 
 
 async def _geo_lookup(ip: str) -> dict:
-    """Best-effort IP geolocation using ip-api.com over HTTPS (free, no key needed)."""
-    if ip in ("unknown", "127.0.0.1", "::1"):
+    """Best-effort IP geolocation with in-memory TTL cache to avoid one HTTP
+    round-trip to ip-api.com per audit event under bursts."""
+    import time as _time
+    if ip in ("unknown", "127.0.0.1", "::1") or not ip:
         return {}
+    now = _time.monotonic()
+    cached = _geo_cache.get(ip)
+    if cached and cached[0] > now:
+        return cached[1]
+    result: dict = {}
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=2.5) as client:
             resp = await client.get(f"https://ip-api.com/json/{ip}?fields=country,city,status")
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("status") == "success":
-                    return {"geo_country": data.get("country", ""), "geo_city": data.get("city", "")}
+                    result = {"geo_country": data.get("country", ""), "geo_city": data.get("city", "")}
     except Exception:
-        pass
-    return {}
+        result = {}
+    # Cache positive AND negative results to avoid hammering on bad IPs.
+    _geo_cache[ip] = (now + _GEO_TTL_SEC, result)
+    if len(_geo_cache) > 10000:
+        # Cheap pruning: drop the first 1000 entries
+        for k in list(_geo_cache.keys())[:1000]:
+            _geo_cache.pop(k, None)
+    return result
 
 
 async def _log_event(
@@ -611,8 +681,142 @@ async def send_envelope(
             db.add(signer)
 
     db.add(env)
+    # Envelope-level "sent" event (in addition to per-signer invitation_sent events)
+    await _log_event(
+        db, envelope_id, "envelope_sent",
+        actor_email=user.email or user.username,
+        request=request,
+        extra={"notes": f"signers={invites_sent} order={env.signing_order}"},
+    )
     await db.commit()
     return {"detail": "Envelope sent", "signer_count": invites_sent}
+
+
+@router.delete("/envelopes/{envelope_id}", summary="Delete a draft envelope (only DRAFT status allowed)")
+async def delete_envelope(
+    envelope_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    result = await db.execute(
+        select(SignatureEnvelope).where(
+            SignatureEnvelope.id == envelope_id, SignatureEnvelope.owner_id == user.id
+        )
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status_code=404, detail="Envelope not found")
+    if env.status != EnvelopeStatus.DRAFT.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only draft envelopes can be deleted (current status: {env.status}). Void it instead.",
+        )
+
+    # Best-effort blob cleanup. Audit row + signers/fields/events cascade via FK.
+    for key in (env.original_file_key, env.finalized_file_key, env.audit_report_key):
+        if key:
+            try:
+                storage.delete(key)
+            except Exception:
+                logger.warning("Failed to delete storage key %s during envelope delete", key)
+
+    await db.delete(env)
+    await db.commit()
+    return {"detail": "Envelope deleted"}
+
+
+@router.post("/envelopes/{envelope_id}/extend-expiry", summary="Extend envelope expiry by N days (active envelopes only)")
+async def extend_expiry(
+    envelope_id: str,
+    body: ExtendExpiryIn,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(SignatureEnvelope).where(
+            SignatureEnvelope.id == envelope_id, SignatureEnvelope.owner_id == user.id
+        )
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status_code=404, detail="Envelope not found")
+    if env.status in (EnvelopeStatus.COMPLETED.value, EnvelopeStatus.VOIDED.value, EnvelopeStatus.DECLINED.value):
+        raise HTTPException(status_code=400, detail=f"Cannot extend expiry on a {env.status} envelope")
+
+    base = env.expires_at if (env.expires_at and env.expires_at > datetime.now(timezone.utc)) else datetime.now(timezone.utc)
+    env.expires_at = base + timedelta(days=body.days)
+    # Re-activate from EXPIRED if owner is bringing it back to life
+    if env.status == EnvelopeStatus.EXPIRED.value:
+        env.status = EnvelopeStatus.SENT.value
+    db.add(env)
+    await _log_event(
+        db, envelope_id, "envelope_extended",
+        actor_email=user.email or user.username,
+        request=request,
+        extra={"notes": f"+{body.days}d new_expiry={env.expires_at.isoformat()}"},
+    )
+    await db.commit()
+    return {"detail": "Expiry extended", "expires_at": env.expires_at.isoformat()}
+
+
+@router.post("/envelopes/{envelope_id}/reactivate", summary="Reset a DECLINED envelope back to DRAFT so the owner can revise and re-send")
+async def reactivate_envelope(
+    envelope_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from idpkit.esign.email import send_reactivate_notice
+
+    result = await db.execute(
+        select(SignatureEnvelope)
+        .options(selectinload(SignatureEnvelope.signers), selectinload(SignatureEnvelope.fields))
+        .where(SignatureEnvelope.id == envelope_id, SignatureEnvelope.owner_id == user.id)
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status_code=404, detail="Envelope not found")
+    if env.status != EnvelopeStatus.DECLINED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only DECLINED envelopes can be reactivated (current status: {env.status}).",
+        )
+
+    # Reset envelope and signers; clear field values and tokens; preserve placements + audit log
+    env.status = EnvelopeStatus.DRAFT.value
+    env.completed_at = None
+    db.add(env)
+    for s in env.signers:
+        s.status = SignerStatus.PENDING.value
+        s.token_hash = None
+        s.viewed_at = None
+        s.last_viewed_at = None
+        s.signed_at = None
+        s.ip_address = None
+        s.user_agent = None
+        db.add(s)
+        try:
+            await send_reactivate_notice(
+                recipient_email=s.email,
+                recipient_name=s.name,
+                envelope_title=env.title,
+                reactivated_by=user.username,
+            )
+        except Exception as exc:
+            logger.warning("Reactivate notice send failed for %s: %s", s.email, exc)
+    for f in env.fields:
+        f.value = None
+        db.add(f)
+
+    await _log_event(
+        db, envelope_id, "envelope_reactivated",
+        actor_email=user.email or user.username,
+        request=request,
+    )
+    await db.commit()
+    return {"detail": "Envelope reactivated to draft"}
 
 
 @router.get("/envelopes/{envelope_id}/pdf-page/{page}", summary="Owner-only: render a PDF page as PNG for the prepare UI")
@@ -805,6 +1009,7 @@ async def resend_invitation(
         envelope_title=env.title,
         signing_url=signing_url,
         message=env.message,
+        is_resend=True,
     )
     await _log_event(db, envelope_id, "invitation_resent", actor_email=user.email or user.username, request=request)
     await db.commit()
@@ -871,15 +1076,18 @@ async def get_signing_context(
         if any(s.status != SignerStatus.SIGNED.value for s in prev_signers):
             raise HTTPException(status_code=400, detail="Waiting for previous signers to complete first")
 
-    # Log a document_viewed event on every access (not just first) for full audit trail
+    # Log a document_viewed event on every access for the full audit trail.
+    # `viewed_at` keeps the FIRST-view timestamp (legal anchor); `last_viewed_at`
+    # tracks the most-recent access so the dashboard can show recency.
     if not signer.viewed_at:
         signer.viewed_at = now
+    signer.last_viewed_at = now
+    if signer.status == SignerStatus.SENT.value:
         signer.status = SignerStatus.VIEWED.value
-        db.add(signer)
-        # Envelope-level transition: sent → viewed (on first view by any signer)
-        if env.status == EnvelopeStatus.SENT.value:
-            env.status = EnvelopeStatus.VIEWED.value
-            db.add(env)
+    db.add(signer)
+    if env.status == EnvelopeStatus.SENT.value:
+        env.status = EnvelopeStatus.VIEWED.value
+        db.add(env)
     await _log_event(db, env.id, "document_viewed", actor_email=signer.email, request=request)
     await db.commit()
 
@@ -987,6 +1195,9 @@ async def submit_signature(
     if not signer:
         raise HTTPException(status_code=404, detail="Invalid or expired signing link")
 
+    # Per-token rate limit on the public submit endpoint
+    await _check_token_rate(token_hash)
+
     env = signer.envelope
     if not env:
         raise HTTPException(status_code=404, detail="Envelope not found")
@@ -1003,6 +1214,15 @@ async def submit_signature(
         raise HTTPException(status_code=410, detail="This signing link has expired")
     if signer.status == SignerStatus.SIGNED.value:
         raise HTTPException(status_code=400, detail="Already signed")
+
+    # Reject oversized field payloads early on the unauthenticated route
+    for submitted in body.fields:
+        fid = submitted.get("id")
+        value = submitted.get("value", "") or ""
+        # Look up declared type from the envelope's fields, fall back to "text"
+        f = next((x for x in (env.fields or []) if x.id == fid), None)
+        ftype = f.field_type if f else "text"
+        _validate_field_value(ftype, value)
 
     # Sequential order gate: block submission if prior signers have not yet completed
     if env.signing_order == "sequential" and signer.order_index > 0:
@@ -1084,9 +1304,16 @@ async def submit_signature(
         notes="ESIGN Act electronic signature consent acknowledged by signer",
     ))
 
-    # Emit a single audit event per bulk group that was propagated above
+    # Emit a single rollup event per bulk group AND keep the per-cloned-field
+    # `field_signed` events that the loop below produces — this gives us both
+    # the high-level "the user did one bulk action" record AND per-field
+    # evidentiary granularity for forensic review.
     for group_id, total_count in bulk_groups_seen.items():
         if total_count > 1:
+            # Identify which sibling field IDs were cloned (for the audit notes)
+            cloned_ids = [
+                f.id for f in field_map.values() if f.bulk_group_id == group_id
+            ]
             db.add(EnvelopeAuditEvent(
                 envelope_id=env.id,
                 actor_email=signer.email,
@@ -1099,7 +1326,7 @@ async def submit_signature(
                 geo_country=geo.get("geo_country", ""),
                 geo_city=geo.get("geo_city", ""),
                 session_id=body.session_id,
-                notes=f"bulk_group_id={group_id} cloned_to={total_count} fields",
+                notes=f"bulk_group_id={group_id} cloned_to={total_count} fields ids=[{','.join(cloned_ids[:20])}]",
             ))
 
     # Store field values and emit a per-field audit event for each completed field
@@ -1260,12 +1487,22 @@ async def submit_signature(
         env.finalized_file_key = finalized_key
         db.add(env)
 
+        # Helper: blob cleanup if a downstream step fails after we've already
+        # written the signed PDF to storage. Without this the signed-but-unindexed
+        # blob would remain orphaned (DB rolls back, storage doesn't).
+        def _cleanup_orphan_blob():
+            try:
+                storage.delete(finalized_key)
+            except Exception as cleanup_exc:
+                logger.warning("Failed to clean up orphan signed PDF %s: %s", finalized_key, cleanup_exc)
+
         # Fail-closed: audit report must also succeed; do not mark completed without it
         try:
             report_pdf = await _generate_and_store_audit_report(env, storage, db, events_data=events_data, signers_data=signers_data)
         except Exception as exc:
             logger.error("Audit report generation failed: %s", exc)
             await db.rollback()
+            _cleanup_orphan_blob()
             raise HTTPException(
                 status_code=500,
                 detail="Failed to generate forensic audit report. Please contact support.",
@@ -1273,6 +1510,7 @@ async def submit_signature(
 
         if not report_pdf:
             await db.rollback()
+            _cleanup_orphan_blob()
             raise HTTPException(
                 status_code=500,
                 detail="Audit report generation requires SECRET_KEY to be configured.",
@@ -1377,6 +1615,8 @@ async def decline_signature(
     if not signer or not signer.envelope:
         raise HTTPException(status_code=404, detail="Invalid or expired signing link")
 
+    await _check_token_rate(token_hash)
+
     env = signer.envelope
     now = datetime.now(timezone.utc)
 
@@ -1392,16 +1632,29 @@ async def decline_signature(
     if signer.status == SignerStatus.DECLINED.value:
         raise HTTPException(status_code=400, detail="Already declined")
 
+    # Reload signers + owner so we can notify everyone affected
+    full = await db.execute(
+        select(SignatureEnvelope)
+        .options(selectinload(SignatureEnvelope.signers))
+        .where(SignatureEnvelope.id == env.id)
+    )
+    env_full = full.scalar_one_or_none() or env
+    other_signers = [s for s in (env_full.signers or []) if s.id != signer.id]
+
     ip = _client_ip(request)
     ua_str = request.headers.get("user-agent", "")
 
     signer.status = SignerStatus.DECLINED.value
     db.add(signer)
 
-    # Envelope-level transition to declined
+    # Envelope-level transition to declined; invalidate other pending tokens
     if env.status not in (EnvelopeStatus.COMPLETED.value, EnvelopeStatus.VOIDED.value):
         env.status = EnvelopeStatus.DECLINED.value
         db.add(env)
+        for s in other_signers:
+            if s.status not in (SignerStatus.SIGNED.value,):
+                s.token_hash = None
+                db.add(s)
 
     notes_str = f"reason={body.reason[:200]}" if body.reason else "no reason given"
     await _log_event(
@@ -1412,6 +1665,40 @@ async def decline_signature(
     )
 
     await db.commit()
+
+    # Best-effort email notifications. Failures must not block the decline itself.
+    from idpkit.esign.email import send_decline_notice
+    owner_result = await db.execute(select(User).where(User.id == env.owner_id))
+    owner = owner_result.scalar_one_or_none()
+    try:
+        if owner and owner.email:
+            await send_decline_notice(
+                recipient_email=owner.email,
+                recipient_name=owner.username,
+                envelope_title=env.title,
+                declined_by_name=signer.name,
+                declined_by_email=signer.email,
+                reason=body.reason,
+                is_owner=True,
+            )
+    except Exception as exc:
+        logger.warning("Decline owner-notice failed: %s", exc)
+    for s in other_signers:
+        if s.status == SignerStatus.SIGNED.value:
+            continue
+        try:
+            await send_decline_notice(
+                recipient_email=s.email,
+                recipient_name=s.name,
+                envelope_title=env.title,
+                declined_by_name=signer.name,
+                declined_by_email=signer.email,
+                reason=body.reason,
+                is_owner=False,
+            )
+        except Exception as exc:
+            logger.warning("Decline co-signer notice failed for %s: %s", s.email, exc)
+
     return {"declined": True, "envelope_title": env.title}
 
 
@@ -1453,14 +1740,20 @@ async def signer_download(
     )
 
 
-@router.get("/download/{download_token}", summary="Public: download finalized PDF via one-time completion-email token")
+@router.get("/download/{download_token}", summary="Public: download finalized PDF via one-time completion-email token (single use)")
 async def signer_download_by_token(
     download_token: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
     storage: StorageBackend = Depends(get_storage),
 ):
-    """Public: allow completion-email recipients to download finalized document (no login needed)."""
+    """Public: allow completion-email recipients to download finalized document (no login needed).
+
+    Truly single-use: after the first successful response, the token is burned
+    so a leaked email link cannot be replayed indefinitely. The signer can still
+    retrieve the document via their authenticated signing link
+    (`/api/esign/sign/{token}/download`) which is gated separately.
+    """
     dl_hash = hashlib.sha256(download_token.encode()).hexdigest()
     result = await db.execute(
         select(EnvelopeSigner)
@@ -1475,13 +1768,34 @@ async def signer_download_by_token(
     if env.status != EnvelopeStatus.COMPLETED.value or not env.finalized_file_key:
         raise HTTPException(status_code=400, detail="Document is not yet complete")
 
+    # Atomic claim: only one concurrent request can flip consumed_at from NULL.
+    # The conditional UPDATE wins exactly once at the database layer, eliminating
+    # the TOCTOU race between a Python check and a later commit.
+    now_ts = datetime.now(timezone.utc)
+    claim_result = await db.execute(
+        update(EnvelopeSigner)
+        .where(
+            EnvelopeSigner.id == signer.id,
+            EnvelopeSigner.download_consumed_at.is_(None),
+            EnvelopeSigner.download_token_hash == dl_hash,
+        )
+        .values(download_consumed_at=now_ts, download_token_hash=None)
+        .execution_options(synchronize_session=False)
+    )
+    if (claim_result.rowcount or 0) == 0:
+        raise HTTPException(
+            status_code=410,
+            detail="This download link has already been used. Contact the sender for a new link.",
+        )
+
+    pdf_bytes = storage.load(env.finalized_file_key)
+
     try:
         await _log_event(db, env.id, "signed_document_downloaded", actor_email=signer.email, request=request)
         await db.commit()
     except Exception:
         await db.rollback()
 
-    pdf_bytes = storage.load(env.finalized_file_key)
     safe_title = "".join(c if c.isalnum() or c in "-_ " else "_" for c in env.title)
     return Response(
         content=pdf_bytes,

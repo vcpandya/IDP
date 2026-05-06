@@ -90,6 +90,14 @@ async def init_db():
                     sync_conn.execute(text(
                         "ALTER TABLE envelope_signers ADD COLUMN download_token_hash VARCHAR(64)"
                     ))
+                if "download_consumed_at" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_signers ADD COLUMN download_consumed_at TIMESTAMP"
+                    ))
+                if "last_viewed_at" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_signers ADD COLUMN last_viewed_at TIMESTAMP"
+                    ))
             # envelope_audit_events — new forensic columns
             if "envelope_audit_events" in tables:
                 cols = {c["name"] for c in insp.get_columns("envelope_audit_events")}

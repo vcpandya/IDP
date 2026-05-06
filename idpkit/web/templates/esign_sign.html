@@ -6,6 +6,9 @@
 <title>Sign Document — IDP Kit E-Sign</title>
 <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600&family=Great+Vibes&family=Pacifico&family=Allura&family=Sacramento&family=Caveat:wght@600&family=Homemade+Apple&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js" defer></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; }
@@ -50,7 +53,12 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
 .tab-btn { padding: 8px 16px; border: none; background: none; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: #64748b; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; }
 .tab-btn.active { color: #4f46e5; border-bottom-color: #4f46e5; }
 #sigCanvas { border: 2px solid #e2e8f0; border-radius: 8px; cursor: crosshair; touch-action: none; width: 100%; }
-.typed-sig { font-family: 'Dancing Script', 'Brush Script MT', cursive; font-size: 2.5rem; color: #1e293b; min-height: 80px; display: flex; align-items: center; padding: 0 16px; border: 2px solid #e2e8f0; border-radius: 8px; }
+.typed-sig { font-family: 'Dancing Script', 'Brush Script MT', cursive; font-size: 2.5rem; color: #1e293b; min-height: 80px; display: flex; align-items: center; padding: 0 16px; border: 2px solid #e2e8f0; border-radius: 8px; transition: font-family 0.15s; background: #fafaff; }
+.font-picker { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; margin-top: 12px; }
+.font-swatch { padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 8px; cursor: pointer; font-size: 1.4rem; line-height: 1.2; color: #1e293b; text-align: left; background: #fff; transition: all 0.12s; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.font-swatch:hover { border-color: #4f46e5; }
+.font-swatch.active { border-color: #4f46e5; background: #eef2ff; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.font-swatch .lbl { display: block; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 0.65rem; color: #94a3b8; font-weight: 600; text-transform: uppercase; margin-top: 2px; letter-spacing: 0.04em; }
 .upload-zone-sm { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; font-size: 0.85rem; color: #94a3b8; }
 .upload-zone-sm:hover { border-color: #4f46e5; color: #4f46e5; background: #eef2ff; }
 .success-screen { text-align: center; padding: 40px 20px; }
@@ -197,8 +205,8 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
     <!-- Signature/Initials modal -->
     <div x-show="activeField && (activeField.field_type === 'signature' || activeField.field_type === 'initials')">
       <div class="tabs">
-        <button class="tab-btn" :class="sigTab==='draw' ? 'active' : ''" @click="sigTab='draw'"><i class="fas fa-pen"></i> Draw</button>
-        <button class="tab-btn" :class="sigTab==='type' ? 'active' : ''" @click="sigTab='type'; $nextTick(updateTypedPreview)"><i class="fas fa-font"></i> Type</button>
+        <button class="tab-btn" :class="sigTab==='type' ? 'active' : ''" @click="sigTab='type'; $nextTick(updateTypedPreview)"><i class="fas fa-font"></i> Style</button>
+        <button class="tab-btn" :class="sigTab==='draw' ? 'active' : ''" @click="sigTab='draw'; $nextTick(setupCanvas)"><i class="fas fa-pen"></i> Draw</button>
         <button class="tab-btn" :class="sigTab==='upload' ? 'active' : ''" @click="sigTab='upload'"><i class="fas fa-upload"></i> Upload</button>
       </div>
 
@@ -211,12 +219,21 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
         </div>
       </div>
 
-      <!-- Type tab -->
+      <!-- Type tab (DocuSign-style: type your name, pick a handwriting font) -->
       <div x-show="sigTab==='type'">
-        <input type="text" x-model="typedName" @input="updateTypedPreview()" placeholder="Type your name" style="width:100%;padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.9rem;margin-bottom:10px">
-        <div class="typed-sig" id="typedPreview" x-text="typedName || 'Your Signature'"></div>
-        <div style="margin-top:10px;text-align:right">
-          <button @click="applySignature('type')" class="btn btn-primary" :disabled="!typedName.trim()"><i class="fas fa-check"></i> Apply</button>
+        <input type="text" x-model="typedName" @input="updateTypedPreview()" placeholder="Type your full name" style="width:100%;padding:10px 14px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:0.95rem;margin-bottom:10px">
+        <div class="typed-sig" id="typedPreview" :style="'font-family:' + cssFont(selectedFont) + '; font-size:' + (activeField && activeField.field_type==='initials' ? '2rem' : '2.5rem')" x-text="typedName || (activeField && activeField.field_type==='initials' ? 'AB' : 'Your Signature')"></div>
+        <div style="font-size:0.72rem;color:#94a3b8;margin-top:10px;text-transform:uppercase;letter-spacing:0.04em;font-weight:600">Choose a style</div>
+        <div class="font-picker">
+          <template x-for="f in fontChoices" :key="f.key">
+            <button type="button" class="font-swatch" :class="selectedFont===f.key ? 'active' : ''" @click="selectedFont=f.key; updateTypedPreview()" :style="'font-family:' + cssFont(f.key)">
+              <span x-text="typedName || f.sample"></span>
+              <span class="lbl" x-text="f.label"></span>
+            </button>
+          </template>
+        </div>
+        <div style="margin-top:14px;text-align:right">
+          <button @click="applySignature('type')" class="btn btn-primary" :disabled="!typedName.trim()"><i class="fas fa-check"></i> Adopt &amp; Sign</button>
         </div>
       </div>
 
@@ -274,8 +291,18 @@ function esignSign() {
     submitting: false,
     modalOpen: false,
     activeField: null,
-    sigTab: 'draw',
+    sigTab: 'type',
     typedName: '',
+    selectedFont: 'dancing',
+    fontChoices: [
+      { key:'dancing',    label:'Dancing Script', sample:'Your Signature' },
+      { key:'great',      label:'Great Vibes',    sample:'Your Signature' },
+      { key:'pacifico',   label:'Pacifico',       sample:'Your Signature' },
+      { key:'allura',     label:'Allura',         sample:'Your Signature' },
+      { key:'sacramento', label:'Sacramento',     sample:'Your Signature' },
+      { key:'caveat',     label:'Caveat',         sample:'Your Signature' },
+      { key:'homemade',   label:'Homemade Apple', sample:'Your Signature' },
+    ],
     dateValue: new Date().toISOString().split('T')[0],
     textValue: '',
     uploadedSigPreview: null,
@@ -381,8 +408,19 @@ function esignSign() {
 
     openField(field) {
       this.activeField = field;
-      this.sigTab = 'draw';
-      this.typedName = '';
+      // DocuSign-style default: open on the styled-font "Type" tab. The
+      // signer's name from the envelope context pre-fills the input so most
+      // people can adopt-and-sign with one click.
+      this.sigTab = (field.field_type === 'signature' || field.field_type === 'initials') ? 'type' : 'draw';
+      const ctxName = (this.context && this.context.signer_name) || '';
+      if (field.field_type === 'initials') {
+        // Auto-derive initials from the signer's name on first open
+        const parts = ctxName.trim().split(/\s+/);
+        this.typedName = (parts[0]?.[0] || '') + (parts[parts.length-1]?.[0] || '');
+        this.typedName = this.typedName.toUpperCase();
+      } else {
+        this.typedName = ctxName;
+      }
       this.uploadedSigPreview = null;
       if (field.field_type === 'date') {
         this.dateValue = this.fieldValues[field.id] ? '' : new Date().toISOString().split('T')[0];
@@ -472,9 +510,25 @@ function esignSign() {
       this.lastX = x; this.lastY = y;
     },
 
+    cssFont(key) {
+      return ({
+        dancing: "'Dancing Script', cursive",
+        great: "'Great Vibes', cursive",
+        pacifico: "'Pacifico', cursive",
+        allura: "'Allura', cursive",
+        sacramento: "'Sacramento', cursive",
+        caveat: "'Caveat', cursive",
+        homemade: "'Homemade Apple', cursive",
+      })[key] || "'Dancing Script', cursive";
+    },
+
     updateTypedPreview() {
       const el = document.getElementById('typedPreview');
-      if (el) el.textContent = this.typedName || 'Your Signature';
+      if (el) {
+        const fallback = (this.activeField && this.activeField.field_type === 'initials') ? 'AB' : 'Your Signature';
+        el.textContent = this.typedName || fallback;
+        el.style.fontFamily = this.cssFont(this.selectedFont);
+      }
     },
 
     loadUploadedSig(evt) {
@@ -496,16 +550,28 @@ function esignSign() {
         if (data.every(v => v === 0)) { alert('Please draw your signature first.'); return; }
       } else if (mode === 'type') {
         if (!this.typedName.trim()) return;
-        // Render typed name to canvas
+        // Render typed name into a hidpi canvas using the selected handwriting
+        // font. We measure the text first so the bitmap fits without clipping
+        // on long names, and we use a 2x DPR so the image stays crisp when the
+        // PDF overlay scales the signature box.
+        const dpr = 2;
+        const fontFamily = this.cssFont(this.selectedFont);
+        const fontPx = 56;
+        const measure = document.createElement('canvas').getContext('2d');
+        measure.font = `${fontPx}px ${fontFamily}`;
+        const metrics = measure.measureText(this.typedName);
+        const padX = 24, padY = 16;
+        const cssW = Math.max(200, Math.ceil(metrics.width) + padX * 2);
+        const cssH = fontPx + padY * 2;
         const c = document.createElement('canvas');
-        c.width = 400; c.height = 100;
+        c.width = cssW * dpr; c.height = cssH * dpr;
         const ctx = c.getContext('2d');
-        ctx.fillStyle = 'transparent';
-        ctx.fillRect(0, 0, c.width, c.height);
-        ctx.font = "bold 52px 'Brush Script MT', 'Dancing Script', cursive";
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, cssW, cssH);
+        ctx.font = `${fontPx}px ${fontFamily}`;
         ctx.fillStyle = '#1e293b';
         ctx.textBaseline = 'middle';
-        ctx.fillText(this.typedName, 16, 50);
+        ctx.fillText(this.typedName, padX, cssH / 2);
         dataUrl = c.toDataURL('image/png');
       } else if (mode === 'upload') {
         dataUrl = this.uploadedSigPreview;

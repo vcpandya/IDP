@@ -72,11 +72,19 @@ def overlay_signatures(pdf_bytes: bytes, fields: list[dict]) -> bytes:
         value = field["value"]
 
         if ftype in ("signature", "initials"):
+            # Fail loud — if a signature image cannot be overlaid the envelope
+            # MUST NOT be marked completed with a missing visual. The caller
+            # (submit_signature) catches this and rolls back.
             try:
                 img_data = _decode_image_value(value)
+            except Exception as exc:
+                logger.error("Signature value for field on page %d is not valid base64: %s", page_num, exc)
+                raise ValueError(f"Signature image on page {page_num} is malformed") from exc
+            try:
                 page.insert_image(rect, stream=img_data, keep_proportion=True)
             except Exception as exc:
-                logger.warning("Failed to overlay signature image: %s", exc)
+                logger.error("Failed to overlay signature image on page %d: %s", page_num, exc)
+                raise ValueError(f"Failed to render signature on page {page_num}: {exc}") from exc
         else:
             # date or text
             font_size = max(8, min(14, int((y1 - y0) * 0.55)))
