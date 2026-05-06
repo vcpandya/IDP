@@ -164,8 +164,14 @@ async def lifespan(app: FastAPI):
     from idpkit.esign.expiry_sweep import start_expiry_sweep_scheduler
     esign_expiry_task = start_expiry_sweep_scheduler(async_session)
 
+    # Resume any e-sign bulk-send batches stranded by a worker restart.
+    try:
+        from idpkit.esign.bulk_runner import recover_pending_batches
+        await recover_pending_batches()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("E-sign bulk recovery failed: %s", exc)
+
     if resumable:
-        import logging
         from idpkit.api.routes.indexing import _run_indexing_task
         _log = logging.getLogger(__name__)
         for info in resumable:
@@ -405,6 +411,8 @@ def create_app() -> FastAPI:
         esign_router,
         connectors_router,
     )
+    from idpkit.api.routes.esign_templates import router as esign_templates_router
+    from idpkit.api.routes.esign_batches import router as esign_batches_router
 
     app.include_router(auth_router)
     app.include_router(documents_router)
@@ -425,6 +433,8 @@ def create_app() -> FastAPI:
     app.include_router(skills_router)
     app.include_router(verifier_router)
     app.include_router(esign_router)
+    app.include_router(esign_templates_router)
+    app.include_router(esign_batches_router)
     app.include_router(connectors_router)
 
     # Register web UI routes

@@ -109,6 +109,17 @@ async def init_db():
                     sync_conn.execute(text(
                         "ALTER TABLE envelope_audit_events ADD COLUMN user_agent VARCHAR(1000)"
                     ))
+            # envelope_batches — bulk-send columns added in templates/batches feature
+            if "envelope_batches" in tables:
+                cols = {c["name"] for c in insp.get_columns("envelope_batches")}
+                if "column_map_json" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_batches ADD COLUMN column_map_json TEXT"
+                    ))
+                if "send_immediately" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE envelope_batches ADD COLUMN send_immediately BOOLEAN DEFAULT TRUE"
+                    ))
             # signature_fields — bulk-apply group identifier (one drag → many cloned fields share a group)
             if "signature_fields" in tables:
                 cols = {c["name"] for c in insp.get_columns("signature_fields")}
@@ -157,6 +168,9 @@ async def init_db():
         await conn.run_sync(_migrate_esign)
         await conn.run_sync(_migrate_skills)
         await conn.run_sync(_migrate_connections)
+        # Ensure new e-sign template + batch model classes are registered with Base.metadata
+        # before create_all runs (importing the module registers the classes).
+        from idpkit.esign import models as _esign_models  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_indexes)
 

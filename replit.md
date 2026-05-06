@@ -23,6 +23,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - `OAUTH_REDIRECT_BASE_URL`: Overrides the OAuth callback base URL.
 - `EMAIL_API_KEY`: API key for sending e-sign invitations.
 - `VISION_MODEL`: Model used for document verification (default `gpt-4o`).
+- `ESIGN_BATCH_CONCURRENCY`: Max in-flight envelopes per bulk-send batch (default 3).
 - `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE`: PostgreSQL connection pool settings.
 
 ## Stack
@@ -42,6 +43,10 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
     - `/idpkit/connectors`: SaaS connector implementations.
     - `/idpkit/db/models.py`: Database schema definitions.
     - `/idpkit/esign`: E-signature workflow.
+        - `templates_lib.py`: Snapshot envelope→template + instantiate template→envelope.
+        - `bulk_runner.py`: Async runner for bulk-send batches (bounded concurrency, per-row isolation).
+        - `recipient_parsers.py`: CSV / XLSX / pasted-table parsers for bulk recipient lists.
+        - `merge.py`: `{{key}}` mail-merge substitution helpers.
     - `/idpkit/verifier`: Document verification engine.
     - `/idpkit/web/templates`: Jinja2 frontend templates.
 - `idpkit/core/llm.py`: LLM API key resolution logic.
@@ -55,6 +60,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - **Dynamic Connector Tooling**: Agent dynamically registers tools for *active* user connections only, injecting "Connector Availability" into the system prompt.
 - **Secure Credential Handling**: SaaS connector credentials are encrypted with Fernet (key derived from `SECRET_KEY`), decrypted just-in-time, and never logged or exposed to LLM context.
 - **Robust E-Signature System**: Full envelope-based e-sign with parallel/sequential signing, bulk-apply fields, HMAC-signed audit certificates, per-token rate limiting (`ESIGN_TOKEN_RATE_*`), one-time public download tokens, geo TTL caching, payload size caps (`ESIGN_MAX_SIG_VALUE_CHARS` / `ESIGN_MAX_TEXT_VALUE_CHARS`), background expiry sweep with PG advisory lock (`ESIGN_EXPIRY_SWEEP_INTERVAL`), envelope delete/extend/reactivate flows, and DocuSign-style typed-signature font picker.
+- **E-Sign Templates + Bulk Send (Batch Signing)**: Reusable envelope templates snapshot a PDF + role-based signers + field placements, with declared merge fields (`{{key}}`). "Use template" creates a single envelope with role assignments + merge values; "Bulk Send" instantiates one envelope per row from CSV/XLSX upload or pasted table (5000 row cap, `ESIGN_BATCH_CONCURRENCY`-bounded async runner with per-row failure isolation).
 - **Leader-locked daily audit prune**: Ensures `connection_audit_log` pruning runs safely and efficiently across multiple Gunicorn workers using PostgreSQL advisory locks.
 
 ## Product

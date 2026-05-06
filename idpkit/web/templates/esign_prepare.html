@@ -271,6 +271,13 @@
           <span x-show="!sending">Send for Signature</span>
           <span x-show="sending">Sending…</span>
         </button>
+        <button @click="saveAsTemplate()" class="btn" style="width:100%;margin-top:8px;background:#eef2ff;color:#4338ca;border-color:#c7d2fe"
+                :disabled="savingTpl || fields.length === 0 || signers.length === 0"
+                title="Save this envelope's PDF + signers + fields as a reusable template">
+          <i class="fas" :class="savingTpl ? 'fa-spinner fa-spin' : 'fa-clone'"></i>
+          <span x-show="!savingTpl">Save as Template</span>
+          <span x-show="savingTpl">Saving…</span>
+        </button>
         <div x-show="saveMsg" style="margin-top:8px;font-size:0.8rem;text-align:center" :style="saveMsgError ? 'color:#dc2626' : 'color:#10b981'" x-text="saveMsg"></div>
       </div>
 
@@ -297,6 +304,7 @@ function esignPrepare() {
     creating: false,
     sending: false,
     saving: false,
+    savingTpl: false,
     saveMsg: '',
     saveMsgError: false,
     createError: '',
@@ -618,6 +626,34 @@ function esignPrepare() {
       }
       this.saving = false;
       setTimeout(() => this.saveMsg = '', 3000);
+    },
+
+    async saveAsTemplate() {
+      if (this.fields.length === 0 || this.signers.length === 0) {
+        alert('Add signers and place at least one field first.'); return;
+      }
+      const name = prompt('Template name:', this.envelope?.title || 'Untitled template');
+      if (!name) return;
+      await this.saveFields();
+      this.savingTpl = true;
+      try {
+        const r = await fetch('/api/esign/templates', {
+          method:'POST', credentials:'include',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({envelope_id: this.envelopeId, name, merge_fields: []}),
+        });
+        const j = await r.json();
+        if (r.ok) {
+          if (confirm(`Template "${name}" saved. Open it now?`)) location.href = '/esign/templates/' + j.id + '/edit';
+          else { this.saveMsg = 'Template saved'; this.saveMsgError = false; }
+        } else {
+          this.saveMsg = 'Error: ' + (j.detail || r.status); this.saveMsgError = true;
+        }
+      } catch (e) {
+        this.saveMsg = 'Error: ' + e; this.saveMsgError = true;
+      }
+      this.savingTpl = false;
+      setTimeout(() => this.saveMsg = '', 4000);
     },
 
     async sendEnvelope() {

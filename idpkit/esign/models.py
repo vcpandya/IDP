@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -145,3 +146,122 @@ class EnvelopeAuditEvent(Base):
     __table_args__ = (
         Index("ix_audit_events_envelope_created", "envelope_id", "created_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Reusable Templates + Bulk Send (DocuSign-style)
+# ---------------------------------------------------------------------------
+
+class EnvelopeTemplate(Base):
+    """A reusable envelope blueprint: PDF + role-based signers + field placements."""
+    __tablename__ = "envelope_templates"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(200), nullable=False)
+    title = Column(String(500), nullable=False)            # default envelope title (supports {{merge}})
+    message = Column(Text, nullable=True)                   # default email message (supports {{merge}})
+    signing_order = Column(String(20), default="parallel")
+    expiry_days = Column(Integer, default=30)
+    pdf_storage_key = Column(String(1000), nullable=False)
+    doc_sha256 = Column(String(64), nullable=True)
+    page_count = Column(Integer, default=1)
+    merge_fields_json = Column(Text, nullable=True)         # JSON list[{key,label,type,required}]
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", foreign_keys=[owner_id])
+    roles = relationship(
+        "EnvelopeTemplateRole",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="EnvelopeTemplateRole.order_index",
+    )
+    fields = relationship("EnvelopeTemplateField", back_populates="template", cascade="all, delete-orphan")
+
+
+class EnvelopeTemplateRole(Base):
+    """A signer slot on a template (e.g. 'Customer', 'Manager') — bound to a real person at use-time."""
+    __tablename__ = "envelope_template_roles"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    template_id = Column(String, ForeignKey("envelope_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_key = Column(String(50), nullable=False)
+    role_label = Column(String(100), nullable=False)
+    order_index = Column(Integer, default=0)
+    default_name = Column(String(200), nullable=True)
+    default_email = Column(String(255), nullable=True)
+
+    template = relationship("EnvelopeTemplate", back_populates="roles")
+
+    __table_args__ = (
+        UniqueConstraint("template_id", "role_key", name="uq_envelope_template_role_key"),
+    )
+
+
+class EnvelopeTemplateField(Base):
+    """A field placement on a template, bound to a role_key (logical, not FK)."""
+    __tablename__ = "envelope_template_fields"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    template_id = Column(String, ForeignKey("envelope_templates.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_key = Column(String(50), nullable=False)
+    field_type = Column(String(20), nullable=False)
+    page = Column(Integer, default=1)
+    x_pct = Column(Float, default=0.0)
+    y_pct = Column(Float, default=0.0)
+    w_pct = Column(Float, default=15.0)
+    h_pct = Column(Float, default=5.0)
+    label = Column(String(200), nullable=True)
+    is_required = Column(Integer, default=1)
+    bulk_group_id = Column(String(36), nullable=True, index=True)
+    default_value = Column(Text, nullable=True)             # supports {{merge_key}} substitution
+
+    template = relationship("EnvelopeTemplate", back_populates="fields")
+
+
+class EnvelopeBatch(Base):
+    """A bulk-send job: instantiates one envelope per recipient row from a template."""
+    __tablename__ = "envelope_batches"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    template_id = Column(String, ForeignKey("envelope_templates.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(200), nullable=False)
+    source_label = Column(String(200), nullable=True)       # e.g. "recipients.csv" / "Pasted (12 rows)"
+    status = Column(String(20), default="pending", index=True)  # pending|running|completed|failed|cancelled
+    column_map_json = Column(Text, nullable=True)           # {"roles": {...}, "merge": {...}}
+    send_immediately = Column(Boolean, default=True)
+    total_rows = Column(Integer, default=0)
+    created_count = Column(Integer, default=0)
+    sent_count = Column(Integer, default=0)
+    completed_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    created_at = Column(TZDateTime, default=utcnow)
+    started_at = Column(TZDateTime, nullable=True)
+    finished_at = Column(TZDateTime, nullable=True)
+
+    template = relationship("EnvelopeTemplate")
+    items = relationship(
+        "EnvelopeBatchItem",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        order_by="EnvelopeBatchItem.row_index",
+    )
+
+
+class EnvelopeBatchItem(Base):
+    """Per-row state for a bulk-send job."""
+    __tablename__ = "envelope_batch_items"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    batch_id = Column(String, ForeignKey("envelope_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    row_index = Column(Integer, nullable=False)
+    envelope_id = Column(String, ForeignKey("signature_envelopes.id", ondelete="SET NULL"), nullable=True)
+    raw_row_json = Column(Text, nullable=False)
+    status = Column(String(20), default="pending", index=True)  # pending|created|sent|completed|failed|cancelled
+    error = Column(Text, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    batch = relationship("EnvelopeBatch", back_populates="items")

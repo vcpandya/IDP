@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Bulk Send — IDP Kit{% endblock %}
+{% block content %}
+<div x-data="batchDetail('{{ batch_id }}')" x-init="start()">
+  <div class="page-header"><h2><i class="fas fa-layer-group"></i> Bulk Send</h2></div>
+  {% with active="batches" %}{% include "_esign_tabs.html" %}{% endwith %}
+
+  <div style="margin-bottom:16px">
+    <a href="/esign/batches" style="color:var(--text-muted);font-size:0.88rem"><i class="fas fa-arrow-left"></i> All bulk sends</a>
+  </div>
+
+  <div x-show="loading" style="text-align:center;padding:40px;color:var(--text-muted)"><i class="fas fa-spinner fa-spin"></i> Loading…</div>
+
+  <div x-show="!loading && batch">
+    <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:flex-start">
+        <div>
+          <h3 style="margin:0" x-text="batch.name"></h3>
+          <div style="color:var(--text-muted);font-size:0.85rem;margin-top:4px">
+            <span x-text="batch.source_label||''"></span> · created <span x-text="formatDate(batch.created_at)"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <span :style="'padding:5px 12px;border-radius:20px;font-size:0.78rem;font-weight:600;background:' + statusBg(batch.status) + ';color:' + statusFg(batch.status)" x-text="batch.status"></span>
+          <a :href="'/api/esign/batches/' + id + '/results.csv'" class="btn btn-sm"><i class="fas fa-download"></i> Results CSV</a>
+          <button x-show="batch.status==='running'" @click="cancel()" class="btn btn-sm btn-danger"><i class="fas fa-stop"></i> Cancel</button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-top:16px">
+        <div><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">Total</div><div style="font-size:1.4rem;font-weight:600" x-text="batch.total_rows"></div></div>
+        <div><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">Created</div><div style="font-size:1.4rem;font-weight:600;color:#3b82f6" x-text="batch.created_count"></div></div>
+        <div><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">Sent</div><div style="font-size:1.4rem;font-weight:600;color:#10b981" x-text="batch.sent_count"></div></div>
+        <div><div style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase">Failed</div><div style="font-size:1.4rem;font-weight:600;color:#ef4444" x-text="batch.failed_count"></div></div>
+      </div>
+      <div style="margin-top:14px;height:8px;background:var(--border,#e2e8f0);border-radius:4px;overflow:hidden">
+        <div :style="'height:100%;background:#10b981;width:' + (batch.total_rows ? (batch.sent_count*100/batch.total_rows) : 0) + '%;transition:width 0.3s'"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:0;overflow:hidden">
+      <div style="padding:14px 18px;font-weight:600;border-bottom:1px solid var(--border)">Per-row status</div>
+      <div style="max-height:600px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+          <thead style="background:var(--bg-secondary,#f9fafb);position:sticky;top:0">
+            <tr>
+              <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">#</th>
+              <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">Row data</th>
+              <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">Status</th>
+              <th style="padding:8px 12px;text-align:left;border-bottom:1px solid var(--border)">Envelope</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="it in batch.items" :key="it.id">
+              <tr>
+                <td style="padding:6px 12px;border-bottom:1px solid var(--border-light,#f1f5f9)" x-text="it.row_index + 1"></td>
+                <td style="padding:6px 12px;border-bottom:1px solid var(--border-light,#f1f5f9);font-size:0.78rem">
+                  <template x-for="(v,k) in it.raw_row" :key="k">
+                    <span><strong x-text="k"></strong>: <span x-text="v"></span> &nbsp;</span>
+                  </template>
+                </td>
+                <td style="padding:6px 12px;border-bottom:1px solid var(--border-light,#f1f5f9)">
+                  <span :style="'padding:2px 8px;border-radius:12px;font-size:0.72rem;font-weight:600;background:' + itemBg(it.status) + ';color:' + itemFg(it.status)" x-text="it.envelope_status || it.status"></span>
+                  <div x-show="it.error" style="color:#ef4444;font-size:0.72rem;margin-top:2px" x-text="it.error"></div>
+                </td>
+                <td style="padding:6px 12px;border-bottom:1px solid var(--border-light,#f1f5f9)">
+                  <a x-show="it.envelope_id" :href="'/esign/' + it.envelope_id + '/detail'" style="font-size:0.78rem">
+                    <i class="fas fa-external-link-alt"></i> View
+                  </a>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function batchDetail(id) {
+  return {
+    id, loading:true, batch:null, _timer:null,
+    async load() {
+      const r = await fetch('/api/esign/batches/' + this.id, {credentials:'include'});
+      if (r.ok) this.batch = await r.json();
+      this.loading = false;
+    },
+    async start() {
+      await this.load();
+      // poll while running
+      this._timer = setInterval(async () => {
+        await this.load();
+        if (this.batch && ['completed','failed','cancelled'].includes(this.batch.status)) {
+          clearInterval(this._timer);
+        }
+      }, 3000);
+    },
+    async cancel() {
+      if (!confirm('Cancel this batch? In-flight items will finish.')) return;
+      await fetch('/api/esign/batches/' + this.id + '/cancel', {method:'POST', credentials:'include'});
+      await this.load();
+    },
+    formatDate(s) { return s ? new Date(s).toLocaleString() : ''; },
+    statusBg(s) { return ({pending:'#fef3c7',running:'#dbeafe',completed:'#d1fae5',failed:'#fee2e2',cancelled:'#e5e7eb'})[s] || '#e5e7eb'; },
+    statusFg(s) { return ({pending:'#92400e',running:'#1e40af',completed:'#065f46',failed:'#991b1b',cancelled:'#374151'})[s] || '#374151'; },
+    itemBg(s) { return ({pending:'#fef3c7',created:'#dbeafe',sent:'#dbeafe',completed:'#d1fae5',failed:'#fee2e2',cancelled:'#e5e7eb'})[s] || '#e5e7eb'; },
+    itemFg(s) { return ({pending:'#92400e',created:'#1e40af',sent:'#1e40af',completed:'#065f46',failed:'#991b1b',cancelled:'#374151'})[s] || '#374151'; },
+  };
+}
+</script>
+{% endblock %}
