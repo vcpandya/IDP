@@ -261,12 +261,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    import secrets as _secrets
+
     from idpkit.api.deps import (
         limiter,
         decode_token,
         CSRF_COOKIE_NAME,
         CSRF_HEADER_NAME,
         generate_csrf_token,
+        ACCESS_TOKEN_EXPIRE_MINUTES,
     )
     app.state.limiter = limiter
 
@@ -284,55 +287,73 @@ def create_app() -> FastAPI:
         "/api/auth/logout",
     }
 
+    def _set_csrf_cookie(response, value: str) -> None:
+        """Issue the double-submit CSRF cookie with consistent attributes."""
+        response.set_cookie(
+            key=CSRF_COOKIE_NAME,
+            value=value,
+            httponly=False,  # JS must be able to read it to echo in header.
+            secure=True,
+            samesite="lax",
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            path="/",
+        )
+
     @app.middleware("http")
     async def csrf_protect(request: Request, call_next):
         method = request.method.upper()
-        if method in _CSRF_SAFE_METHODS:
-            response = await call_next(request)
-        else:
-            path = request.url.path
-            has_bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
-            has_api_key = bool(request.headers.get("x-api-key"))
-            session_cookie = request.cookies.get("session_token")
-            if (
-                session_cookie
-                and not has_bearer
-                and not has_api_key
-                and path not in _CSRF_EXEMPT_PATHS
-                # Public e-sign signing API uses a one-time token in the URL
-                # path; there is no logged-in session to protect against.
-                and not path.startswith("/api/esign/sign/")
-            ):
-                cookie_token = request.cookies.get(CSRF_COOKIE_NAME, "")
-                header_token = request.headers.get(CSRF_HEADER_NAME, "")
-                if not cookie_token or not header_token or cookie_token != header_token:
-                    return JSONResponse(
-                        status_code=403,
-                        content={
-                            "detail": (
-                                "CSRF token missing or invalid. Send the "
-                                "csrftoken cookie's value back in the "
-                                "X-CSRF-Token header."
-                            )
-                        },
-                    )
-            response = await call_next(request)
+        is_safe = method in _CSRF_SAFE_METHODS
+        path = request.url.path
+        session_cookie = request.cookies.get("session_token")
+        has_bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
+        has_api_key = bool(request.headers.get("x-api-key"))
+        existing_csrf = request.cookies.get(CSRF_COOKIE_NAME, "")
 
-        # Issue a CSRF cookie for any authenticated browser session that
-        # doesn't yet have one. Non-HttpOnly so JS can read it; tied to the
-        # same Secure/SameSite=Lax policy as the session cookie.
-        if (
-            request.cookies.get("session_token")
-            and not request.cookies.get(CSRF_COOKIE_NAME)
-        ):
-            response.set_cookie(
-                key=CSRF_COOKIE_NAME,
-                value=generate_csrf_token(),
-                httponly=False,
-                secure=True,
-                samesite="lax",
-                max_age=60 * 60 * 24,
+        csrf_required = (
+            not is_safe
+            and session_cookie
+            and not has_bearer
+            and not has_api_key
+            and path not in _CSRF_EXEMPT_PATHS
+            # Public e-sign signing API uses a one-time token in the URL
+            # path; there is no logged-in session to protect against.
+            and not path.startswith("/api/esign/sign/")
+        )
+
+        if csrf_required:
+            header_token = request.headers.get(CSRF_HEADER_NAME, "")
+            ok = bool(
+                existing_csrf
+                and header_token
+                and _secrets.compare_digest(existing_csrf, header_token)
             )
+            if not ok:
+                response = JSONResponse(
+                    status_code=403,
+                    content={
+                        "code": "csrf_invalid",
+                        "detail": (
+                            "CSRF token missing or invalid. Reload the page; "
+                            "if this keeps happening, your browser may be "
+                            "blocking the csrftoken cookie."
+                        ),
+                    },
+                )
+                # Make sure the client has a usable token for the retry. We
+                # only mint one if the cookie is absent — never rotate an
+                # existing token, otherwise an in-flight JS retry that already
+                # read the old value would loop forever.
+                if not existing_csrf:
+                    _set_csrf_cookie(response, generate_csrf_token())
+                return response
+
+        response = await call_next(request)
+
+        # Issue the CSRF cookie on safe-method responses for authenticated
+        # browser sessions that don't yet have one. Restricting issuance to
+        # safe methods avoids the rotation race described above.
+        if is_safe and session_cookie and not existing_csrf:
+            _set_csrf_cookie(response, generate_csrf_token())
         return response
 
     @app.middleware("http")
