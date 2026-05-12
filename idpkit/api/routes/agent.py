@@ -530,6 +530,12 @@ async def agent_chat(
             elif pm.role == "tool":
                 memory.add_message("tool", pm.content or "", tool_name=pm.tool_name)
 
+    logger.info(
+        "Agent chat: user=%s convo=%s docs=%d tags=%d",
+        user.id, conversation_id or "-",
+        len(combined_doc_ids), len(body.tag_ids),
+    )
+
     # -- Run agent ------------------------------------------------------------
     agent = IDPAgent()
 
