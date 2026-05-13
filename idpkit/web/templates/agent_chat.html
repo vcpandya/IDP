@@ -190,6 +190,13 @@
                         aria-label="Attach files" :disabled="loading">
                     <i class="fas fa-paperclip"></i>
                 </button>
+                <button class="btn-upload btn-enrich" @click.stop="toggleEnrichInput()"
+                        :class="{ active: enrichInput }"
+                        :title="enrichInput ? 'Enrich input: ON — IDA will rewrite your message for better results' : 'Enrich input: OFF — click to let IDA rewrite your message for better results'"
+                        :aria-pressed="enrichInput ? 'true' : 'false'"
+                        aria-label="Toggle enrich input" :disabled="loading">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                </button>
                 <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
@@ -609,6 +616,10 @@ function agentChat() {
         tagsDraft: [],
         showDeleteConfirm: false,
         deleteTarget: null,
+        // "Enrich input" toggle — when on, the server runs an LLM rewrite of
+        // the user's message before sending it to the agent loop. Persisted
+        // to localStorage so the preference sticks across sessions.
+        enrichInput: (typeof localStorage !== 'undefined' && localStorage.getItem('ida.enrichInput') === '1'),
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -984,7 +995,8 @@ function agentChat() {
                         message: msg,
                         conversation_id: this.currentConversationId,
                         document_ids: this.selectedDocs,
-                        tag_ids: this.selectedTags
+                        tag_ids: this.selectedTags,
+                        enrich_input: this.enrichInput
                     })
                 });
                 if (res.ok) {
@@ -1115,6 +1127,12 @@ function agentChat() {
                     }
                     this.scrollToBottom();
                 }
+            } catch(e) {}
+        },
+        toggleEnrichInput() {
+            this.enrichInput = !this.enrichInput;
+            try {
+                localStorage.setItem('ida.enrichInput', this.enrichInput ? '1' : '0');
             } catch(e) {}
         },
         // ----- Conversation actions menu -----

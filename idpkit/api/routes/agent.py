@@ -18,7 +18,7 @@ from idpkit.db.models import (
 )
 from idpkit.api.deps import get_current_user, get_llm, get_llm_for_user
 from idpkit.core.llm import LLMClient
-from idpkit.agent.agent import IDPAgent
+from idpkit.agent.agent import IDPAgent, enrich_user_message
 from idpkit.agent.memory import ConversationMemory
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,16 @@ class ChatRequest(BaseModel):
     tag_ids: list[str] = Field(
         default_factory=list,
         description="List of tag IDs — their documents are merged into document_ids",
+    )
+    enrich_input: bool = Field(
+        default=False,
+        description=(
+            "If true, run a quick LLM rewrite of the user's message — using "
+            "recent conversation context and attached document names — before "
+            "sending it to the agent loop. The user-facing transcript still "
+            "shows the original message; only the agent sees the enriched "
+            "version."
+        ),
     )
 
 
@@ -688,12 +698,35 @@ async def agent_chat(
         len(combined_doc_ids), len(body.tag_ids),
     )
 
+    # -- Optionally enrich the user's message --------------------------------
+    # The user-facing transcript and the persisted DB row keep the original
+    # text. The enriched version is what the agent sees this turn — and what
+    # gets added to the in-memory ConversationMemory inside agent.chat() so
+    # follow-up reasoning during the loop has the richer query in context.
+    agent_message = body.message
+    if body.enrich_input:
+        try:
+            agent_message = await enrich_user_message(
+                message=body.message,
+                conversation=memory,
+                document_names=filename_map,
+                llm=llm,
+            )
+            logger.info(
+                "Enriched user input for user=%s convo=%s (orig=%d → enriched=%d chars)",
+                user.id, conversation_id or "-",
+                len(body.message), len(agent_message),
+            )
+        except Exception as exc:
+            logger.warning("Enrichment failed, falling back to original: %s", exc)
+            agent_message = body.message
+
     # -- Run agent ------------------------------------------------------------
     agent = IDPAgent()
 
     try:
         result = await agent.chat(
-            message=body.message,
+            message=agent_message,
             document_ids=combined_doc_ids,
             llm=llm,
             db=db,
@@ -848,6 +881,25 @@ async def agent_chat_stream(
         len(combined_doc_ids), len(body.tag_ids),
     )
 
+    # Optional enrichment for the streaming endpoint as well.
+    agent_message = body.message
+    if body.enrich_input:
+        try:
+            agent_message = await enrich_user_message(
+                message=body.message,
+                conversation=memory,
+                document_names=filename_map,
+                llm=llm,
+            )
+            logger.info(
+                "Enriched user input (stream) for user=%s convo=%s (orig=%d → enriched=%d chars)",
+                user.id, conversation_id or "-",
+                len(body.message), len(agent_message),
+            )
+        except Exception as exc:
+            logger.warning("Stream enrichment failed, falling back: %s", exc)
+            agent_message = body.message
+
     agent = IDPAgent()
 
     def _sse(event: dict) -> str:
@@ -860,7 +912,7 @@ async def agent_chat_stream(
 
         final_event: dict | None = None
         agen = agent.chat_stream(
-            message=body.message,
+            message=agent_message,
             document_ids=combined_doc_ids,
             llm=llm,
             db=db,
