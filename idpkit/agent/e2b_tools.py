@@ -12,6 +12,23 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _join_log_lines(lines) -> str:
+    """Concatenate e2b log lines, tolerating SDK shape changes.
+
+    Older e2b_code_interpreter releases returned objects with a ``.line``
+    attribute; newer releases return plain strings. Accept either.
+    """
+    if not lines:
+        return ""
+    out = []
+    for entry in lines:
+        if isinstance(entry, str):
+            out.append(entry)
+        else:
+            out.append(getattr(entry, "line", str(entry)))
+    return "".join(out)
+
 E2B_TIMEOUT = 60
 SANDBOX_TIMEOUT = 300
 
@@ -36,8 +53,8 @@ async def execute_python(code: str, timeout: int = E2B_TIMEOUT) -> dict[str, Any
         sandbox = await AsyncSandbox.create(api_key=api_key, timeout=SANDBOX_TIMEOUT)
         execution = await sandbox.run_code(code, timeout=timeout)
 
-        stdout = "".join(line.line for line in (execution.logs.stdout or []))
-        stderr = "".join(line.line for line in (execution.logs.stderr or []))
+        stdout = _join_log_lines(execution.logs.stdout)
+        stderr = _join_log_lines(execution.logs.stderr)
 
         charts = []
         if execution.results:
@@ -104,8 +121,8 @@ async def install_package(package_name: str) -> dict[str, Any]:
         install_code = f"import subprocess; result = subprocess.run(['pip', 'install', '{package_name}'], capture_output=True, text=True); print(result.stdout[-2000:] if len(result.stdout) > 2000 else result.stdout); print(result.stderr[-1000:] if len(result.stderr) > 1000 else result.stderr) if result.returncode != 0 else None"
         execution = await sandbox.run_code(install_code, timeout=120)
 
-        stdout = "".join(line.line for line in (execution.logs.stdout or []))
-        stderr = "".join(line.line for line in (execution.logs.stderr or []))
+        stdout = _join_log_lines(execution.logs.stdout)
+        stderr = _join_log_lines(execution.logs.stderr)
 
         success = execution.error is None and ("Successfully installed" in stdout or "already satisfied" in stdout.lower())
 
@@ -222,8 +239,8 @@ asyncio.run(browse())
         sandbox = await AsyncSandbox.create(api_key=api_key, timeout=SANDBOX_TIMEOUT)
         execution = await sandbox.run_code(browser_code, timeout=timeout)
 
-        stdout = "".join(line.line for line in (execution.logs.stdout or []))
-        stderr = "".join(line.line for line in (execution.logs.stderr or []))
+        stdout = _join_log_lines(execution.logs.stdout)
+        stderr = _join_log_lines(execution.logs.stderr)
 
         if execution.error:
             return {
