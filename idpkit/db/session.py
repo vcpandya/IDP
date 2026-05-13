@@ -194,6 +194,8 @@ def _migrate_indexes(sync_conn):
         "ON documents (owner_id, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_conversations_owner_created "
         "ON conversations (owner_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_conversations_owner_updated "
+        "ON conversations (owner_id, updated_at)",
         "CREATE INDEX IF NOT EXISTS ix_conv_messages_conv_created "
         "ON conversation_messages (conversation_id, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_batch_items_job_status "
