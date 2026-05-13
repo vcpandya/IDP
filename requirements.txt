@@ -1,4 +1,4 @@
-openai==1.101.0
+openai>=2.8.0
 pymupdf==1.26.4
 pypdf>=6.0.0
 python-dotenv>=1.2.0
