@@ -12,6 +12,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "overrides": {
+    "@tootallnate/once": "^3.0.1"
+  },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",
     "@uppy/aws-s3": "^5.1.0",
