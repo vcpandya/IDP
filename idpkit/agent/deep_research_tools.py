@@ -6,19 +6,20 @@ IDA can dispatch a long-running research task and get a cited report back.
 Notes
 -----
 * Deep Research is exclusively available through the Interactions API and
-  is asynchronous — tasks can take several minutes. We poll with a hard
-  timeout cap so the agent loop can never hang indefinitely.
+  is asynchronous — tasks can take many minutes. We poll with a generous
+  timeout cap and surface progress to the caller via an optional
+  ``progress_cb`` so the chat UI can show live updates instead of staring
+  at a spinner for 10+ minutes.
 * The user's preferred env var is ``GOOGLE_API_KEY``. The SDK also accepts
   ``GEMINI_API_KEY``; we honor either, preferring ``GOOGLE_API_KEY``.
-* This tool intentionally runs a single-shot research (no collaborative
-  planning) — IDA can re-invoke it with a refined prompt if needed.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from typing import Any
+import time
+from typing import Any, Awaitable, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_AGENT = "deep-research-preview-04-2026"
 _MAX_AGENT = "deep-research-max-preview-04-2026"
 
-# Hard cap on total polling time. Deep Research can take several minutes;
-# we keep this conservative to avoid wedging the agent loop. If the task
-# isn't done in time we return a structured "still_running" result so IDA
-# can tell the user to retry rather than crash.
-_POLL_TIMEOUT_SECONDS = 300
-_POLL_INTERVAL_SECONDS = 8
+# Generous polling cap. Deep Research can legitimately take 10+ minutes;
+# 5 minutes was too tight. We keep it bounded so an indefinitely-stuck
+# task can never wedge the agent loop forever.
+_POLL_TIMEOUT_SECONDS = 1800           # 30 minutes
+_POLL_INTERVAL_SECONDS = 6
+
+# Type alias for the optional progress sink. Receives a short, human-readable
+# message describing what the research agent is currently doing.
+ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 def _resolve_api_key() -> str | None:
@@ -52,119 +56,131 @@ def _get_client():
             "GOOGLE_API_KEY (or GEMINI_API_KEY) is not set. "
             "Create a key at https://aistudio.google.com/apikey."
         )
-    # Pass key explicitly so we don't rely on env-var auto-pickup ordering.
     return genai.Client(api_key=api_key)
 
 
-def _outputs_to_text(outputs: Any) -> str:
-    """Flatten the SDK's outputs list into a single readable string."""
-    if not outputs:
+# ---------------------------------------------------------------------------
+# Step / output extraction helpers
+# ---------------------------------------------------------------------------
+
+def _truncate(text: str, n: int = 140) -> str:
+    text = (text or "").strip().replace("\n", " ")
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _summarize_step(step: Any) -> str | None:
+    """Convert a Deep Research step into a short progress line.
+
+    Returns ``None`` for step types we don't want to surface (e.g. the
+    initial ``user_input`` echo).
+    """
+    stype = getattr(step, "type", None)
+    if not stype or stype == "user_input":
+        return None
+
+    if stype == "thought":
+        # Summary is a list of {text: ...} entries
+        summaries = getattr(step, "summary", None) or []
+        for s in summaries:
+            text = getattr(s, "text", None) or (
+                s.get("text") if isinstance(s, dict) else None
+            )
+            if text:
+                return f"💭 {_truncate(text)}"
+        return "💭 Thinking…"
+
+    if stype == "google_search_call":
+        args = getattr(step, "arguments", None)
+        queries = getattr(args, "queries", None) if args else None
+        if queries:
+            joined = " · ".join(q for q in queries if q)[:160]
+            return f"🔎 Searching: {joined}"
+        return "🔎 Searching the web…"
+
+    if stype == "google_search_result":
+        return "🔎 Got search results"
+
+    if stype == "url_context_call":
+        args = getattr(step, "arguments", None)
+        urls = getattr(args, "urls", None) if args else None
+        if urls:
+            count = len(urls)
+            first = urls[0]
+            extra = f" (+{count - 1} more)" if count > 1 else ""
+            return f"📄 Reading {_truncate(first, 100)}{extra}"
+        return "📄 Reading sources…"
+
+    if stype == "url_context_result":
+        return "📄 Read sources"
+
+    if stype == "code_execution_call":
+        return "🧮 Running analysis code…"
+
+    if stype == "code_execution_result":
+        return "🧮 Code analysis done"
+
+    if stype == "function_call":
+        name = getattr(step, "name", None) or "tool"
+        return f"🛠 Calling {name}…"
+
+    if stype == "function_result":
+        return "🛠 Tool returned"
+
+    if stype == "model_output":
+        return "✍️ Synthesizing the report…"
+
+    # Unknown step type — surface its discriminator so we can learn what
+    # else exists in the wild without spamming the UI.
+    return f"… {stype}"
+
+
+def _outputs_to_text(steps: Any) -> str:
+    """Flatten the model_output steps into a single readable string."""
+    if not steps:
         return ""
     parts: list[str] = []
-    for o in outputs:
-        otype = getattr(o, "type", None)
-        text = getattr(o, "text", None)
-        if otype == "text" and text:
-            parts.append(text)
-        elif text:
-            parts.append(text)
+    for s in steps:
+        if getattr(s, "type", None) != "model_output":
+            continue
+        content_list = getattr(s, "content", None) or []
+        for c in content_list:
+            ctype = getattr(c, "type", None)
+            text = getattr(c, "text", None)
+            if text and (ctype is None or ctype == "text"):
+                parts.append(text)
     return "\n\n".join(p for p in parts if p)
 
 
-def _outputs_to_artifacts(outputs: Any) -> list[dict]:
+def _outputs_to_artifacts(steps: Any) -> list[dict]:
     """Pull out non-text outputs (charts/infographics) as a small summary."""
-    if not outputs:
+    if not steps:
         return []
     artifacts: list[dict] = []
-    for o in outputs:
-        otype = getattr(o, "type", None)
-        if otype and otype != "text":
-            entry: dict[str, Any] = {"type": otype}
-            for attr in ("title", "caption", "mime_type", "format"):
-                v = getattr(o, attr, None)
-                if v:
-                    entry[attr] = v
-            artifacts.append(entry)
+    for s in steps:
+        if getattr(s, "type", None) != "model_output":
+            continue
+        content_list = getattr(s, "content", None) or []
+        for c in content_list:
+            ctype = getattr(c, "type", None)
+            if ctype and ctype != "text":
+                entry: dict[str, Any] = {"type": ctype}
+                for attr in ("title", "caption", "mime_type", "format"):
+                    v = getattr(c, attr, None)
+                    if v:
+                        entry[attr] = v
+                artifacts.append(entry)
     return artifacts
 
 
-def _run_deep_research_blocking(
-    prompt: str,
-    agent: str,
-    visualization: str | None,
-) -> dict[str, Any]:
-    """Synchronous polling helper, executed in a worker thread."""
-    import time
-
-    client = _get_client()
-
-    agent_config: dict[str, Any] = {"type": "deep-research"}
-    if visualization in ("auto", "on"):
-        agent_config["visualization"] = "auto"
-
-    interaction = client.interactions.create(
-        agent=agent,
-        input=prompt,
-        agent_config=agent_config,
-        background=True,
-    )
-    interaction_id = getattr(interaction, "id", None)
-    if not interaction_id:
-        return {
-            "error": "Deep Research did not return an interaction id.",
-            "success": False,
-        }
-
-    deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
-    last_status = "pending"
-    while time.monotonic() < deadline:
-        try:
-            current = client.interactions.get(interaction_id)
-        except Exception as exc:
-            logger.warning("Deep Research poll failed: %s", exc)
-            time.sleep(_POLL_INTERVAL_SECONDS)
-            continue
-
-        last_status = getattr(current, "status", "unknown") or "unknown"
-
-        if last_status == "completed":
-            outputs = getattr(current, "outputs", None) or []
-            return {
-                "success": True,
-                "interaction_id": interaction_id,
-                "agent": agent,
-                "status": "completed",
-                "report": _outputs_to_text(outputs),
-                "artifacts": _outputs_to_artifacts(outputs),
-            }
-        if last_status == "failed":
-            err = getattr(current, "error", None)
-            return {
-                "success": False,
-                "interaction_id": interaction_id,
-                "agent": agent,
-                "status": "failed",
-                "error": f"Deep Research failed: {err}",
-            }
-        time.sleep(_POLL_INTERVAL_SECONDS)
-
-    return {
-        "success": False,
-        "interaction_id": interaction_id,
-        "agent": agent,
-        "status": last_status,
-        "error": (
-            f"Deep Research did not finish within {_POLL_TIMEOUT_SECONDS}s "
-            f"(last status: {last_status}). Tell the user the task is still "
-            f"running on Google's side; they can retry the question later."
-        ),
-    }
-
+# ---------------------------------------------------------------------------
+# Main entrypoint
+# ---------------------------------------------------------------------------
 
 async def deep_research(
     prompt: str,
     use_max: bool = False,
     visualization: str | None = None,
+    progress_cb: Optional[ProgressCallback] = None,
 ) -> dict[str, Any]:
     """Run a Gemini Deep Research task and return the final report.
 
@@ -172,6 +188,10 @@ async def deep_research(
         prompt: The natural-language research question.
         use_max: If True, use the higher-comprehensiveness Max variant.
         visualization: Pass ``"auto"`` to let the agent generate charts.
+        progress_cb: Optional async callable invoked with a short status
+            string each time the underlying interaction reports a new step
+            (e.g. a thought, a search query, a URL fetch). Failures inside
+            the callback are swallowed so they can never break research.
 
     Returns:
         ``{"success": True, "report": "...", "artifacts": [...], ...}`` on
@@ -185,11 +205,96 @@ async def deep_research(
     agent = _MAX_AGENT if use_max else _DEFAULT_AGENT
 
     try:
-        return await asyncio.to_thread(
-            _run_deep_research_blocking, prompt, agent, visualization,
-        )
+        client = _get_client()
     except RuntimeError as exc:
         return {"error": str(exc), "success": False}
+
+    agent_config: dict[str, Any] = {"type": "deep-research"}
+    if visualization in ("auto", "on"):
+        agent_config["visualization"] = "auto"
+
+    async def _emit(msg: str) -> None:
+        if not progress_cb or not msg:
+            return
+        try:
+            await progress_cb(msg)
+        except Exception:
+            logger.debug("deep_research progress_cb raised", exc_info=True)
+
+    try:
+        await _emit(f"Starting Deep Research ({agent})…")
+        interaction = await asyncio.to_thread(
+            client.interactions.create,
+            agent=agent,
+            input=prompt,
+            agent_config=agent_config,
+            background=True,
+        )
     except Exception as exc:
-        logger.error("Deep Research failed: %s", exc)
+        logger.error("Deep Research create failed: %s", exc)
         return {"error": f"Deep Research call failed: {exc}", "success": False}
+
+    interaction_id = getattr(interaction, "id", None)
+    if not interaction_id:
+        return {
+            "error": "Deep Research did not return an interaction id.",
+            "success": False,
+        }
+
+    deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
+    seen_steps = 0
+    last_status = "in_progress"
+    started = time.monotonic()
+
+    while time.monotonic() < deadline:
+        try:
+            current = await asyncio.to_thread(client.interactions.get, interaction_id)
+        except Exception as exc:
+            logger.warning("Deep Research poll failed: %s", exc)
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            continue
+
+        last_status = getattr(current, "status", "in_progress") or "in_progress"
+        steps = getattr(current, "steps", None) or []
+
+        # Emit progress for any newly-arrived steps
+        if len(steps) > seen_steps:
+            for s in steps[seen_steps:]:
+                msg = _summarize_step(s)
+                if msg:
+                    await _emit(msg)
+            seen_steps = len(steps)
+
+        if last_status == "completed":
+            await _emit("✅ Research complete — finalizing report…")
+            return {
+                "success": True,
+                "interaction_id": interaction_id,
+                "agent": agent,
+                "status": "completed",
+                "elapsed_seconds": round(time.monotonic() - started, 1),
+                "report": _outputs_to_text(steps),
+                "artifacts": _outputs_to_artifacts(steps),
+            }
+        if last_status in ("failed", "cancelled", "incomplete"):
+            return {
+                "success": False,
+                "interaction_id": interaction_id,
+                "agent": agent,
+                "status": last_status,
+                "error": f"Deep Research ended with status '{last_status}'.",
+            }
+
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+
+    return {
+        "success": False,
+        "interaction_id": interaction_id,
+        "agent": agent,
+        "status": last_status,
+        "error": (
+            f"Deep Research did not finish within {_POLL_TIMEOUT_SECONDS}s "
+            f"(last status: {last_status}). The task is still running on "
+            f"Google's side; the user can retry the question later."
+        ),
+    }

@@ -71,6 +71,14 @@
                                     <i class="fas fa-chevron-down tool-accordion-arrow" :class="open && 'open'"></i>
                                 </button>
                                 <div class="tool-accordion-body" x-show="open" x-cloak x-transition.duration.150ms>
+                                    <template x-if="msg.progress_log && msg.progress_log.length">
+                                        <div style="margin-bottom:8px;padding:8px;background:#f9fafb;border-radius:6px;font-size:12px;color:#374151;">
+                                            <div style="font-weight:600;margin-bottom:4px;">Progress</div>
+                                            <template x-for="(p, i) in msg.progress_log" :key="i">
+                                                <div x-text="p" style="padding:2px 0;"></div>
+                                            </template>
+                                        </div>
+                                    </template>
                                     <pre x-text="msg.content"></pre>
                                 </div>
                             </div>
@@ -888,11 +896,17 @@ function agentChat() {
                         this.messages.push(tm);
                         toolMsgByCallId[ev.call_id] = tm;
                         toolOrderCallIds.push(ev.call_id);
+                    } else if (ev.type === 'tool_progress') {
+                        const tm = toolMsgByCallId[ev.call_id];
+                        if (tm && ev.message) {
+                            tm.stream_summary = ev.message;
+                            tm.progress_log = (tm.progress_log || []).concat([ev.message]);
+                        }
                     } else if (ev.type === 'tool_end') {
                         const tm = toolMsgByCallId[ev.call_id];
                         if (tm) {
                             tm.stream_status = ev.success ? 'done' : 'failed';
-                            tm.stream_summary = ev.summary || '';
+                            tm.stream_summary = ev.summary || tm.stream_summary || '';
                             tm.is_error = !ev.success;
                             tm.streaming = false;
                             // Keep the placeholder until `done` brings the

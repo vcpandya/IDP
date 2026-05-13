@@ -7,6 +7,7 @@ model produces a final text response.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Optional
@@ -646,16 +647,93 @@ class IDPAgent:
                     if tool_name == "use_skill" and user_id:
                         tool_args["_user_id"] = user_id
 
-                    try:
-                        if tool_name in connector_executors:
-                            tool_result = await connector_executors[tool_name](tool_args, llm, db)
-                        else:
-                            tool_result = await execute_tool(
-                                name=tool_name, args=tool_args, llm=llm, db=db,
-                            )
-                    except Exception as exc:
-                        logger.error("Tool '%s' execution failed: %s", tool_name, exc)
-                        tool_result = {"error": f"Tool execution failed: {exc}"}
+                    # Special path: deep_research can run for many minutes,
+                    # so we run it as a background task and concurrently
+                    # drain a progress queue, yielding `tool_progress`
+                    # events to the SSE client. All other tools dispatch
+                    # through the normal awaited path.
+                    if tool_name == "deep_research" and tool_name not in connector_executors:
+                        from idpkit.agent.deep_research_tools import deep_research as _dr
+
+                        progress_q: asyncio.Queue = asyncio.Queue()
+
+                        async def _cb(msg: str, _q=progress_q) -> None:
+                            await _q.put(msg)
+
+                        viz = tool_args.get("visualization")
+                        if viz not in ("auto", "on"):
+                            viz = None
+
+                        dr_task = asyncio.create_task(_dr(
+                            prompt=tool_args.get("prompt", ""),
+                            use_max=bool(tool_args.get("use_max", False)),
+                            visualization=viz,
+                            progress_cb=_cb,
+                        ))
+
+                        try:
+                            while not dr_task.done():
+                                try:
+                                    msg = await asyncio.wait_for(
+                                        progress_q.get(), timeout=2.0,
+                                    )
+                                    yield {
+                                        "type": "tool_progress",
+                                        "call_id": tc["id"],
+                                        "name": tool_name,
+                                        "message": msg,
+                                    }
+                                except asyncio.TimeoutError:
+                                    # Heartbeat: yield a no-op progress
+                                    # event so the SSE route can notice
+                                    # client disconnects and cancel us.
+                                    yield {
+                                        "type": "tool_progress",
+                                        "call_id": tc["id"],
+                                        "name": tool_name,
+                                        "message": "",
+                                    }
+                            # Drain any progress messages emitted right
+                            # before the task finished.
+                            while not progress_q.empty():
+                                yield {
+                                    "type": "tool_progress",
+                                    "call_id": tc["id"],
+                                    "name": tool_name,
+                                    "message": progress_q.get_nowait(),
+                                }
+                            tool_result = dr_task.result()
+                        except (GeneratorExit, asyncio.CancelledError):
+                            # Client disconnected or upstream cancelled —
+                            # make sure we don't leak a 30-minute task.
+                            if not dr_task.done():
+                                dr_task.cancel()
+                                try:
+                                    await dr_task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+                            raise
+                        except Exception as exc:
+                            logger.error("deep_research task failed: %s", exc)
+                            tool_result = {"error": f"Tool execution failed: {exc}", "success": False}
+                        finally:
+                            if not dr_task.done():
+                                dr_task.cancel()
+                                try:
+                                    await dr_task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+                    else:
+                        try:
+                            if tool_name in connector_executors:
+                                tool_result = await connector_executors[tool_name](tool_args, llm, db)
+                            else:
+                                tool_result = await execute_tool(
+                                    name=tool_name, args=tool_args, llm=llm, db=db,
+                                )
+                        except Exception as exc:
+                            logger.error("Tool '%s' execution failed: %s", tool_name, exc)
+                            tool_result = {"error": f"Tool execution failed: {exc}"}
 
                     if tool_name == "execute_python" and isinstance(tool_result, dict):
                         py_calls_so_far = sum(
