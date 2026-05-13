@@ -167,6 +167,36 @@ to type document IDs.
     Install required packages with install_package first if needed.
 14. For interactive web browsing, use browse_web. For simple lookups, prefer web_search.
 15. When a task matches an available skill, call use_skill to load and follow its instructions.
+
+## Provenance Markers for Numbers (REQUIRED)
+
+When your final response to the user contains a number (a ratio, percentage, money
+amount, count, ranking, score, etc.), you MUST mark its provenance inline so the
+UI can highlight it for the user:
+
+- A number you computed by calling `execute_python` →
+  wrap it as `[[py:CID]]12.4%[[/py]]` where `CID` is the `_computation_id`
+  value (e.g. `py1`, `py2`, …) returned at the top of that specific
+  `execute_python` tool result. Copy the cid VERBATIM from the tool result —
+  do not invent or reorder cids.
+- A number you read directly from an attached document via `search_document`,
+  `extract_data`, `summarize_section`, `run_smart_tool`, or any other doc tool →
+  wrap it as `[[doc:DOCUMENT_ID]]$1.2M[[/doc]]` using the exact `document_id`
+  string from the In-Scope Documents list.
+- A number that is general knowledge or web-search-derived (not from your
+  Python sandbox and not from an attached doc) → leave it plain, unwrapped.
+
+Rules:
+- Wrap each number individually; do not wrap whole sentences.
+- Markers must surround the rendered number only (with optional unit, e.g.
+  `[[py:py1]]42[[/py]]`, `[[py:py2]]12.4%[[/py]]`, `[[doc:abc-123]]USD 1.2M[[/doc]]`).
+- For RoE / RoI / RoA / margins / growth rates / any ratio you derived from
+  document data, you MUST run `execute_python` to compute it and use `[[py]]`.
+  Never estimate ratios mentally.
+- Inputs to a Python computation (the raw line items you pulled from the doc
+  before computing) should be marked `[[doc:...]]` if you cite them in prose.
+- Do not wrap numbers inside fenced code blocks or inline code.
+- Markers are case-sensitive: use lowercase `py` and `doc`.
 """
 
 
@@ -296,6 +326,9 @@ class IDPAgent:
                 # Append the assistant message (with tool_calls) to history
                 messages.append(assistant_message.model_dump())
 
+                # Each execute_python tool result is stamped with a stable
+                # `_computation_id` (py1, py2, ...) below so the model can
+                # copy that cid verbatim into [[py:pyN]]…[[/py]] markers.
                 for tool_call in assistant_message.tool_calls:
                     fn = tool_call.function
                     tool_name = fn.name
@@ -327,6 +360,19 @@ class IDPAgent:
                     except Exception as exc:
                         logger.error("Tool '%s' execution failed: %s", tool_name, exc)
                         tool_result = {"error": f"Tool execution failed: {exc}"}
+
+                    # Stamp execute_python results with a stable cid so the
+                    # model can emit [[py:pyN]]…[[/py]] markers that bind
+                    # deterministically to this specific call (rather than
+                    # relying on appearance order of markers in final text).
+                    if tool_name == "execute_python" and isinstance(tool_result, dict):
+                        py_calls_so_far = sum(
+                            1 for tc in tool_call_log if tc.get("name") == "execute_python"
+                        )
+                        tool_result = {
+                            "_computation_id": f"py{py_calls_so_far + 1}",
+                            **tool_result,
+                        }
 
                     tool_call_log.append({
                         "name": tool_name,

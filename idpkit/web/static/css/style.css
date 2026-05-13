@@ -3804,3 +3804,72 @@ tbody tr:hover { background: var(--border-light); }
         grid-template-columns: 1fr;
     }
 }
+
+/* ---- Provenance value chips (hover tooltip + click modal) ---------------- */
+.value-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.3em;
+    padding: 0 0.4em;
+    border-radius: 5px;
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background-color 0.12s, border-color 0.12s, box-shadow 0.12s;
+    position: relative;
+    white-space: nowrap;
+    vertical-align: baseline;
+}
+.value-chip.computed {
+    background: linear-gradient(180deg, rgba(124, 58, 237, 0.10), rgba(79, 70, 229, 0.10));
+    border-color: rgba(124, 58, 237, 0.35);
+    color: #4c1d95;
+}
+.value-chip.computed:hover {
+    background: linear-gradient(180deg, rgba(124, 58, 237, 0.18), rgba(79, 70, 229, 0.18));
+    border-color: rgba(124, 58, 237, 0.6);
+    box-shadow: 0 1px 4px rgba(124, 58, 237, 0.18);
+}
+.value-chip.computed.no-detail { cursor: default; }
+.value-chip.extracted {
+    background: rgba(37, 99, 235, 0.08);
+    border-color: rgba(37, 99, 235, 0.3);
+    color: #1e40af;
+}
+.value-chip.extracted:hover {
+    background: rgba(37, 99, 235, 0.15);
+    border-color: rgba(37, 99, 235, 0.55);
+    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.18);
+}
+.value-chip-icon {
+    font-size: 0.72em;
+    opacity: 0.75;
+    align-self: center;
+}
+.value-chip-text { font-variant-numeric: tabular-nums; }
+.value-chip-link {
+    font-size: 0.72em;
+    font-weight: 500;
+    opacity: 0;
+    margin-left: 0.15em;
+    transition: opacity 0.12s, max-width 0.12s;
+    max-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+.value-chip:hover .value-chip-link {
+    opacity: 0.85;
+    max-width: 8em;
+}
+.comp-cid-tag {
+    display: inline-block;
+    margin-left: 0.5rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    background: rgba(124, 58, 237, 0.12);
+    color: #6d28d9;
+    font-size: 0.72rem;
+    font-weight: 600;
+    vertical-align: middle;
+}

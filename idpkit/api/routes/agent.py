@@ -70,6 +70,21 @@ class SearchAttemptInfo(BaseModel):
     status: str = "not_searched"  # found, no_results, error, not_searched
 
 
+class ChatComputation(BaseModel):
+    """A Python execution captured during the agent loop, surfaced to the UI
+    so we can highlight numbers IDA computed and let the user inspect the
+    code, stdout, and any chart it produced.
+    """
+    cid: str  # "py1", "py2", … (1-indexed in tool-call order)
+    code: str
+    stdout: str = ""
+    stderr: str = ""
+    results: list[str] = Field(default_factory=list)
+    charts: list[dict] = Field(default_factory=list)  # {type, data(base64)}
+    success: bool = True
+    error: Optional[dict] = None
+
+
 class ChatResponse(BaseModel):
     response: str
     conversation_id: Optional[str] = None
@@ -77,6 +92,7 @@ class ChatResponse(BaseModel):
     sources: list[ChatSourceInfo] = Field(default_factory=list)
     source_type: str = "general_knowledge"  # documents, general_knowledge, mixed
     search_attempts: list[SearchAttemptInfo] = Field(default_factory=list)
+    computations: list[ChatComputation] = Field(default_factory=list)
 
 
 # -- Conversation CRUD schemas -----------------------------------------------
@@ -96,6 +112,7 @@ class ConversationMessageInfo(BaseModel):
     tool_name: Optional[str] = None
     sources: Optional[list[ChatSourceInfo]] = None
     source_type: Optional[str] = None
+    computations: Optional[list[ChatComputation]] = None
     created_at: str
 
 
@@ -209,6 +226,65 @@ def _extract_sources(tool_call_log: list[dict]) -> list[ChatSourceInfo]:
                     ))
 
     return sources
+
+
+def _extract_computations(tool_call_log: list[dict]) -> list[ChatComputation]:
+    """Pull every execute_python call from the loop in order, assigning
+    sequential `pyN` IDs that line up with the `[[py]]` markers IDA emits.
+    """
+    out: list[ChatComputation] = []
+    counter = 0
+    for tc in tool_call_log:
+        if tc.get("name") != "execute_python":
+            continue
+        counter += 1
+        args = tc.get("args") or {}
+        result = tc.get("result") or {}
+        # Charts are base64 PNG/SVG and can be very large; cap to keep
+        # responses and DB rows reasonable. Two charts per call is plenty
+        # for an inspection modal.
+        charts_in = result.get("charts") or []
+        charts_out: list[dict] = []
+        for ch in charts_in[:2]:
+            data = ch.get("data") or ""
+            if isinstance(data, str) and len(data) > 350_000:
+                # Skip oversized charts entirely rather than silently
+                # truncating base64 (which would corrupt the image).
+                continue
+            charts_out.append({"type": ch.get("type"), "data": data})
+        out.append(ChatComputation(
+            cid=f"py{counter}",
+            code=(args.get("code") or "")[:8000],
+            stdout=(result.get("stdout") or "")[:4000],
+            stderr=(result.get("stderr") or "")[:2000],
+            results=[str(r)[:1000] for r in (result.get("results") or [])][:5],
+            charts=charts_out,
+            success=bool(result.get("success", "error" not in result)),
+            error=result.get("error") if isinstance(result.get("error"), dict) else None,
+        ))
+    return out
+
+
+def _computations_to_json(items: list[ChatComputation]) -> list[dict] | None:
+    """Serialize computations for the DB. Strip chart payloads (we keep a
+    flag indicating one existed) so we don't bloat the JSON column with
+    base64 images for every saved message."""
+    if not items:
+        return None
+    out: list[dict] = []
+    for c in items:
+        d = c.model_dump(exclude_none=True)
+        # Replace bulky chart bytes with a lightweight stub on persistence.
+        if d.get("charts"):
+            d["charts"] = [{"type": ch.get("type"), "data": ""} for ch in d["charts"]]
+        out.append(d)
+    return out
+
+
+def _computations_from_json(data) -> list[ChatComputation]:
+    if not data:
+        return []
+    return [ChatComputation(**c) for c in data]
 
 
 def _sources_to_json(sources: list[ChatSourceInfo]) -> list[dict] | None:
@@ -400,6 +476,7 @@ async def get_conversation(
             tool_name=m.tool_name,
             sources=_sources_from_json(m.sources_json) or None,
             source_type=m.source_type,
+            computations=_computations_from_json(m.computations_json) or None,
             created_at=m.created_at.isoformat(),
         ))
     return ConversationDetail(
@@ -568,6 +645,7 @@ async def agent_chat(
     sources = _extract_sources(tool_calls_log)
     source_type = _classify_source_type(tool_calls_log, combined_doc_ids)
     search_attempts = _extract_search_attempts(tool_calls_log, combined_doc_ids, filename_map)
+    computations = _extract_computations(tool_calls_log)
 
     # -- Persist messages to DB -----------------------------------------------
     if conversation_id:
@@ -589,7 +667,7 @@ async def agent_chat(
                 tool_name=tc.get("name"),
             ))
 
-        # Save assistant message with sources and source_type
+        # Save assistant message with sources, source_type, and computations
         db.add(ConversationMessage(
             conversation_id=conversation_id,
             owner_id=user.id,
@@ -597,6 +675,7 @@ async def agent_chat(
             content=result["response"],
             sources_json=_sources_to_json(sources),
             source_type=source_type,
+            computations_json=_computations_to_json(computations),
         ))
 
         # Auto-title from first user message
@@ -614,4 +693,5 @@ async def agent_chat(
         sources=sources,
         source_type=source_type,
         search_attempts=search_attempts,
+        computations=computations,
     )
