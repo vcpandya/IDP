@@ -1220,6 +1220,18 @@ tbody tr:hover { background: var(--border-light); }
     background: var(--primary-light);
 }
 
+.btn-upload.btn-enrich.active {
+    border-color: transparent;
+    color: #fff;
+    background: linear-gradient(135deg, #8b5cf6 0%, #4f46e5 100%);
+    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.18);
+}
+
+.btn-upload.btn-enrich.active:hover {
+    color: #fff;
+    background: linear-gradient(135deg, #7c3aed 0%, #4338ca 100%);
+}
+
 /* ========== Tools ========== */
 .tools-grid {
     display: grid;
