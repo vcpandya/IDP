@@ -54,6 +54,11 @@ async def init_db():
                 if "owner_id" not in cols or "source_type" not in cols:
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversation_messages"))
                     sync_conn.execute(text("DROP TABLE IF EXISTS conversations"))
+                elif "computations_json" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE conversation_messages "
+                        "ADD COLUMN computations_json JSON"
+                    ))
 
         def _migrate_batch_jobs(sync_conn):
             insp = sa_inspect(sync_conn)
