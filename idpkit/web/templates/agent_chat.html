@@ -66,8 +66,8 @@
                             <div class="tool-accordion" x-data="{ open: false }">
                                 <button class="tool-accordion-header" @click="open = !open"
                                         :aria-expanded="open ? 'true' : 'false'">
-                                    <i class="fas fa-wrench"></i>
-                                    <span x-text="'Tool: ' + (msg.tool_name || 'unknown').replace(/_/g, ' ')"></span>
+                                    <i class="fas" :class="msg.streaming ? 'fa-spinner fa-spin' : 'fa-wrench'"></i>
+                                    <span x-text="'Tool: ' + (msg.tool_name || 'unknown').replace(/_/g, ' ') + (msg.streaming ? ' — running…' : (msg.stream_summary ? ' — ' + msg.stream_summary : ''))"></span>
                                     <i class="fas fa-chevron-down tool-accordion-arrow" :class="open && 'open'"></i>
                                 </button>
                                 <div class="tool-accordion-body" x-show="open" x-cloak x-transition.duration.150ms>
@@ -121,7 +121,12 @@
             </template>
             <div x-show="loading" class="chat-msg msg-assistant">
                 <div class="msg-avatar" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff"><i class="fas fa-brain"></i></div>
-                <div class="msg-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+                <div class="msg-content">
+                    <div class="typing-indicator"><span></span><span></span><span></span></div>
+                    <div x-show="thinkingActive" x-cloak style="font-size:12px;color:#6b7280;margin-top:4px;">
+                        <i class="fas fa-brain"></i> Thinking…
+                    </div>
+                </div>
             </div>
         </div>
         <div class="chat-input-area">
@@ -457,7 +462,7 @@
 <script>
 function agentChat() {
     return {
-        messages: [], input: '', loading: false, documents: [], selectedDocs: [],
+        messages: [], input: '', loading: false, thinkingActive: false, documents: [], selectedDocs: [],
         uploadFiles: [],
         tags: [], selectedTags: [],
         currentSources: [],
@@ -831,9 +836,18 @@ function agentChat() {
                 } catch(e) {}
             }
 
+            // --- Streaming chat via SSE ----------------------------------
+            // Track tool messages by call_id so we can flip them from
+            // "running" -> "done" / "failed" as tool_end events arrive,
+            // and later splice in the full result on `done`.
+            const toolMsgByCallId = {};
+            const toolOrderCallIds = [];
+            let assistantMsg = null;     // Placeholder for streamed text
+            let assistantIndex = -1;
             try {
-                const res = await fetch('/api/agent/chat', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                const res = await fetch('/api/agent/chat/stream', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
                     body: JSON.stringify({
                         message: msg,
                         conversation_id: this.currentConversationId,
@@ -841,14 +855,122 @@ function agentChat() {
                         tag_ids: this.selectedTags
                     })
                 });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.tool_calls) {
-                        for (const tc of data.tool_calls) {
-                            const errInfo = this.detectToolError(tc.name, tc.result);
+                if (!res.ok || !res.body) {
+                    throw new Error('stream request failed: ' + res.status);
+                }
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                let buf = '';
+                let doneEvent = null;
+
+                const handleEvent = (ev) => {
+                    if (!ev || !ev.type) return;
+                    if (ev.type === 'thinking') {
+                        // Visible "thinking…" handled via this.loading + a
+                        // small indicator in the template; nothing to push.
+                        this.thinkingActive = true;
+                    } else if (ev.type === 'tool_start') {
+                        this.thinkingActive = false;
+                        const tm = {
+                            role: 'tool',
+                            content: '(running…)',
+                            tool_name: ev.name,
+                            is_error: false,
+                            error_message: null,
+                            connector_id: null,
+                            connector_name: null,
+                            streaming: true,
+                            stream_status: 'running',
+                            stream_summary: '',
+                            sources: null, source_type: null, searchAttempts: null, computations: null,
+                        };
+                        this.messages.push(tm);
+                        toolMsgByCallId[ev.call_id] = tm;
+                        toolOrderCallIds.push(ev.call_id);
+                    } else if (ev.type === 'tool_end') {
+                        const tm = toolMsgByCallId[ev.call_id];
+                        if (tm) {
+                            tm.stream_status = ev.success ? 'done' : 'failed';
+                            tm.stream_summary = ev.summary || '';
+                            tm.is_error = !ev.success;
+                            tm.streaming = false;
+                            // Keep the placeholder until `done` brings the
+                            // full result; then we splice the JSON in.
+                        }
+                    } else if (ev.type === 'text_delta') {
+                        this.thinkingActive = false;
+                        if (!assistantMsg) {
+                            assistantMsg = {
+                                role: 'assistant',
+                                content: '',
+                                sources: null, source_type: null,
+                                searchAttempts: null, computations: null,
+                                streaming: true,
+                            };
+                            this.messages.push(assistantMsg);
+                            assistantIndex = this.messages.length - 1;
+                        }
+                        assistantMsg.content += ev.text;
+                    } else if (ev.type === 'error') {
+                        this.thinkingActive = false;
+                        this.messages.push({
+                            role: 'assistant',
+                            content: 'Error: ' + (ev.message || 'stream failed'),
+                            sources: null, source_type: null,
+                            searchAttempts: null, computations: null,
+                        });
+                    } else if (ev.type === 'done') {
+                        doneEvent = ev;
+                    }
+                    this.scrollToBottom();
+                };
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    // SSE events are separated by a blank line
+                    let idx;
+                    while ((idx = buf.indexOf('\n\n')) >= 0) {
+                        const raw = buf.slice(0, idx);
+                        buf = buf.slice(idx + 2);
+                        // Concatenate `data:` lines (ignore comments / others)
+                        const dataLines = raw.split('\n')
+                            .filter(l => l.startsWith('data:'))
+                            .map(l => l.slice(5).replace(/^ /, ''));
+                        if (!dataLines.length) continue;
+                        const payload = dataLines.join('\n');
+                        try {
+                            handleEvent(JSON.parse(payload));
+                        } catch (e) { /* ignore malformed */ }
+                    }
+                }
+
+                // ---- Finalize from the `done` event ------------------------
+                if (doneEvent) {
+                    // Backfill full tool results into the placeholder messages
+                    const tcs = Array.isArray(doneEvent.tool_calls) ? doneEvent.tool_calls : [];
+                    for (let i = 0; i < tcs.length; i++) {
+                        const tc = tcs[i];
+                        const cid = toolOrderCallIds[i];
+                        const tm = cid ? toolMsgByCallId[cid] : null;
+                        const errInfo = this.detectToolError(tc.name, tc.result);
+                        const fullContent = typeof tc.result === 'string'
+                            ? tc.result
+                            : JSON.stringify(tc.result, null, 2);
+                        if (tm) {
+                            tm.content = fullContent;
+                            tm.is_error = !!errInfo;
+                            tm.error_message = errInfo ? errInfo.message : null;
+                            tm.connector_id = errInfo ? errInfo.connectorId : null;
+                            tm.connector_name = errInfo ? errInfo.connectorName : null;
+                            tm.streaming = false;
+                        } else {
+                            // Fallback: tool_start was missed for some reason
                             this.messages.push({
                                 role: 'tool',
-                                content: typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2),
+                                content: fullContent,
                                 tool_name: tc.name,
                                 is_error: !!errInfo,
                                 error_message: errInfo ? errInfo.message : null,
@@ -858,34 +980,58 @@ function agentChat() {
                             });
                         }
                     }
-                    const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
-                    const msgSearchAttempts = (data.search_attempts && data.search_attempts.length > 0) ? data.search_attempts : null;
-                    const msgComputations = (data.computations && data.computations.length > 0) ? data.computations : null;
-                    this.messages.push({
-                        role: 'assistant',
-                        content: data.response || data.detail || 'No response',
-                        sources: msgSources,
-                        source_type: data.source_type || null,
-                        searchAttempts: msgSearchAttempts,
-                        computations: msgComputations,
-                    });
-                    // Update right panel
+
+                    const msgSources = (doneEvent.sources && doneEvent.sources.length > 0) ? doneEvent.sources : null;
+                    const msgSearchAttempts = (doneEvent.search_attempts && doneEvent.search_attempts.length > 0) ? doneEvent.search_attempts : null;
+                    const msgComputations = (doneEvent.computations && doneEvent.computations.length > 0) ? doneEvent.computations : null;
+
+                    if (assistantMsg) {
+                        // Streamed text already in assistantMsg.content; just
+                        // overwrite from the authoritative `response` so any
+                        // last-token reconciliation is exact.
+                        if (typeof doneEvent.response === 'string' && doneEvent.response.length) {
+                            assistantMsg.content = doneEvent.response;
+                        }
+                        assistantMsg.sources = msgSources;
+                        assistantMsg.source_type = doneEvent.source_type || null;
+                        assistantMsg.searchAttempts = msgSearchAttempts;
+                        assistantMsg.computations = msgComputations;
+                        assistantMsg.streaming = false;
+                    } else {
+                        // No text deltas were emitted (rare) — push a final msg
+                        this.messages.push({
+                            role: 'assistant',
+                            content: doneEvent.response || 'No response',
+                            sources: msgSources,
+                            source_type: doneEvent.source_type || null,
+                            searchAttempts: msgSearchAttempts,
+                            computations: msgComputations,
+                        });
+                    }
+
                     if (msgSources || msgSearchAttempts) {
                         this.currentSources = msgSources || [];
                         this.currentSearchAttempts = msgSearchAttempts || [];
                     }
-                    // Update conversation title in sidebar
                     if (this.currentConversationId) {
                         const ci = this.conversations.find(c => c.id === this.currentConversationId);
                         if (ci && ci.title === 'New conversation') {
                             ci.title = msg.length > 100 ? msg.substring(0, 100) : msg;
                         }
                     }
-                } else {
-                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null, source_type: null, searchAttempts: null, computations: null });
                 }
-            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null, source_type: null, searchAttempts: null, computations: null }); }
-            finally { this.loading = false; this.scrollToBottom(); }
+            } catch(e) {
+                this.messages.push({
+                    role: 'assistant',
+                    content: 'Error: ' + e.message,
+                    sources: null, source_type: null, searchAttempts: null, computations: null,
+                });
+            }
+            finally {
+                this.thinkingActive = false;
+                this.loading = false;
+                this.scrollToBottom();
+            }
         },
         newConversation() {
             this.currentConversationId = null;
