@@ -32,6 +32,71 @@ def _join_log_lines(lines) -> str:
 E2B_TIMEOUT = 60
 SANDBOX_TIMEOUT = 300
 
+# Admin contacts surfaced to end users when the E2B sandbox runs out of
+# credits or hits a rate / quota / billing limit. These are intentionally
+# project-level constants (not per-user) so the message is consistent.
+E2B_ADMIN_PRIMARY = "ai@spjain.org"
+E2B_ADMIN_CC = "vikram.pandya@spjain.org"
+
+# Substrings (case-insensitive) that indicate the sandbox call failed for a
+# billing/quota reason rather than a code bug. Kept conservative: we want
+# false negatives, not false positives.
+_E2B_QUOTA_HINTS = (
+    "quota",
+    "rate limit",
+    "rate-limit",
+    "ratelimit",
+    "too many requests",
+    "free tier",
+    "free-tier",
+    "credit",
+    "credits exhausted",
+    "billing",
+    "payment required",
+    "payment_required",
+    "subscription",
+    "usage limit",
+    "usage_limit",
+    "limit exceeded",
+    "exceeded",
+    "402",
+    "429",
+)
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Heuristic: does this exception look like an E2B billing/quota issue?"""
+    msg = str(exc).lower()
+    if not msg:
+        return False
+    return any(hint in msg for hint in _E2B_QUOTA_HINTS)
+
+
+def _quota_error_payload(tool_label: str, exc: Exception) -> dict[str, Any]:
+    """Structured response IDA can recognise and surface verbatim.
+
+    The ``user_message`` is what we want shown in the chat; the agent prompt
+    instructs IDA to copy it through unchanged when ``quota_exceeded`` is set.
+    """
+    user_message = (
+        f"⚠️ The Python sandbox is temporarily unavailable because the E2B "
+        f"account has hit its usage limit. Please email "
+        f"**{E2B_ADMIN_PRIMARY}** (CC **{E2B_ADMIN_CC}**) so they can top up "
+        f"the E2B credits. In the meantime I'll continue answering without "
+        f"running new code."
+    )
+    return {
+        "error": f"{tool_label} unavailable: E2B usage limit reached.",
+        "success": False,
+        "quota_exceeded": True,
+        "user_message": user_message,
+        "admin_contact": {
+            "to": E2B_ADMIN_PRIMARY,
+            "cc": [E2B_ADMIN_CC],
+        },
+        "raw_error": str(exc)[:500],
+    }
+
 
 def _get_api_key() -> str | None:
     return os.getenv("E2B_API_KEY")
@@ -95,6 +160,8 @@ async def execute_python(code: str, timeout: int = E2B_TIMEOUT) -> dict[str, Any
 
     except Exception as exc:
         logger.error("E2B execute_python failed: %s", exc)
+        if _is_quota_error(exc):
+            return _quota_error_payload("Python sandbox", exc)
         return {"error": f"Code execution failed: {exc}", "success": False}
     finally:
         if sandbox:
@@ -135,6 +202,8 @@ async def install_package(package_name: str) -> dict[str, Any]:
 
     except Exception as exc:
         logger.error("E2B install_package failed: %s", exc)
+        if _is_quota_error(exc):
+            return _quota_error_payload("Package install", exc)
         return {"error": f"Package installation failed: {exc}", "success": False}
     finally:
         if sandbox:
@@ -270,6 +339,8 @@ asyncio.run(browse())
 
     except Exception as exc:
         logger.error("E2B browse_web failed: %s", exc)
+        if _is_quota_error(exc):
+            return _quota_error_payload("Web browser sandbox", exc)
         return {"error": f"Browser browsing failed: {exc}", "success": False}
     finally:
         if sandbox:

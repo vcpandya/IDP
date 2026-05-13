@@ -22,6 +22,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - `CORS_EXTRA_ORIGINS`: Comma-separated additional browser origins.
 - `OAUTH_REDIRECT_BASE_URL`: Overrides the OAuth callback base URL.
 - `EMAIL_API_KEY`: API key for sending e-sign invitations.
+- `GOOGLE_API_KEY`: Gemini API key (from `aistudio.google.com/apikey`) — enables the `deep_research` tool. `GEMINI_API_KEY` is also accepted.
 - `VISION_MODEL`: Model used for document verification (default `gpt-4o`).
 - `ESIGN_BATCH_CONCURRENCY`: Max in-flight envelopes per bulk-send batch (default 3).
 - `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE`: PostgreSQL connection pool settings.
@@ -51,6 +52,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
     - `/idpkit/web/templates`: Jinja2 frontend templates.
 - `idpkit/core/llm.py`: LLM API key resolution logic.
 - `idpkit/core/web_search.py`: Jina AI web search utility.
+- `idpkit/agent/deep_research_tools.py`: Gemini Deep Research wrapper (Interactions API, polled with timeout cap).
 - `docs/skill-authoring.md`: Guide for creating connector-aware skills.
 - `tests/test_esign_e2e.py`: E-signature end-to-end tests.
 
@@ -66,7 +68,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 ## Product
 
 - **Document Processing**: Parsing (PDF, DOCX, HTML, PPTX, YouTube transcripts), indexing, and AI auto-tagging.
-- **AI Agent (IDA)**: Equipped with 18 specialized tools for document interaction, knowledge graph querying, report generation, web search, and sandboxed code/browser execution. Supports user-created custom skills.
+- **AI Agent (IDA)**: Equipped with 19 specialized tools for document interaction, knowledge graph querying, report generation, web search, sandboxed code/browser execution, and Gemini Deep Research. Supports user-created custom skills. Chat UI streams responses live via SSE (`/api/agent/chat/stream`) — emits `thinking`, `tool_start`, `tool_end`, `text_delta`, and a final `done` event with sources/computations. Classic `/api/agent/chat` is preserved for non-streaming callers.
 - **SaaS Connectors**: Pluggable framework with 9 out-of-the-box integrations (Slack, Notion, GitHub, Linear, HubSpot, Dropbox, Jira, AWS S3, Google Workspace), supporting org-wide sharing and user-specific allowlists.
 - **Knowledge Graph**: Entity extraction, cross-document linking, visualization, bulk generation, and deep analysis with web enrichment.
 - **Batch Processing**: 3-step workflow for processing documents, schema generation from prompts, and formatted DOCX output.

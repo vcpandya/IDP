@@ -5,6 +5,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -694,4 +695,214 @@ async def agent_chat(
         source_type=source_type,
         search_attempts=search_attempts,
         computations=computations,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Streaming chat — SSE
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/chat/stream",
+    summary="Chat with the IDP Agent (SSE stream)",
+)
+@limiter.limit(lambda: get_rate_limit("agent_chat"))
+async def agent_chat_stream(
+    request: Request,
+    body: ChatRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Server-Sent Events variant of :func:`agent_chat`.
+
+    Emits the same lifecycle events the agent yields (`thinking`,
+    `tool_start`, `tool_end`, `text_delta`) plus a final `done` event
+    whose payload mirrors :class:`ChatResponse` so the UI can finalize
+    sources, computations, and persistence with the same logic.
+
+    The classic ``/api/agent/chat`` endpoint is left untouched for any
+    non-streaming caller.
+    """
+    llm = get_llm_for_user(user)
+
+    # Resolve tag_ids → document_ids (same as /chat)
+    combined_doc_ids = list(body.document_ids)
+    if body.tag_ids:
+        stmt = select(document_tags.c.document_id).where(
+            document_tags.c.tag_id.in_(body.tag_ids)
+        )
+        rows = await db.execute(stmt)
+        for did in [r[0] for r in rows]:
+            if did not in combined_doc_ids:
+                combined_doc_ids.append(did)
+
+    filename_map: dict[str, str] = {}
+    if combined_doc_ids:
+        fn_rows = await db.execute(
+            select(Document.id, Document.filename).where(
+                Document.id.in_(combined_doc_ids)
+            )
+        )
+        filename_map = {r[0]: r[1] for r in fn_rows}
+
+    # Conversation history
+    conversation_id = body.conversation_id
+    memory = ConversationMemory()
+    if conversation_id:
+        conv = (await db.execute(
+            select(Conversation).where(
+                Conversation.id == conversation_id,
+                Conversation.owner_id == user.id,
+            )
+        )).scalar_one_or_none()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        prior_msgs = (await db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == conversation_id)
+            .order_by(ConversationMessage.created_at)
+        )).scalars().all()
+        for pm in prior_msgs:
+            if pm.role in ("user", "assistant"):
+                memory.add_message(pm.role, pm.content or "")
+            elif pm.role == "tool":
+                memory.add_message("tool", pm.content or "", tool_name=pm.tool_name)
+
+    logger.info(
+        "Agent chat stream: user=%s convo=%s docs=%d tags=%d",
+        user.id, conversation_id or "-",
+        len(combined_doc_ids), len(body.tag_ids),
+    )
+
+    agent = IDPAgent()
+
+    def _sse(event: dict) -> str:
+        return f"data: {json.dumps(event, default=str)}\n\n"
+
+    async def event_source():
+        # Emit a tiny keepalive comment up-front so the browser flushes
+        # response headers immediately and the user sees activity.
+        yield ": stream-open\n\n"
+
+        final_event: dict | None = None
+        agen = agent.chat_stream(
+            message=body.message,
+            document_ids=combined_doc_ids,
+            llm=llm,
+            db=db,
+            conversation=memory,
+            user_id=user.id,
+        )
+        try:
+            async for ev in agen:
+                # Bail out early if the client has gone away. This stops us
+                # from chewing through expensive long-running tools (notably
+                # deep_research, which polls up to 5 minutes) for nobody.
+                if await request.is_disconnected():
+                    logger.info(
+                        "Agent stream client disconnected (user=%s convo=%s) — aborting.",
+                        user.id, conversation_id or "-",
+                    )
+                    try:
+                        await agen.aclose()
+                    except Exception:
+                        pass
+                    return
+
+                if ev.get("type") == "done":
+                    final_event = ev
+                    # Don't forward the raw `done` yet — we want to enrich it
+                    # with sources / computations / persistence first.
+                    continue
+                yield _sse(ev)
+        except Exception as exc:
+            logger.error("Agent stream failed for user %s: %s", user.id, exc)
+            yield _sse({"type": "error", "message": "Agent processing failed"})
+            yield _sse({"type": "done", "response": "", "tool_calls": []})
+            return
+
+        # Build the enriched done payload (same shape as ChatResponse)
+        tool_calls_log = (final_event or {}).get("tool_calls", [])
+        response_text = (final_event or {}).get("response", "")
+
+        sources = _extract_sources(tool_calls_log)
+        source_type = _classify_source_type(tool_calls_log, combined_doc_ids)
+        search_attempts = _extract_search_attempts(
+            tool_calls_log, combined_doc_ids, filename_map,
+        )
+        computations = _extract_computations(tool_calls_log)
+
+        # Persist to DB exactly like /chat does. Persistence parity matters:
+        # if the save fails we MUST tell the client (otherwise the user sees
+        # a successful answer that quietly disappears on reload, and the
+        # next turn loses conversation state). Mirror /chat's contract by
+        # surfacing an explicit error event before the done event.
+        persistence_error: str | None = None
+        if conversation_id:
+            try:
+                db.add(ConversationMessage(
+                    conversation_id=conversation_id,
+                    owner_id=user.id,
+                    role="user",
+                    content=body.message,
+                ))
+                for tc in tool_calls_log:
+                    db.add(ConversationMessage(
+                        conversation_id=conversation_id,
+                        owner_id=user.id,
+                        role="tool",
+                        content=json.dumps(tc.get("result"), default=str)[:5000]
+                            if tc.get("result") else None,
+                        tool_name=tc.get("name"),
+                    ))
+                db.add(ConversationMessage(
+                    conversation_id=conversation_id,
+                    owner_id=user.id,
+                    role="assistant",
+                    content=response_text,
+                    sources_json=_sources_to_json(sources),
+                    source_type=source_type,
+                    computations_json=_computations_to_json(computations),
+                ))
+                conv_obj = (await db.execute(
+                    select(Conversation).where(Conversation.id == conversation_id)
+                )).scalar_one_or_none()
+                if conv_obj and conv_obj.title == "New conversation":
+                    conv_obj.title = body.message[:100]
+                await db.flush()
+            except Exception as exc:
+                logger.error("Stream persistence failed: %s", exc)
+                persistence_error = (
+                    "Your reply was generated but could not be saved to "
+                    "history. Please refresh and try again."
+                )
+                yield _sse({"type": "error", "message": persistence_error})
+
+        yield _sse({
+            "type": "done",
+            "response": response_text,
+            "persistence_error": persistence_error,
+            "conversation_id": conversation_id,
+            "tool_calls": [
+                {"name": tc["name"], "args": tc["args"], "result": tc.get("result")}
+                for tc in tool_calls_log
+            ],
+            "sources": [s.model_dump() if hasattr(s, "model_dump") else s for s in sources],
+            "source_type": source_type,
+            "search_attempts": [
+                a.model_dump() if hasattr(a, "model_dump") else a for a in search_attempts
+            ],
+            "computations": [
+                c.model_dump() if hasattr(c, "model_dump") else c for c in computations
+            ],
+        })
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
