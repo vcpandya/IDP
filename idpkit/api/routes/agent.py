@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from idpkit.db.session import get_db
 from idpkit.db.models import (
     User, Document, document_tags, Conversation, ConversationMessage,
+    Tag, conversation_tags,
 )
 from idpkit.api.deps import get_current_user, get_llm, get_llm_for_user
 from idpkit.core.llm import LLMClient
@@ -117,12 +118,23 @@ class ConversationMessageInfo(BaseModel):
     created_at: str
 
 
+class ConversationTagInfo(BaseModel):
+    id: str
+    name: str
+    color: Optional[str] = None
+
+
 class ConversationInfo(BaseModel):
     id: str
     title: str
     created_at: str
     updated_at: str
     message_count: int = 0
+    tags: list[ConversationTagInfo] = Field(default_factory=list)
+
+
+class ConversationTagsUpdate(BaseModel):
+    tag_ids: list[str] = Field(default_factory=list)
 
 
 class ConversationDetail(BaseModel):
@@ -131,6 +143,14 @@ class ConversationDetail(BaseModel):
     created_at: str
     updated_at: str
     messages: list[ConversationMessageInfo] = Field(default_factory=list)
+    tags: list[ConversationTagInfo] = Field(default_factory=list)
+
+
+def _conv_tags(conv: Conversation) -> list[ConversationTagInfo]:
+    return [
+        ConversationTagInfo(id=t.id, name=t.name, color=t.color)
+        for t in (conv.tags or [])
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -399,31 +419,28 @@ async def list_conversations(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from sqlalchemy import func
+    # Lean query: just metadata + tags. We deliberately do NOT compute
+    # message_count here — it required a JOIN+GROUP_BY across the entire
+    # message table per request and was the main reason this endpoint was
+    # slow on chat-heavy accounts. The sidebar only renders the title +
+    # tags, so message_count is left at its default of 0.
     stmt = (
-        select(
-            Conversation,
-            func.count(ConversationMessage.id).label("msg_count"),
-        )
-        .outerjoin(
-            ConversationMessage,
-            ConversationMessage.conversation_id == Conversation.id,
-        )
+        select(Conversation)
+        .options(selectinload(Conversation.tags))
         .where(Conversation.owner_id == user.id)
-        .group_by(Conversation.id)
         .order_by(Conversation.updated_at.desc())
         .limit(50)
     )
-    rows = (await db.execute(stmt)).all()
+    rows = (await db.execute(stmt)).scalars().all()
     return [
         ConversationInfo(
             id=c.id,
             title=c.title,
             created_at=c.created_at.isoformat(),
             updated_at=c.updated_at.isoformat(),
-            message_count=msg_count,
+            tags=_conv_tags(c),
         )
-        for c, msg_count in rows
+        for c in rows
     ]
 
 
@@ -447,6 +464,7 @@ async def create_conversation(
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
         message_count=0,
+        tags=[],
     )
 
 
@@ -462,7 +480,10 @@ async def get_conversation(
 ):
     stmt = (
         select(Conversation)
-        .options(selectinload(Conversation.messages))
+        .options(
+            selectinload(Conversation.messages),
+            selectinload(Conversation.tags),
+        )
         .where(Conversation.id == conversation_id, Conversation.owner_id == user.id)
     )
     conv = (await db.execute(stmt)).scalar_one_or_none()
@@ -486,6 +507,7 @@ async def get_conversation(
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
         messages=msgs,
+        tags=_conv_tags(conv),
     )
 
 
@@ -500,8 +522,10 @@ async def rename_conversation(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(Conversation).where(
-        Conversation.id == conversation_id, Conversation.owner_id == user.id
+    stmt = (
+        select(Conversation)
+        .options(selectinload(Conversation.tags))
+        .where(Conversation.id == conversation_id, Conversation.owner_id == user.id)
     )
     conv = (await db.execute(stmt)).scalar_one_or_none()
     if not conv:
@@ -513,6 +537,56 @@ async def rename_conversation(
         title=conv.title,
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
+        tags=_conv_tags(conv),
+    )
+
+
+@router.put(
+    "/conversations/{conversation_id}/tags",
+    response_model=ConversationInfo,
+    summary="Set tags on a conversation",
+)
+async def set_conversation_tags(
+    conversation_id: str,
+    body: ConversationTagsUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Conversation)
+        .options(selectinload(Conversation.tags))
+        .where(Conversation.id == conversation_id, Conversation.owner_id == user.id)
+    )
+    conv = (await db.execute(stmt)).scalar_one_or_none()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if body.tag_ids:
+        # De-dupe so an accidental repeated id doesn't make the count check
+        # fail when every id is otherwise valid.
+        requested_ids = list(dict.fromkeys(body.tag_ids))
+        tag_rows = (await db.execute(
+            select(Tag).where(
+                Tag.id.in_(requested_ids),
+                Tag.owner_id == user.id,
+            )
+        )).scalars().all()
+        if len(tag_rows) != len(requested_ids):
+            found = {t.id for t in tag_rows}
+            missing = [tid for tid in requested_ids if tid not in found]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown or inaccessible tag id(s): {missing}",
+            )
+        conv.tags = list(tag_rows)
+    else:
+        conv.tags = []
+    await db.flush()
+    return ConversationInfo(
+        id=conv.id,
+        title=conv.title,
+        created_at=conv.created_at.isoformat(),
+        updated_at=conv.updated_at.isoformat(),
+        tags=_conv_tags(conv),
     )
 
 
