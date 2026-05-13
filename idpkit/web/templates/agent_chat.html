@@ -110,7 +110,8 @@
                                     </div>
                                 </template>
                                 <div class="msg-body"
-                                     x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
+                                     x-html="msg.role === 'assistant' ? renderAssistantContent(msg) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
+                                     @click="handleValueChipClick($event, msg)"
                                      x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
                                 </div>
                             </div>
@@ -301,6 +302,82 @@
         </div>
     </div>
 
+    <!-- Computation Detail Modal -->
+    <div class="source-modal-overlay" x-show="showComputationModal" x-cloak @click.self="showComputationModal = false" x-transition.opacity>
+        <div class="source-modal" @click.stop>
+            <div class="source-modal-header">
+                <div>
+                    <h3>
+                        <i class="fas fa-code" style="color:#7c3aed"></i>
+                        Computed in Python
+                        <span x-show="computationModalData.cid" class="comp-cid-tag" x-text="computationModalData.cid"></span>
+                    </h3>
+                    <div class="source-modal-meta">
+                        <span><i class="fas fa-cube"></i> E2B sandbox</span>
+                        <span x-show="computationModalData.success === false" style="color:#dc2626">
+                            <i class="fas fa-triangle-exclamation"></i> Execution error
+                        </span>
+                    </div>
+                </div>
+                <button class="btn-close" @click="showComputationModal = false" aria-label="Close computation detail">&times;</button>
+            </div>
+            <div class="source-modal-body">
+                <div class="source-modal-text">
+                    <h4>Code</h4>
+                    <pre x-text="computationModalData.code || '(no code captured)'"></pre>
+                </div>
+                <template x-if="computationModalData.stdout">
+                    <div class="source-modal-text">
+                        <h4>Output</h4>
+                        <pre x-text="computationModalData.stdout"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.results && computationModalData.results.length > 0">
+                    <div class="source-modal-text">
+                        <h4>Results</h4>
+                        <pre x-text="computationModalData.results.join('\n')"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.stderr">
+                    <div class="source-modal-text">
+                        <h4 style="color:#dc2626">Stderr</h4>
+                        <pre x-text="computationModalData.stderr"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.error">
+                    <div class="source-modal-text">
+                        <h4 style="color:#dc2626" x-text="(computationModalData.error.name || 'Error') + ': ' + (computationModalData.error.value || '')"></h4>
+                        <pre x-text="computationModalData.error.traceback || ''"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.charts && computationModalData.charts.length > 0">
+                    <div class="source-modal-text">
+                        <h4>Charts</h4>
+                        <template x-for="(ch, i) in computationModalData.charts" :key="'ch-'+i">
+                            <div style="margin:0.5rem 0">
+                                <template x-if="ch.data && ch.type === 'image/png'">
+                                    <img :src="'data:image/png;base64,' + ch.data" alt="Computed chart" style="max-width:100%;border:1px solid var(--border, #e5e7eb);border-radius:6px">
+                                </template>
+                                <template x-if="ch.data && ch.type === 'image/svg+xml'">
+                                    <!-- Render untrusted SVG sandbox output as a data-URL <img> so the
+                                         browser treats it as a passive image (no script execution),
+                                         instead of injecting it into the DOM with x-html. -->
+                                    <img :src="svgDataUrl(ch.data)" alt="Computed chart (SVG)" style="max-width:100%;border:1px solid var(--border, #e5e7eb);border-radius:6px;background:#fff">
+                                </template>
+                                <template x-if="!ch.data">
+                                    <p style="color:var(--text-muted);font-style:italic">Chart not available in saved view (only shown live).</p>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="source-modal-footer">
+                <button class="btn btn-sm" @click="showComputationModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Attach Modal -->
     <div class="attach-modal-overlay" x-show="showAttachModal" x-cloak @click.self="closeAttachModal()" x-transition.opacity>
         <div class="attach-modal" @click.stop>
@@ -402,6 +479,8 @@ function agentChat() {
         showSourceModal: false,
         sourceModalData: {},
         sourceModalLoading: false,
+        showComputationModal: false,
+        computationModalData: {},
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -644,13 +723,96 @@ function agentChat() {
             this.sourceModalData = { ...src };
             this.showSourceModal = true;
         },
+        openComputationModal(comp) {
+            this.computationModalData = { ...comp };
+            this.showComputationModal = true;
+        },
+        // Encode raw SVG as a base64 data URL so it can be rendered as a
+        // passive <img> (no script execution) instead of being injected into
+        // the DOM via x-html. unescape(encodeURIComponent(...)) handles
+        // unicode safely before btoa.
+        svgDataUrl(svgStr) {
+            try {
+                const utf8 = unescape(encodeURIComponent(String(svgStr || '')));
+                return 'data:image/svg+xml;base64,' + btoa(utf8);
+            } catch (e) {
+                return '';
+            }
+        },
+        // Pre-render: substitute provenance markers with hoverable chips.
+        // Markers come from IDA per the system prompt:
+        //   [[py]]value[[/py]]            → computed in execute_python
+        //   [[doc:DOCUMENT_ID]]value[[/doc]] → extracted from a document
+        // We escape the inner value to keep it safe inside a span, and
+        // tag the span with data attributes the click handler reads.
+        renderAssistantContent(msg) {
+            const raw = msg.content || '';
+            const esc = (s) => String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            // Build doc filename map for the tooltip text.
+            const docNames = {};
+            (msg.sources || []).forEach(s => {
+                if (s && s.document_id && s.filename) docNames[s.document_id] = s.filename;
+            });
+            const compMap = {};
+            (msg.computations || []).forEach(c => { if (c && c.cid) compMap[c.cid] = c; });
+            // Markers carry their cid explicitly: [[py:py3]]value[[/py]].
+            // Fall back to ordinal counting for legacy [[py]]value[[/py]]
+            // emitted by older messages before the cid syntax existed.
+            let pyOrdinal = 0;
+            const replaced = raw
+                .replace(/\[\[py(?::([a-zA-Z0-9_]+))?\]\]([\s\S]*?)\[\[\/py\]\]/g, (_m, explicitCid, val) => {
+                    pyOrdinal += 1;
+                    const cid = explicitCid || ('py' + pyOrdinal);
+                    const has = !!compMap[cid];
+                    const tip = has
+                        ? 'Computed in Python — click for code & output'
+                        : 'Computed in Python';
+                    return `<span class="value-chip computed${has ? '' : ' no-detail'}" `
+                        + `data-cid="${esc(cid)}" `
+                        + `title="${esc(tip)}">`
+                        + `<i class="fas fa-code value-chip-icon" aria-hidden="true"></i>`
+                        + `<span class="value-chip-text">${esc(val.trim())}</span>`
+                        + (has ? `<span class="value-chip-link">View code →</span>` : '')
+                        + `</span>`;
+                })
+                .replace(/\[\[doc:([a-zA-Z0-9_\-]+)\]\]([\s\S]*?)\[\[\/doc\]\]/g, (_m, did, val) => {
+                    const fname = docNames[did] || did;
+                    const tip = 'From document: ' + fname;
+                    return `<span class="value-chip extracted" `
+                        + `data-did="${esc(did)}" `
+                        + `title="${esc(tip)}">`
+                        + `<i class="fas fa-file-alt value-chip-icon" aria-hidden="true"></i>`
+                        + `<span class="value-chip-text">${esc(val.trim())}</span>`
+                        + `<span class="value-chip-link">Open doc →</span>`
+                        + `</span>`;
+                });
+            return renderMarkdown(replaced);
+        },
+        handleValueChipClick(ev, msg) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            ev.stopPropagation();
+            ev.preventDefault();
+            const cid = chip.getAttribute('data-cid');
+            const did = chip.getAttribute('data-did');
+            if (cid && msg.computations) {
+                const comp = msg.computations.find(c => c.cid === cid);
+                if (comp) this.openComputationModal(comp);
+                return;
+            }
+            if (did) {
+                window.open('/documents/' + did, '_blank');
+            }
+        },
         async sendMessage(text) {
             const msg = text || this.input.trim();
             if (!msg) return;
             this.input = '';
             this.showTagMention = false;
             this.showDocMention = false;
-            this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null });
+            this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null, computations: null });
             this.loading = true;
             this.scrollToBottom();
 
@@ -692,18 +854,20 @@ function agentChat() {
                                 error_message: errInfo ? errInfo.message : null,
                                 connector_id: errInfo ? errInfo.connectorId : null,
                                 connector_name: errInfo ? errInfo.connectorName : null,
-                                sources: null, source_type: null, searchAttempts: null,
+                                sources: null, source_type: null, searchAttempts: null, computations: null,
                             });
                         }
                     }
                     const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
                     const msgSearchAttempts = (data.search_attempts && data.search_attempts.length > 0) ? data.search_attempts : null;
+                    const msgComputations = (data.computations && data.computations.length > 0) ? data.computations : null;
                     this.messages.push({
                         role: 'assistant',
                         content: data.response || data.detail || 'No response',
                         sources: msgSources,
                         source_type: data.source_type || null,
-                        searchAttempts: msgSearchAttempts
+                        searchAttempts: msgSearchAttempts,
+                        computations: msgComputations,
                     });
                     // Update right panel
                     if (msgSources || msgSearchAttempts) {
@@ -718,9 +882,9 @@ function agentChat() {
                         }
                     }
                 } else {
-                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null, source_type: null, searchAttempts: null });
+                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null, source_type: null, searchAttempts: null, computations: null });
                 }
-            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null, source_type: null, searchAttempts: null }); }
+            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null, source_type: null, searchAttempts: null, computations: null }); }
             finally { this.loading = false; this.scrollToBottom(); }
         },
         newConversation() {
@@ -746,7 +910,8 @@ function agentChat() {
                             tool_name: m.tool_name || null,
                             sources: m.sources || null,
                             source_type: m.source_type || null,
-                            searchAttempts: null
+                            searchAttempts: null,
+                            computations: m.computations || null,
                         });
                     }
                     this.scrollToBottom();
