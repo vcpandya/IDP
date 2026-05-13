@@ -456,6 +456,57 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "deep_research",
+            "description": (
+                "Run a Gemini Deep Research task: an autonomous research agent "
+                "that plans, searches the web, and synthesizes a long, cited "
+                "report. Use this for in-depth questions that need broad web "
+                "research and a multi-section written answer (e.g. 'Compare X "
+                "vs Y vs Z across cost, performance, ecosystem, with sources'). "
+                "DO NOT use for quick facts (use web_search), simple lookups, "
+                "or anything answerable from the user's documents. This tool "
+                "is slow — it can take several minutes — so call it at most "
+                "once per turn and only when the user explicitly asks for a "
+                "deep / comprehensive / research report. Returns the full "
+                "report markdown in `report`."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "The research question or topic. Phrase it as a "
+                            "concrete brief, e.g. 'Research the history of "
+                            "Google TPUs and compare them to NVIDIA H100 / "
+                            "AMD MI300 on training cost and ecosystem.'"
+                        ),
+                    },
+                    "use_max": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, use the higher-comprehensiveness "
+                            "`deep-research-max-preview` variant (slower but "
+                            "more thorough). Default false (speed-optimized)."
+                        ),
+                    },
+                    "visualization": {
+                        "type": "string",
+                        "enum": ["auto", "none"],
+                        "description": (
+                            "Set to 'auto' if the user explicitly wants the "
+                            "agent to generate charts / infographics. Default "
+                            "'none'."
+                        ),
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "use_skill",
             "description": (
                 "Load and activate a custom user skill by name. Returns the full "
@@ -1334,6 +1385,7 @@ from idpkit.core.web_search import fetch_url as _shared_fetch_url
 from idpkit.agent.e2b_tools import execute_python as _e2b_execute_python
 from idpkit.agent.e2b_tools import install_package as _e2b_install_package
 from idpkit.agent.e2b_tools import browse_web as _e2b_browse_web
+from idpkit.agent.deep_research_tools import deep_research as _gemini_deep_research
 
 
 async def _execute_web_search(
@@ -1375,6 +1427,19 @@ async def _execute_browse_web(
     )
 
 
+async def _execute_deep_research(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    viz = args.get("visualization")
+    if viz not in ("auto", "on"):
+        viz = None
+    return await _gemini_deep_research(
+        prompt=args.get("prompt", ""),
+        use_max=bool(args.get("use_max", False)),
+        visualization=viz,
+    )
+
+
 async def _execute_use_skill(
     args: dict, llm: LLMClient, db: AsyncSession
 ) -> dict:
@@ -1408,6 +1473,7 @@ _EXECUTORS: dict[str, Any] = {
     "execute_python": _execute_execute_python,
     "install_package": _execute_install_package,
     "browse_web": _execute_browse_web,
+    "deep_research": _execute_deep_research,
     "use_skill": _execute_use_skill,
 }
 

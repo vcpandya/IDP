@@ -20,6 +20,41 @@ from idpkit.core.llm import LLMClient
 from idpkit.agent.memory import ConversationMemory
 from idpkit.agent.tools import TOOL_DEFINITIONS, execute_tool
 
+
+def _tool_success(result: Any) -> bool:
+    """Best-effort success flag for the streaming tool_end event."""
+    if not isinstance(result, dict):
+        return True
+    if result.get("error"):
+        return False
+    if result.get("success") is False:
+        return False
+    return True
+
+
+def _tool_summary(name: str, result: Any) -> str:
+    """Short human-friendly status text for the streaming tool_end event.
+
+    Kept intentionally tiny — the full result is replayed later in the
+    `done` event / chip UI; this is just for the inline progress line.
+    """
+    if isinstance(result, dict):
+        if result.get("quota_exceeded"):
+            return "sandbox quota reached"
+        if result.get("error"):
+            err = str(result["error"])
+            return err if len(err) <= 120 else err[:117] + "…"
+        for key in ("count", "total", "num_results", "n", "matches"):
+            if isinstance(result.get(key), int):
+                return f"{result[key]} result(s)"
+        if isinstance(result.get("results"), list):
+            return f"{len(result['results'])} result(s)"
+        if isinstance(result.get("documents"), list):
+            return f"{len(result['documents'])} document(s)"
+        if "stdout" in result or "stderr" in result:
+            return "executed"
+    return "done"
+
 logger = logging.getLogger(__name__)
 
 # Maximum iterations of the tool-calling loop to prevent runaway chains.
@@ -197,6 +232,22 @@ Rules:
   before computing) should be marked `[[doc:...]]` if you cite them in prose.
 - Do not wrap numbers inside fenced code blocks or inline code.
 - Markers are case-sensitive: use lowercase `py` and `doc`.
+
+## Sandbox Quota Errors (REQUIRED)
+
+If any sandbox tool result contains `"quota_exceeded": true`, the E2B Python /
+browser sandbox is out of credits. In that case you MUST:
+
+1. STOP retrying that tool for the remainder of this conversation.
+2. Surface the `user_message` from the tool result to the user VERBATIM —
+   do not paraphrase, do not strip the admin emails, do not hide it inside
+   a longer paragraph. Output it as its own short message.
+3. Then continue answering the user's question without computed numbers
+   (use document evidence and general knowledge only). If the question
+   strictly requires computation, say so plainly and ask the user to retry
+   after the admin tops up credits.
+4. Do not attempt `install_package`, `execute_python`, or `browse_web`
+   again until the user starts a new conversation.
 """
 
 
@@ -409,6 +460,253 @@ class IDPAgent:
         fallback = "I've reached the maximum number of reasoning steps. Here's what I found so far based on the tool results."
         conversation.add_message("assistant", fallback)
         return {"response": fallback, "tool_calls": tool_call_log}
+
+    # ------------------------------------------------------------------
+    # Streaming variant
+    # ------------------------------------------------------------------
+
+    async def chat_stream(
+        self,
+        message: str,
+        document_ids: list[str],
+        llm: LLMClient,
+        db: AsyncSession,
+        conversation: Optional[ConversationMemory] = None,
+        user_id: Optional[str] = None,
+    ):
+        """Async generator yielding lifecycle events for a single chat turn.
+
+        Mirrors :meth:`chat` but emits structured events as work progresses
+        so the UI can show thinking indicators, per-tool progress chips, and
+        token-by-token text. The final ``done`` event carries the same
+        payload shape ``chat`` returns, so callers can persist / replay it.
+
+        Event shapes::
+
+            {"type": "thinking", "iteration": int}
+            {"type": "tool_start", "call_id": str, "name": str, "args": dict}
+            {"type": "tool_end",   "call_id": str, "name": str,
+                                    "success": bool, "summary": str}
+            {"type": "text_delta", "text": str}
+            {"type": "done", "response": str, "tool_calls": [...]}
+            {"type": "error", "message": str}
+        """
+        if conversation is None:
+            conversation = ConversationMemory()
+
+        document_names: dict[str, str] = {}
+        if document_ids and db:
+            try:
+                from idpkit.db.models import Document
+                stmt = sa_select(Document.id, Document.filename).where(
+                    Document.id.in_(document_ids)
+                )
+                rows = await db.execute(stmt)
+                document_names = {r[0]: r[1] for r in rows}
+            except Exception:
+                pass
+
+        skills_section = ""
+        connector_tools: list[dict] = []
+        connector_executors: dict = {}
+        active_skills: list[dict] = []
+        if user_id and db:
+            try:
+                from idpkit.agent.skills import load_active_skills, build_skills_prompt_section
+                active_skills = await load_active_skills(db, user_id)
+                skills_section = build_skills_prompt_section(active_skills)
+            except Exception:
+                logger.debug("Could not load skills", exc_info=True)
+            try:
+                from idpkit.connectors.runtime import (
+                    list_active_connections,
+                    build_runtime_tools,
+                    build_runtime_executors,
+                    build_capability_prompt_section,
+                )
+                active_conns = await list_active_connections(db, user_id)
+                connector_tools = build_runtime_tools(active_conns)
+                connector_executors = build_runtime_executors(db, user_id)
+                skills_section += build_capability_prompt_section(
+                    active_conns, active_skills=active_skills,
+                )
+            except Exception:
+                logger.debug("Could not load connectors", exc_info=True)
+
+        conversation.add_message("user", message)
+        messages = self._build_messages(
+            conversation, document_ids, document_names, skills_section=skills_section,
+        )
+        tool_call_log: list[dict] = []
+
+        from idpkit.core.llm import _resolve_api_key_for_model
+        resolved_key = llm.api_key or _resolve_api_key_for_model(llm.default_model)
+
+        for iteration in range(MAX_TOOL_ITERATIONS):
+            yield {"type": "thinking", "iteration": iteration}
+
+            # Per-iteration accumulators for streaming chunks
+            content_buf: list[str] = []
+            # tool_calls keyed by index, each: {"id":..,"name":..,"arguments":..}
+            partial_tools: dict[int, dict] = {}
+            finish_reason: str | None = None
+
+            try:
+                stream = await litellm.acompletion(
+                    model=llm.default_model,
+                    messages=messages,
+                    tools=TOOL_DEFINITIONS + connector_tools,
+                    tool_choice="auto",
+                    temperature=llm.temperature,
+                    api_key=resolved_key or None,
+                    api_base=llm.api_base or None,
+                    stream=True,
+                )
+            except Exception as exc:
+                logger.error("Agent stream LLM call failed (iter %d): %s", iteration, exc)
+                err = f"I encountered an error communicating with the language model: {exc}"
+                conversation.add_message("assistant", err)
+                yield {"type": "text_delta", "text": err}
+                yield {"type": "done", "response": err, "tool_calls": tool_call_log}
+                return
+
+            try:
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    fr = getattr(chunk.choices[0], "finish_reason", None)
+                    if fr:
+                        finish_reason = fr
+
+                    # Accumulate tool-call deltas (id + name + concat-arguments)
+                    tc_deltas = getattr(delta, "tool_calls", None)
+                    if tc_deltas:
+                        for tcd in tc_deltas:
+                            idx = getattr(tcd, "index", 0) or 0
+                            entry = partial_tools.setdefault(
+                                idx, {"id": None, "name": None, "arguments": ""}
+                            )
+                            if getattr(tcd, "id", None):
+                                entry["id"] = tcd.id
+                            fn = getattr(tcd, "function", None)
+                            if fn:
+                                if getattr(fn, "name", None):
+                                    entry["name"] = fn.name
+                                if getattr(fn, "arguments", None):
+                                    entry["arguments"] += fn.arguments
+
+                    # Stream content tokens to the UI
+                    content_piece = getattr(delta, "content", None)
+                    if content_piece:
+                        content_buf.append(content_piece)
+                        yield {"type": "text_delta", "text": content_piece}
+            except Exception as exc:
+                logger.error("Agent stream chunk processing failed: %s", exc)
+                err = f"Stream interrupted: {exc}"
+                conversation.add_message("assistant", err)
+                yield {"type": "error", "message": err}
+                yield {"type": "done", "response": err, "tool_calls": tool_call_log}
+                return
+
+            # Decide: did the model want tools or did it produce final text?
+            if partial_tools:
+                # Reconstruct an OpenAI-style assistant message and run tools
+                assistant_msg_dict = {
+                    "role": "assistant",
+                    "content": "".join(content_buf) or None,
+                    "tool_calls": [
+                        {
+                            "id": t.get("id") or f"call_{iteration}_{idx}",
+                            "type": "function",
+                            "function": {
+                                "name": t.get("name") or "",
+                                "arguments": t.get("arguments") or "{}",
+                            },
+                        }
+                        for idx, t in sorted(partial_tools.items())
+                    ],
+                }
+                messages.append(assistant_msg_dict)
+
+                for tc in assistant_msg_dict["tool_calls"]:
+                    tool_name = tc["function"]["name"]
+                    try:
+                        tool_args = json.loads(tc["function"]["arguments"]) if tc["function"]["arguments"] else {}
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    yield {
+                        "type": "tool_start",
+                        "call_id": tc["id"],
+                        "name": tool_name,
+                        "args": tool_args,
+                    }
+
+                    if tool_name == "use_skill" and user_id:
+                        tool_args["_user_id"] = user_id
+
+                    try:
+                        if tool_name in connector_executors:
+                            tool_result = await connector_executors[tool_name](tool_args, llm, db)
+                        else:
+                            tool_result = await execute_tool(
+                                name=tool_name, args=tool_args, llm=llm, db=db,
+                            )
+                    except Exception as exc:
+                        logger.error("Tool '%s' execution failed: %s", tool_name, exc)
+                        tool_result = {"error": f"Tool execution failed: {exc}"}
+
+                    if tool_name == "execute_python" and isinstance(tool_result, dict):
+                        py_calls_so_far = sum(
+                            1 for t in tool_call_log if t.get("name") == "execute_python"
+                        )
+                        tool_result = {
+                            "_computation_id": f"py{py_calls_so_far + 1}",
+                            **tool_result,
+                        }
+
+                    tool_call_log.append({
+                        "name": tool_name,
+                        "args": tool_args,
+                        "result": tool_result,
+                    })
+
+                    result_str = json.dumps(tool_result, default=str)
+                    conversation.add_message(
+                        "tool", result_str,
+                        tool_name=tool_name, tool_result=tool_result,
+                    )
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result_str,
+                    })
+
+                    yield {
+                        "type": "tool_end",
+                        "call_id": tc["id"],
+                        "name": tool_name,
+                        "success": _tool_success(tool_result),
+                        "summary": _tool_summary(tool_name, tool_result),
+                    }
+                # Loop again so the model can read tool results
+                continue
+
+            # No tool calls — final text response
+            final_text = "".join(content_buf)
+            conversation.add_message("assistant", final_text)
+            yield {
+                "type": "done",
+                "response": final_text,
+                "tool_calls": tool_call_log,
+            }
+            return
+
+        fallback = "I've reached the maximum number of reasoning steps. Here's what I found so far based on the tool results."
+        conversation.add_message("assistant", fallback)
+        yield {"type": "text_delta", "text": fallback}
+        yield {"type": "done", "response": fallback, "tool_calls": tool_call_log}
 
     # ------------------------------------------------------------------
     # Internal helpers

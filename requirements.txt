@@ -26,6 +26,7 @@ uvicorn[standard]
 asyncpg
 slowapi
 google-api-python-client
+google-genai
 youtube-transcript-api
 python-jose[cryptography]
 e2b
