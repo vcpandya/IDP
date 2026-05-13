@@ -152,6 +152,32 @@ def extract_json(content):
         logging.error(f"Unexpected error while extracting JSON: {e}")
         return {}
 
+def extract_json_array(content):
+    """Parse `content` as JSON and return a list.
+
+    Handles both legacy lenient models that return a bare top-level array
+    and strict models constrained by ``response_format={"type":"json_object"}``
+    that wrap the array inside a single-key object such as
+    ``{"sections": [...]}`` or ``{"items": [...]}``.
+
+    Returns ``[]`` on any parse failure or unrecognised shape.
+    """
+    parsed = extract_json(content)
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        # Common wrapper keys, in priority order.
+        for key in ("sections", "items", "toc", "structure", "results", "data"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                return value
+        # Fallback: if there's exactly one list-valued field, unwrap it.
+        list_values = [v for v in parsed.values() if isinstance(v, list)]
+        if len(list_values) == 1:
+            return list_values[0]
+    return []
+
+
 def write_node_id(data, node_id=0):
     if isinstance(data, dict):
         data['node_id'] = str(node_id).zfill(4)
