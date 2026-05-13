@@ -24,10 +24,28 @@
             <template x-for="conv in filteredConversations()" :key="conv.id">
                 <div class="conv-item" :class="{ active: currentConversationId === conv.id }"
                      @click="loadConversation(conv.id)">
-                    <span class="conv-title" x-text="conv.title"></span>
-                    <button class="conv-delete" @click.stop="deleteConversation(conv.id)" title="Delete" aria-label="Delete conversation">
-                        <i class="fas fa-times"></i>
+                    <div class="conv-item-main">
+                        <span class="conv-title" x-text="conv.title"></span>
+                        <div class="conv-tags-row" x-show="conv.tags && conv.tags.length > 0">
+                            <template x-for="t in (conv.tags || [])" :key="t.id">
+                                <span class="conv-tag-chip" :style="'background:' + (t.color || '#4f46e5')" x-text="t.name"></span>
+                            </template>
+                        </div>
+                    </div>
+                    <button class="conv-menu-btn" @click.stop="openConvMenu(conv.id, $event)" title="More" aria-label="Conversation actions">
+                        <i class="fas fa-ellipsis-h"></i>
                     </button>
+                    <div class="conv-menu" x-show="convMenuOpenId === conv.id" x-cloak @click.stop @click.outside="convMenuOpenId = null">
+                        <button @click="openRenameModal(conv); convMenuOpenId = null">
+                            <i class="fas fa-pen"></i> Rename
+                        </button>
+                        <button @click="openTagsModal(conv); convMenuOpenId = null">
+                            <i class="fas fa-tag"></i> Tags
+                        </button>
+                        <button class="danger" @click="openDeleteConfirm(conv); convMenuOpenId = null">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
                 </div>
             </template>
         </div>
@@ -468,6 +486,88 @@
             </div>
         </div>
     </div>
+
+    <!-- ======= Rename conversation modal ======= -->
+    <div class="attach-modal-overlay" x-show="showRenameModal" x-cloak @click.self="showRenameModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:420px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem"><i class="fas fa-pen"></i> Rename conversation</h3>
+                <button class="btn-close" @click="showRenameModal = false" aria-label="Close rename dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px">
+                <input type="text" x-model="renameDraft" maxlength="200"
+                       @keydown.enter.prevent="confirmRename()"
+                       @keydown.escape="showRenameModal = false"
+                       placeholder="Conversation title"
+                       style="width:100%;padding:8px 10px;border:1px solid var(--border-light);border-radius:6px;font-size:0.9rem"
+                       x-ref="renameInput">
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showRenameModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="confirmRename()" :disabled="!renameDraft.trim()">
+                    <i class="fas fa-check"></i> Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Tag picker modal ======= -->
+    <div class="attach-modal-overlay" x-show="showTagsModal" x-cloak @click.self="showTagsModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:460px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem"><i class="fas fa-tag"></i> Tag conversation</h3>
+                <button class="btn-close" @click="showTagsModal = false" aria-label="Close tags dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px;max-height:50vh;overflow-y:auto">
+                <div x-show="tags.length === 0" style="font-size:0.85rem;color:var(--text-muted)">
+                    No tags yet. Create tags from the Documents page first.
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <template x-for="t in tags" :key="t.id">
+                        <button type="button"
+                                @click="toggleTagsDraft(t.id)"
+                                :style="tagsDraft.includes(t.id)
+                                    ? ('background:' + (t.color || '#4f46e5') + ';color:#fff;border-color:transparent')
+                                    : ''"
+                                style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:14px;border:1px solid var(--border-light);background:var(--bg-white);color:var(--text-default);font-size:0.78rem;cursor:pointer">
+                            <i class="fas" :class="tagsDraft.includes(t.id) ? 'fa-check' : 'fa-tag'"></i>
+                            <span x-text="t.name"></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showTagsModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="confirmTags()">
+                    <i class="fas fa-check"></i> Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Delete confirmation modal ======= -->
+    <div class="attach-modal-overlay" x-show="showDeleteConfirm" x-cloak @click.self="showDeleteConfirm = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:400px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem;color:var(--danger)">
+                    <i class="fas fa-exclamation-triangle"></i> Delete conversation?
+                </h3>
+                <button class="btn-close" @click="showDeleteConfirm = false" aria-label="Close confirm dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px;font-size:0.88rem;color:var(--text-default);line-height:1.5">
+                You're about to delete
+                <strong x-text="'“' + (deleteTarget && deleteTarget.title || 'this conversation') + '”'"></strong>.
+                <br><br>
+                <span style="color:var(--text-muted)">This permanently removes the chat and all of its messages. This can't be undone.</span>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showDeleteConfirm = false">Cancel</button>
+                <button class="btn btn-danger" @click="confirmDelete()">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 <script>
 function agentChat() {
@@ -499,6 +599,16 @@ function agentChat() {
         sourceModalLoading: false,
         showComputationModal: false,
         computationModalData: {},
+        // Conversation menu / rename / tags / delete state
+        convMenuOpenId: null,
+        showRenameModal: false,
+        renameTarget: null,
+        renameDraft: '',
+        showTagsModal: false,
+        tagsTarget: null,
+        tagsDraft: [],
+        showDeleteConfirm: false,
+        deleteTarget: null,
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -1007,14 +1117,87 @@ function agentChat() {
                 }
             } catch(e) {}
         },
-        async deleteConversation(convId) {
+        // ----- Conversation actions menu -----
+        openConvMenu(convId, ev) {
+            this.convMenuOpenId = (this.convMenuOpenId === convId) ? null : convId;
+        },
+        openRenameModal(conv) {
+            this.renameTarget = conv;
+            this.renameDraft = conv.title || '';
+            this.showRenameModal = true;
+            this.$nextTick(() => {
+                if (this.$refs.renameInput) {
+                    this.$refs.renameInput.focus();
+                    this.$refs.renameInput.select();
+                }
+            });
+        },
+        async confirmRename() {
+            const conv = this.renameTarget;
+            const title = (this.renameDraft || '').trim();
+            if (!conv || !title) return;
             try {
-                await fetch('/api/agent/conversations/' + convId, { method: 'DELETE' });
-                this.conversations = this.conversations.filter(c => c.id !== convId);
-                if (this.currentConversationId === convId) {
+                const res = await fetch('/api/agent/conversations/' + conv.id, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ title }),
+                });
+                if (res.ok) {
+                    const updated = await res.json();
+                    const ci = this.conversations.find(c => c.id === conv.id);
+                    if (ci) {
+                        ci.title = updated.title;
+                        ci.tags = updated.tags || ci.tags || [];
+                    }
+                }
+            } catch(e) {}
+            this.showRenameModal = false;
+            this.renameTarget = null;
+        },
+        openTagsModal(conv) {
+            this.tagsTarget = conv;
+            this.tagsDraft = (conv.tags || []).map(t => t.id);
+            this.showTagsModal = true;
+        },
+        toggleTagsDraft(tagId) {
+            const i = this.tagsDraft.indexOf(tagId);
+            if (i >= 0) this.tagsDraft.splice(i, 1);
+            else this.tagsDraft.push(tagId);
+        },
+        async confirmTags() {
+            const conv = this.tagsTarget;
+            if (!conv) return;
+            try {
+                const res = await fetch('/api/agent/conversations/' + conv.id + '/tags', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tag_ids: this.tagsDraft }),
+                });
+                if (res.ok) {
+                    const updated = await res.json();
+                    const ci = this.conversations.find(c => c.id === conv.id);
+                    if (ci) ci.tags = updated.tags || [];
+                }
+            } catch(e) {}
+            this.showTagsModal = false;
+            this.tagsTarget = null;
+        },
+        openDeleteConfirm(conv) {
+            this.deleteTarget = conv;
+            this.showDeleteConfirm = true;
+        },
+        async confirmDelete() {
+            const conv = this.deleteTarget;
+            if (!conv) { this.showDeleteConfirm = false; return; }
+            try {
+                await fetch('/api/agent/conversations/' + conv.id, { method: 'DELETE' });
+                this.conversations = this.conversations.filter(c => c.id !== conv.id);
+                if (this.currentConversationId === conv.id) {
                     this.newConversation();
                 }
             } catch(e) {}
+            this.showDeleteConfirm = false;
+            this.deleteTarget = null;
         },
         scrollToBottom() {
             this.$nextTick(() => {

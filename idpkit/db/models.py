@@ -56,6 +56,14 @@ document_tags = Table(
 )
 
 
+conversation_tags = Table(
+    "conversation_tags",
+    Base.metadata,
+    Column("conversation_id", String, ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", String, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class UserRole(str, enum.Enum):
     SUPERADMIN = "superadmin"
     ADMIN = "admin"
@@ -181,9 +189,11 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="ConversationMessage.created_at",
     )
+    tags = relationship("Tag", secondary=conversation_tags, back_populates="conversations")
 
     __table_args__ = (
         Index("ix_conversations_owner_created", "owner_id", "created_at"),
+        Index("ix_conversations_owner_updated", "owner_id", "updated_at"),
     )
 
 
@@ -307,6 +317,7 @@ class Tag(Base):
 
     owner = relationship("User", back_populates="tags")
     documents = relationship("Document", secondary=document_tags, back_populates="tags")
+    conversations = relationship("Conversation", secondary=conversation_tags, back_populates="tags")
 
 
 class SystemSetting(Base):
