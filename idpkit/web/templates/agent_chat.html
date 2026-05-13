@@ -835,8 +835,10 @@ function agentChat() {
             this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null, computations: null });
             this.loading = true;
             // Token to detect if the user switched conversations mid-flight.
+            // (requestConversationId is captured AFTER the auto-create
+            // block below — otherwise a brand-new conversation makes
+            // every response look stale and gets dropped.)
             const requestToken = ++this._sendToken;
-            const requestConversationId = this.currentConversationId;
             this.scrollToBottom();
 
             // Auto-create conversation if none active
@@ -860,6 +862,7 @@ function agentChat() {
             // flush at the end — making the UI look "stuck running" until
             // it suddenly fills in. The plain JSON endpoint avoids this.
             this.startThinkingIndicator();
+            const requestConversationId = this.currentConversationId;
             const isStale = () =>
                 requestToken !== this._sendToken ||
                 requestConversationId !== this.currentConversationId;
