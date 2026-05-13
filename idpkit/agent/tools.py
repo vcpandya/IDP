@@ -465,10 +465,12 @@ TOOL_DEFINITIONS: list[dict] = [
                 "vs Y vs Z across cost, performance, ecosystem, with sources'). "
                 "DO NOT use for quick facts (use web_search), simple lookups, "
                 "or anything answerable from the user's documents. This tool "
-                "is slow — it can take several minutes — so call it at most "
+                "is slow — it can take 5–20 minutes — so call it at most "
                 "once per turn and only when the user explicitly asks for a "
-                "deep / comprehensive / research report. Returns the full "
-                "report markdown in `report`."
+                "deep / comprehensive / research report. The chat UI shows "
+                "live progress (searches, URL reads, synthesis) while it "
+                "runs, so the user is not stuck staring at a spinner. "
+                "Returns the full report markdown in `report`."
             ),
             "parameters": {
                 "type": "object",
