@@ -131,8 +131,10 @@
                 <div class="msg-avatar" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff"><i class="fas fa-brain"></i></div>
                 <div class="msg-content">
                     <div class="typing-indicator"><span></span><span></span><span></span></div>
-                    <div x-show="thinkingActive" x-cloak style="font-size:12px;color:#6b7280;margin-top:4px;">
-                        <i class="fas fa-brain"></i> Thinking…
+                    <div x-show="thinkingActive" x-cloak style="font-size:12px;color:#6b7280;margin-top:4px;display:flex;align-items:center;gap:8px;">
+                        <i class="fas fa-brain"></i>
+                        <span x-text="thinkingHint"></span>
+                        <span style="color:#9ca3af;" x-text="'· ' + thinkingElapsed + 's'"></span>
                     </div>
                 </div>
             </div>
@@ -470,7 +472,10 @@
 <script>
 function agentChat() {
     return {
-        messages: [], input: '', loading: false, thinkingActive: false, documents: [], selectedDocs: [],
+        messages: [], input: '', loading: false, thinkingActive: false,
+        thinkingHint: 'Thinking…', thinkingElapsed: 0,
+        _thinkingTimer: null, _thinkingHintTimer: null, _sendToken: 0,
+        documents: [], selectedDocs: [],
         uploadFiles: [],
         tags: [], selectedTags: [],
         currentSources: [],
@@ -820,6 +825,8 @@ function agentChat() {
             }
         },
         async sendMessage(text) {
+            // Single-flight: ignore re-entry while a request is in flight.
+            if (this.loading) return;
             const msg = text || this.input.trim();
             if (!msg) return;
             this.input = '';
@@ -827,6 +834,9 @@ function agentChat() {
             this.showDocMention = false;
             this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null, computations: null });
             this.loading = true;
+            // Token to detect if the user switched conversations mid-flight.
+            const requestToken = ++this._sendToken;
+            const requestConversationId = this.currentConversationId;
             this.scrollToBottom();
 
             // Auto-create conversation if none active
@@ -844,18 +854,19 @@ function agentChat() {
                 } catch(e) {}
             }
 
-            // --- Streaming chat via SSE ----------------------------------
-            // Track tool messages by call_id so we can flip them from
-            // "running" -> "done" / "failed" as tool_end events arrive,
-            // and later splice in the full result on `done`.
-            const toolMsgByCallId = {};
-            const toolOrderCallIds = [];
-            let assistantMsg = null;     // Placeholder for streamed text
-            let assistantIndex = -1;
+            // Non-streaming chat. The SSE endpoint exists at
+            // /api/agent/chat/stream, but Cloud Run / Replit's autoscale
+            // proxy buffers SSE responses, so events arrive in a single
+            // flush at the end — making the UI look "stuck running" until
+            // it suddenly fills in. The plain JSON endpoint avoids this.
+            this.startThinkingIndicator();
+            const isStale = () =>
+                requestToken !== this._sendToken ||
+                requestConversationId !== this.currentConversationId;
             try {
-                const res = await fetch('/api/agent/chat/stream', {
+                const res = await fetch('/api/agent/chat', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'Accept': 'text/event-stream'},
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         message: msg,
                         conversation_id: this.currentConversationId,
@@ -863,166 +874,41 @@ function agentChat() {
                         tag_ids: this.selectedTags
                     })
                 });
-                if (!res.ok || !res.body) {
-                    throw new Error('stream request failed: ' + res.status);
-                }
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder('utf-8');
-                let buf = '';
-                let doneEvent = null;
-
-                const handleEvent = (ev) => {
-                    if (!ev || !ev.type) return;
-                    if (ev.type === 'thinking') {
-                        // Visible "thinking…" handled via this.loading + a
-                        // small indicator in the template; nothing to push.
-                        this.thinkingActive = true;
-                    } else if (ev.type === 'tool_start') {
-                        this.thinkingActive = false;
-                        const tm = {
-                            role: 'tool',
-                            content: '(running…)',
-                            tool_name: ev.name,
-                            is_error: false,
-                            error_message: null,
-                            connector_id: null,
-                            connector_name: null,
-                            streaming: true,
-                            stream_status: 'running',
-                            stream_summary: '',
-                            sources: null, source_type: null, searchAttempts: null, computations: null,
-                        };
-                        this.messages.push(tm);
-                        toolMsgByCallId[ev.call_id] = tm;
-                        toolOrderCallIds.push(ev.call_id);
-                    } else if (ev.type === 'tool_progress') {
-                        const tm = toolMsgByCallId[ev.call_id];
-                        if (tm && ev.message) {
-                            tm.stream_summary = ev.message;
-                            tm.progress_log = (tm.progress_log || []).concat([ev.message]);
-                        }
-                    } else if (ev.type === 'tool_end') {
-                        const tm = toolMsgByCallId[ev.call_id];
-                        if (tm) {
-                            tm.stream_status = ev.success ? 'done' : 'failed';
-                            tm.stream_summary = ev.summary || tm.stream_summary || '';
-                            tm.is_error = !ev.success;
-                            tm.streaming = false;
-                            // Keep the placeholder until `done` brings the
-                            // full result; then we splice the JSON in.
-                        }
-                    } else if (ev.type === 'text_delta') {
-                        this.thinkingActive = false;
-                        if (!assistantMsg) {
-                            assistantMsg = {
-                                role: 'assistant',
-                                content: '',
-                                sources: null, source_type: null,
-                                searchAttempts: null, computations: null,
-                                streaming: true,
-                            };
-                            this.messages.push(assistantMsg);
-                            assistantIndex = this.messages.length - 1;
-                        }
-                        assistantMsg.content += ev.text;
-                    } else if (ev.type === 'error') {
-                        this.thinkingActive = false;
-                        this.messages.push({
-                            role: 'assistant',
-                            content: 'Error: ' + (ev.message || 'stream failed'),
-                            sources: null, source_type: null,
-                            searchAttempts: null, computations: null,
-                        });
-                    } else if (ev.type === 'done') {
-                        doneEvent = ev;
-                    }
-                    this.scrollToBottom();
-                };
-
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    buf += decoder.decode(value, { stream: true });
-                    // SSE events are separated by a blank line
-                    let idx;
-                    while ((idx = buf.indexOf('\n\n')) >= 0) {
-                        const raw = buf.slice(0, idx);
-                        buf = buf.slice(idx + 2);
-                        // Concatenate `data:` lines (ignore comments / others)
-                        const dataLines = raw.split('\n')
-                            .filter(l => l.startsWith('data:'))
-                            .map(l => l.slice(5).replace(/^ /, ''));
-                        if (!dataLines.length) continue;
-                        const payload = dataLines.join('\n');
-                        try {
-                            handleEvent(JSON.parse(payload));
-                        } catch (e) { /* ignore malformed */ }
-                    }
-                }
-
-                // ---- Finalize from the `done` event ------------------------
-                if (doneEvent) {
-                    // Backfill full tool results into the placeholder messages
-                    const tcs = Array.isArray(doneEvent.tool_calls) ? doneEvent.tool_calls : [];
-                    for (let i = 0; i < tcs.length; i++) {
-                        const tc = tcs[i];
-                        const cid = toolOrderCallIds[i];
-                        const tm = cid ? toolMsgByCallId[cid] : null;
-                        const errInfo = this.detectToolError(tc.name, tc.result);
-                        const fullContent = typeof tc.result === 'string'
-                            ? tc.result
-                            : JSON.stringify(tc.result, null, 2);
-                        if (tm) {
-                            tm.content = fullContent;
-                            tm.is_error = !!errInfo;
-                            tm.error_message = errInfo ? errInfo.message : null;
-                            tm.connector_id = errInfo ? errInfo.connectorId : null;
-                            tm.connector_name = errInfo ? errInfo.connectorName : null;
-                            tm.streaming = false;
-                        } else {
-                            // Fallback: tool_start was missed for some reason
+                if (res.ok) {
+                    const data = await res.json();
+                    // Drop the response if the user navigated away from this
+                    // conversation (or sent another message somehow); the
+                    // server already persisted it, so a refresh restores it.
+                    if (isStale()) return;
+                    if (Array.isArray(data.tool_calls)) {
+                        for (const tc of data.tool_calls) {
+                            const errInfo = this.detectToolError(tc.name, tc.result);
                             this.messages.push({
                                 role: 'tool',
-                                content: fullContent,
+                                content: typeof tc.result === 'string'
+                                    ? tc.result
+                                    : JSON.stringify(tc.result, null, 2),
                                 tool_name: tc.name,
                                 is_error: !!errInfo,
                                 error_message: errInfo ? errInfo.message : null,
                                 connector_id: errInfo ? errInfo.connectorId : null,
                                 connector_name: errInfo ? errInfo.connectorName : null,
-                                sources: null, source_type: null, searchAttempts: null, computations: null,
+                                sources: null, source_type: null,
+                                searchAttempts: null, computations: null,
                             });
                         }
                     }
-
-                    const msgSources = (doneEvent.sources && doneEvent.sources.length > 0) ? doneEvent.sources : null;
-                    const msgSearchAttempts = (doneEvent.search_attempts && doneEvent.search_attempts.length > 0) ? doneEvent.search_attempts : null;
-                    const msgComputations = (doneEvent.computations && doneEvent.computations.length > 0) ? doneEvent.computations : null;
-
-                    if (assistantMsg) {
-                        // Streamed text already in assistantMsg.content; just
-                        // overwrite from the authoritative `response` so any
-                        // last-token reconciliation is exact.
-                        if (typeof doneEvent.response === 'string' && doneEvent.response.length) {
-                            assistantMsg.content = doneEvent.response;
-                        }
-                        assistantMsg.sources = msgSources;
-                        assistantMsg.source_type = doneEvent.source_type || null;
-                        assistantMsg.searchAttempts = msgSearchAttempts;
-                        assistantMsg.computations = msgComputations;
-                        assistantMsg.streaming = false;
-                    } else {
-                        // No text deltas were emitted (rare) — push a final msg
-                        this.messages.push({
-                            role: 'assistant',
-                            content: doneEvent.response || 'No response',
-                            sources: msgSources,
-                            source_type: doneEvent.source_type || null,
-                            searchAttempts: msgSearchAttempts,
-                            computations: msgComputations,
-                        });
-                    }
-
+                    const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
+                    const msgSearchAttempts = (data.search_attempts && data.search_attempts.length > 0) ? data.search_attempts : null;
+                    const msgComputations = (data.computations && data.computations.length > 0) ? data.computations : null;
+                    this.messages.push({
+                        role: 'assistant',
+                        content: data.response || data.detail || 'No response',
+                        sources: msgSources,
+                        source_type: data.source_type || null,
+                        searchAttempts: msgSearchAttempts,
+                        computations: msgComputations,
+                    });
                     if (msgSources || msgSearchAttempts) {
                         this.currentSources = msgSources || [];
                         this.currentSearchAttempts = msgSearchAttempts || [];
@@ -1033,19 +919,59 @@ function agentChat() {
                             ci.title = msg.length > 100 ? msg.substring(0, 100) : msg;
                         }
                     }
+                } else {
+                    this.messages.push({
+                        role: 'assistant',
+                        content: 'Error: request failed (' + res.status + ')',
+                        sources: null, source_type: null,
+                        searchAttempts: null, computations: null,
+                    });
                 }
             } catch(e) {
-                this.messages.push({
-                    role: 'assistant',
-                    content: 'Error: ' + e.message,
-                    sources: null, source_type: null, searchAttempts: null, computations: null,
-                });
+                if (!isStale()) {
+                    this.messages.push({
+                        role: 'assistant',
+                        content: 'Error: ' + e.message,
+                        sources: null, source_type: null, searchAttempts: null, computations: null,
+                    });
+                }
             }
             finally {
-                this.thinkingActive = false;
+                this.stopThinkingIndicator();
                 this.loading = false;
                 this.scrollToBottom();
             }
+        },
+        startThinkingIndicator() {
+            // Defensive: clear any prior intervals so we never leak timers.
+            this.stopThinkingIndicator();
+            const hints = [
+                'Thinking…',
+                'Reading your request…',
+                'Searching documents…',
+                'Reasoning over results…',
+                'Calling tools…',
+                'Synthesizing an answer…',
+                'Almost there…',
+                'Still working — complex queries can take a minute…',
+            ];
+            this.thinkingActive = true;
+            this.thinkingElapsed = 0;
+            this.thinkingHint = hints[0];
+            const startedAt = Date.now();
+            let hintIdx = 0;
+            this._thinkingTimer = setInterval(() => {
+                this.thinkingElapsed = Math.floor((Date.now() - startedAt) / 1000);
+            }, 1000);
+            this._thinkingHintTimer = setInterval(() => {
+                hintIdx = Math.min(hintIdx + 1, hints.length - 1);
+                this.thinkingHint = hints[hintIdx];
+            }, 6000);
+        },
+        stopThinkingIndicator() {
+            this.thinkingActive = false;
+            if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+            if (this._thinkingHintTimer) { clearInterval(this._thinkingHintTimer); this._thinkingHintTimer = null; }
         },
         newConversation() {
             this.currentConversationId = null;
