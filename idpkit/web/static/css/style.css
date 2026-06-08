@@ -3976,3 +3976,98 @@ tbody tr:hover { background: var(--border-light); }
     font-weight: 600;
     vertical-align: middle;
 }
+
+/* ---- Reference hover tooltip (provenance chips) -------------------------- */
+.chip-tooltip {
+    position: fixed;
+    z-index: 4000;
+    width: 320px;
+    max-width: calc(100vw - 24px);
+    background: var(--bg-white, #fff);
+    border: 1px solid var(--border-light, #e5e7eb);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.18);
+    padding: 10px 12px;
+    font-size: 0.8rem;
+    color: var(--text-default, #1f2937);
+    pointer-events: none;
+}
+.chip-tooltip.place-above { transform: translateY(calc(-100% - 8px)); }
+.chip-tooltip.place-below { transform: translateY(8px); }
+.chip-tooltip-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    color: var(--primary, #4f46e5);
+    margin-bottom: 4px;
+}
+.chip-tooltip-head i { font-size: 0.78rem; }
+.chip-tooltip-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 0.74rem;
+    color: var(--text-muted, #6b7280);
+    margin-bottom: 6px;
+}
+.chip-tooltip-file { font-weight: 500; word-break: break-word; }
+.chip-tooltip-pages { white-space: nowrap; }
+.chip-tooltip-summary {
+    color: var(--text-default, #374151);
+    line-height: 1.45;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.chip-tooltip-text {
+    margin: 0 0 6px;
+    padding: 8px;
+    background: var(--bg-light, #f9fafb);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    line-height: 1.45;
+    max-height: 140px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-default, #374151);
+}
+.chip-tooltip-more {
+    font-size: 0.72rem;
+    color: var(--primary, #4f46e5);
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+.chip-tooltip-hint {
+    font-size: 0.7rem;
+    color: var(--text-muted, #9ca3af);
+    font-style: italic;
+}
+
+/* ---- Selected documents: "+N more" chip & modal rows -------------------- */
+.docs-more-chip {
+    background: var(--primary-light, #eef2ff);
+    color: var(--primary, #4f46e5);
+    border: 1px dashed var(--primary, #4f46e5);
+    cursor: pointer;
+    font-weight: 600;
+}
+.docs-more-chip:hover { filter: brightness(0.97); }
+.selected-doc-open,
+.selected-doc-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted, #6b7280);
+    padding: 4px 6px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    line-height: 1;
+    text-decoration: none;
+}
+.selected-doc-open:hover { background: var(--primary-light, #eef2ff); color: var(--primary, #4f46e5); }
+.selected-doc-remove:hover { background: var(--danger-light, #fee2e2); color: var(--danger, #dc2626); }
