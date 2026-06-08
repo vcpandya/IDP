@@ -21,6 +21,10 @@ from idpkit.core.llm import LLMClient
 from idpkit.agent.memory import ConversationMemory
 from idpkit.agent.tools import TOOL_DEFINITIONS, execute_tool
 
+# First-party tools that need the calling user's id injected (the model never
+# supplies it; these are owner-scoped). Injected just before dispatch.
+_USER_CONTEXT_TOOLS = {"use_skill", "query_document_map"}
+
 
 def _tool_success(result: Any) -> bool:
     """Best-effort success flag for the streaming tool_end event."""
@@ -217,6 +221,24 @@ content from documents using a comprehensive toolkit.
 - **query_graph**: Query the knowledge graph for entity information.
   Operations: find_entity, entity_mentions, related_sections, cross_document_links, document_entities.
 - **find_cross_references**: Find all sections across all documents that mention a given topic or entity.
+
+### Document Map (Smart Metadata)
+- **query_document_map**: Pre-filter and discover documents by category-aware
+  facets (extracted key/value metadata) BEFORE reading them. Categories: general,
+  case_law, contract, act_legislation, financial_statement, invoice,
+  research_paper, resume. Operations:
+  - list_categories — available document categories.
+  - stats — total vs. profiled document counts and per-category breakdown.
+  - list_facets — browse filterable facet fields/values with document counts
+    (optionally narrowed by category, key, or a search term). Use this first to
+    discover what you can filter on.
+  - filter_documents — find documents matching {key, value} criteria with
+    match='all' (AND) or 'any' (OR); returns document_id values to feed into
+    search_document / extract_data / etc.
+  - document_facets — list all facets for one document_id.
+  Use this when the user refers to a *set* of documents by a shared property
+  (e.g. "all case laws where Judge Smith presided", "contracts under NY law",
+  "invoices from Acme") instead of naming specific files.
 
 ### Smart Tools Gateway
 - **run_smart_tool**: Execute any of the 13 Smart Tools on a document:
@@ -535,7 +557,7 @@ class IDPAgent:
                         json.dumps(tool_args, default=str)[:200],
                     )
 
-                    if tool_name == "use_skill" and user_id:
+                    if tool_name in _USER_CONTEXT_TOOLS and user_id:
                         tool_args["_user_id"] = user_id
 
                     # Execute the tool — connector tools dispatched via runtime executor map
@@ -785,7 +807,7 @@ class IDPAgent:
                         "args": tool_args,
                     }
 
-                    if tool_name == "use_skill" and user_id:
+                    if tool_name in _USER_CONTEXT_TOOLS and user_id:
                         tool_args["_user_id"] = user_id
 
                     # Special path: deep_research can run for many minutes,
