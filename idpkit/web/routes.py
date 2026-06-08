@@ -69,6 +69,13 @@ async def graph_page(request: Request, user=Depends(get_current_user_optional)):
     return templates.TemplateResponse("graph.html", {"request": request, "user": user})
 
 
+@router.get("/document-map", response_class=HTMLResponse)
+async def document_map_page(request: Request, user=Depends(get_current_user_optional)):
+    if not user:
+        return RedirectResponse(url="/login", status_code=302)
+    return templates.TemplateResponse("document_map.html", {"request": request, "user": user})
+
+
 @router.get("/tools", response_class=HTMLResponse)
 async def tools_page(request: Request, user=Depends(get_current_user_optional)):
     if not user:

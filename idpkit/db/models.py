@@ -110,6 +110,9 @@ class Document(Base):
     tree_index = Column(JSON, nullable=True)
     description = Column(Text, nullable=True)
     metadata_json = Column(JSON, nullable=True)
+    doc_category = Column(String(100), nullable=True, index=True)  # smart-metadata category
+    doc_category_confidence = Column(Integer, nullable=True)  # 0-100
+    smart_metadata = Column(JSON, nullable=True)  # {category, confidence, fields}
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(TZDateTime, default=utcnow)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
