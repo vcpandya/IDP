@@ -27,6 +27,7 @@ from idpkit.metadata.categories import (
     field_label,
     get_category,
     get_category_keys,
+    normalize_value,
 )
 from idpkit.metadata.models import DocumentFacet
 
@@ -56,13 +57,37 @@ def _extract_json(text: str) -> dict | None:
         return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
-    # Fall back to the first {...} block.
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+    # Fall back to the first *balanced* {...} block. A greedy ``\{.*\}`` would
+    # span across multiple objects (first "{" to last "}") and fail to parse, so
+    # we scan for the first brace and track depth (ignoring braces in strings).
+    start = cleaned.find("{")
+    while start != -1:
+        depth, in_str, esc = 0, False, False
+        for i in range(start, len(cleaned)):
+            ch = cleaned[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(cleaned[start:i + 1])
+                    except json.JSONDecodeError:
+                        # Not valid JSON (e.g. a brace block in preamble text);
+                        # keep scanning for the next candidate object.
+                        break
+        # Advance past the current opening brace and look for the next one.
+        start = cleaned.find("{", start + 1)
     return None
 
 
@@ -150,7 +175,7 @@ def _extract_prompt(category_key: str, context: str) -> str:
 
 
 def _norm(value: str) -> str:
-    return " ".join(value.lower().strip().split())
+    return normalize_value(value)
 
 
 def _coerce_values(raw: Any) -> list[str]:

@@ -8,12 +8,12 @@ existing documents to (re)extract their metadata.
 import logging
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from idpkit.api.deps import get_current_user, get_db, get_llm
+from idpkit.api.deps import get_current_user, get_db, get_llm, limiter
 from idpkit.core.llm import LLMClient
 from idpkit.db.models import Document, User
 from idpkit.metadata import categories as cat_registry
@@ -23,6 +23,10 @@ from idpkit.metadata.extractor import profile_document
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/metadata", tags=["metadata"])
+
+# LLM-backed extraction is expensive; cap how many documents one bulk request
+# may process so a single caller cannot monopolise the LLM client / DB pool.
+MAX_BULK_DOCS = 200
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +129,7 @@ async def document_metadata(
         "filename": doc.filename,
         "category": doc.doc_category,
         "confidence": doc.doc_category_confidence,
-        "facets": await md_queries.get_document_facets(db, doc_id),
+        "facets": await md_queries.get_document_facets(db, doc_id, owner_id=user.id),
     }
 
 
@@ -135,7 +139,9 @@ async def document_metadata(
 
 
 @router.post("/documents/{doc_id}/extract", summary="Extract metadata for one document")
+@limiter.limit("30/minute")
 async def extract_document(
+    request: Request,
     doc_id: str,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -147,13 +153,21 @@ async def extract_document(
 
 
 @router.post("/extract-bulk", summary="Extract metadata for many documents")
+@limiter.limit("6/minute")
 async def extract_bulk(
+    request: Request,
     req: ExtractBulkRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     llm: LLMClient = Depends(get_llm),
 ):
-    # Resolve the working set.
+    if req.document_ids and len(req.document_ids) > MAX_BULK_DOCS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many documents; limit is {MAX_BULK_DOCS} per request.",
+        )
+
+    # Resolve the working set (capped so an "all" run can't process unbounded docs).
     if req.document_ids:
         stmt = select(Document).where(
             Document.id.in_(req.document_ids), Document.owner_id == user.id
@@ -162,6 +176,7 @@ async def extract_bulk(
         stmt = select(Document).where(Document.owner_id == user.id)
         if req.scope == "missing":
             stmt = stmt.where(Document.doc_category.is_(None))
+    stmt = stmt.limit(MAX_BULK_DOCS)
     docs = (await db.execute(stmt)).scalars().all()
 
     processed, failed, skipped = 0, 0, 0
