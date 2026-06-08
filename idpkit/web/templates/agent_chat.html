@@ -138,6 +138,11 @@
                                 <div class="msg-body"
                                      x-html="msg.role === 'assistant' ? renderAssistantContent(msg) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
                                      @click="handleValueChipClick($event, msg)"
+                                     @keydown.enter.prevent="handleValueChipClick($event, msg)"
+                                     @mouseover="handleChipHover($event, msg)"
+                                     @mouseout="handleChipLeave($event)"
+                                     @focusin="handleChipHover($event, msg)"
+                                     @focusout="handleChipLeave($event)"
                                      x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
                                 </div>
                             </div>
@@ -174,8 +179,8 @@
                                 :aria-label="'Remove tag ' + chip.name">&times;</button>
                     </span>
                 </template>
-                <template x-for="did in selectedDocs" :key="'doc-'+did">
-                    <span class="chat-upload-tag ready" x-show="!uploadFiles.some(u => u.docId === did)">
+                <template x-for="did in visibleDocChips().slice(0, docChipLimit)" :key="'doc-'+did">
+                    <span class="chat-upload-tag ready">
                         <i class="fas fa-file-alt"></i>
                         <span class="tag-name" x-text="getDocName(did)"></span>
                         <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit"
@@ -183,6 +188,13 @@
                                 aria-label="Remove document from selection">&times;</button>
                     </span>
                 </template>
+                <button type="button" class="chat-upload-tag docs-more-chip"
+                        x-show="visibleDocChips().length > docChipLimit"
+                        @click="showSelectedDocsModal = true"
+                        :aria-label="'View all ' + visibleDocChips().length + ' selected documents'">
+                    <i class="fas fa-layer-group"></i>
+                    <span x-text="'+' + (visibleDocChips().length - docChipLimit) + ' more'"></span>
+                </button>
             </div>
             <div class="chat-input">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
@@ -575,6 +587,64 @@
             </div>
         </div>
     </div>
+
+    <!-- ======= Selected documents modal ======= -->
+    <div class="attach-modal-overlay" x-show="showSelectedDocsModal" x-cloak @click.self="showSelectedDocsModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:480px">
+            <div class="attach-modal-header">
+                <h3><i class="fas fa-layer-group"></i> Selected documents <span x-text="'(' + allSelectedDocs().length + ')'"></span></h3>
+                <button class="btn-close" @click="showSelectedDocsModal = false" aria-label="Close selected documents">&times;</button>
+            </div>
+            <div class="attach-modal-body">
+                <div class="attach-modal-list">
+                    <template x-for="did in allSelectedDocs()" :key="'sel-'+did">
+                        <div class="attach-modal-item">
+                            <i class="fas fa-file-alt" style="color:var(--primary);font-size:0.8rem;flex-shrink:0"></i>
+                            <div class="attach-modal-item-info">
+                                <span class="attach-modal-item-name" x-text="getDocName(did)"></span>
+                            </div>
+                            <a :href="'/documents/' + did" target="_blank" class="selected-doc-open" title="Open document" aria-label="Open document">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                            <button class="selected-doc-remove" @click="removeSelectedDoc(did)"
+                                    :aria-label="'Remove ' + getDocName(did)" title="Remove from selection">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <div x-show="allSelectedDocs().length === 0" class="attach-modal-empty">
+                        <i class="fas fa-inbox"></i>
+                        <span>No documents selected</span>
+                    </div>
+                </div>
+                <p x-show="selectedTagChips.length > 0" style="margin:10px 2px 0;font-size:0.72rem;color:var(--text-muted)">
+                    <i class="fas fa-info-circle"></i> Some documents come from selected tags. “Clear all” also removes those tags.
+                </p>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="clearSelectedDocs()" x-show="allSelectedDocs().length > 0 || selectedTagChips.length > 0">Clear all</button>
+                <button class="btn btn-primary" @click="showSelectedDocsModal = false">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Reference hover tooltip ======= -->
+    <div class="chip-tooltip" x-show="chipTip.show" x-cloak
+         :class="'place-' + chipTip.placement"
+         :style="'left:' + chipTip.x + 'px; top:' + chipTip.y + 'px'">
+        <div class="chip-tooltip-head">
+            <i :class="chipTip.kind === 'computed' ? 'fas fa-code' : 'fas fa-file-alt'"></i>
+            <span x-text="chipTip.heading"></span>
+        </div>
+        <div class="chip-tooltip-meta" x-show="chipTip.filename || chipTip.pages">
+            <span class="chip-tooltip-file" x-show="chipTip.filename" x-text="chipTip.filename"></span>
+            <span class="chip-tooltip-pages" x-show="chipTip.pages" x-text="chipTip.pages"></span>
+        </div>
+        <div class="chip-tooltip-summary" x-show="chipTip.summary" x-text="chipTip.summary"></div>
+        <pre class="chip-tooltip-text" x-show="chipTip.text" x-text="chipTip.text"></pre>
+        <div class="chip-tooltip-more" x-show="chipTip.multi > 1" x-text="chipTip.multi + ' related sections in this document'"></div>
+        <div class="chip-tooltip-hint" x-text="chipTip.kind === 'computed' ? 'Click to view full code & output' : 'Click to open document'"></div>
+    </div>
 </div>
 <script>
 function agentChat() {
@@ -606,6 +676,9 @@ function agentChat() {
         sourceModalLoading: false,
         showComputationModal: false,
         computationModalData: {},
+        showSelectedDocsModal: false,
+        docChipLimit: 6,
+        chipTip: { show: false, x: 0, y: 0, placement: 'above', kind: '', heading: '', filename: '', pages: '', summary: '', text: '', multi: 0 },
         // Conversation menu / rename / tags / delete state
         convMenuOpenId: null,
         showRenameModal: false,
@@ -701,6 +774,34 @@ function agentChat() {
         getDocName(docId) {
             const d = this.documents.find(x => x.id === docId);
             return d ? d.filename : docId.substring(0, 8) + '...';
+        },
+        // Docs rendered as plain chips in the input row, excluding ones that
+        // are already represented by an in-progress upload tag (those render
+        // separately with their upload status). Used only for the truncated
+        // chip row + "+N more" count.
+        visibleDocChips() {
+            return this.selectedDocs.filter(did => !this.uploadFiles.some(u => u.docId === did));
+        },
+        // Every document currently in the chat context — what the "Selected
+        // documents" modal lists so the user can review/remove the full set.
+        allSelectedDocs() {
+            return this.selectedDocs;
+        },
+        // Remove a doc from the selection and drop any matching upload tag so
+        // it disappears from both the chip row and the upload list.
+        removeSelectedDoc(did) {
+            this.selectedDocs = this.selectedDocs.filter(d => d !== did);
+            this.uploadFiles = this.uploadFiles.filter(u => u.docId !== did);
+        },
+        clearSelectedDocs() {
+            // Also clears tag selections: tag_ids are merged into the query
+            // server-side, so leaving active tags would silently re-add their
+            // documents. Keep in-progress uploads (still uploading/indexing).
+            this.selectedDocs = [];
+            this.selectedTags = [];
+            this.selectedTagChips = [];
+            this.uploadFiles = this.uploadFiles.filter(
+                u => u.status === 'uploading' || u.status === 'indexing');
         },
         openAttachModal() {
             this.modalSelectedDocs = [...this.selectedDocs];
@@ -909,8 +1010,8 @@ function agentChat() {
                         ? 'Computed in Python — click for code & output'
                         : 'Computed in Python';
                     return `<span class="value-chip computed${has ? '' : ' no-detail'}" `
-                        + `data-cid="${esc(cid)}" `
-                        + `title="${esc(tip)}">`
+                        + `data-cid="${esc(cid)}" role="button" tabindex="0" `
+                        + `aria-label="${esc(tip)}">`
                         + `<i class="fas fa-code value-chip-icon" aria-hidden="true"></i>`
                         + `<span class="value-chip-text">${esc(val.trim())}</span>`
                         + (has ? `<span class="value-chip-link">View code →</span>` : '')
@@ -920,8 +1021,8 @@ function agentChat() {
                     const fname = docNames[did] || did;
                     const tip = 'From document: ' + fname;
                     return `<span class="value-chip extracted" `
-                        + `data-did="${esc(did)}" `
-                        + `title="${esc(tip)}">`
+                        + `data-did="${esc(did)}" role="button" tabindex="0" `
+                        + `aria-label="${esc(tip)}">`
                         + `<i class="fas fa-file-alt value-chip-icon" aria-hidden="true"></i>`
                         + `<span class="value-chip-text">${esc(val.trim())}</span>`
                         + `<span class="value-chip-link">Open doc →</span>`
@@ -944,6 +1045,63 @@ function agentChat() {
             if (did) {
                 window.open('/documents/' + did, '_blank');
             }
+        },
+        // Rich hover tooltip for provenance chips: shows the related chunk
+        // text plus document name / page range (doc chips) or the captured
+        // code (computed chips). Falls back to whatever metadata is available.
+        handleChipHover(ev, msg) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            const did = chip.getAttribute('data-did');
+            const cid = chip.getAttribute('data-cid');
+            let tip = null;
+            if (did) {
+                const srcs = (msg.sources || []).filter(s => s && s.document_id === did);
+                const primary = srcs[0] || null;
+                let pages = '';
+                if (primary && primary.start_page != null) {
+                    pages = 'p. ' + primary.start_page
+                        + ((primary.end_page != null && primary.end_page !== primary.start_page)
+                            ? '–' + primary.end_page : '');
+                }
+                tip = {
+                    kind: 'extracted',
+                    heading: (primary && primary.title) ? primary.title : 'Extracted from document',
+                    filename: primary ? (primary.filename || this.getDocName(did)) : this.getDocName(did),
+                    pages: pages,
+                    summary: primary ? (primary.summary || '') : '',
+                    text: primary ? (primary.text_preview || '') : '',
+                    multi: srcs.length,
+                };
+            } else if (cid) {
+                const comp = (msg.computations || []).find(c => c.cid === cid);
+                tip = {
+                    kind: 'computed',
+                    heading: 'Computed in Python',
+                    filename: '',
+                    pages: '',
+                    summary: comp && comp.stdout ? comp.stdout : '',
+                    text: comp && comp.code ? comp.code : '',
+                    multi: 0,
+                };
+            }
+            if (!tip) return;
+            const rect = chip.getBoundingClientRect();
+            const placeBelow = rect.top < 240;
+            this.chipTip = {
+                show: true,
+                x: Math.max(8, Math.min(rect.left, window.innerWidth - 336)),
+                y: placeBelow ? rect.bottom : rect.top,
+                placement: placeBelow ? 'below' : 'above',
+                ...tip,
+            };
+        },
+        handleChipLeave(ev) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            const related = ev.relatedTarget;
+            if (related && chip.contains(related)) return;
+            this.chipTip.show = false;
         },
         async sendMessage(text) {
             // Single-flight: ignore re-entry while a request is in flight.
