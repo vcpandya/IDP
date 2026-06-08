@@ -509,6 +509,86 @@ TOOL_DEFINITIONS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "query_document_map",
+            "description": (
+                "Navigate the Document Map (category-aware Smart Metadata). Use this "
+                "to PRE-FILTER or discover documents by their extracted facets BEFORE "
+                "reading them — e.g. 'all case laws where Judge Smith presided', "
+                "'contracts governed by New York law', 'invoices from Acme Corp'. "
+                "Each document is auto-classified into a category (general, case_law, "
+                "contract, act_legislation, financial_statement, invoice, "
+                "research_paper, resume) and profiled into key/value facets. "
+                "Operations:\n"
+                "- list_categories: list the available document categories.\n"
+                "- stats: counts of total vs. profiled documents and a per-category "
+                "breakdown for the current user.\n"
+                "- list_facets: browse available facet fields and their values with "
+                "document counts (optionally narrowed by category, key, or a search "
+                "term). Use this to discover what you can filter on.\n"
+                "- filter_documents: find documents matching one or more facet "
+                "criteria (each {key, value}); match='all' (AND) or 'any' (OR). "
+                "Returns matching documents with their matched facets — use the "
+                "returned document_id values with other document tools.\n"
+                "- document_facets: list all extracted facets for one document_id."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "list_categories",
+                            "stats",
+                            "list_facets",
+                            "filter_documents",
+                            "document_facets",
+                        ],
+                        "description": "Which Document Map operation to run.",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "(list_facets) Restrict facets to this category key.",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "(list_facets) Restrict to a single facet field key.",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "(list_facets) Case-insensitive substring filter on facet values.",
+                    },
+                    "criteria": {
+                        "type": "array",
+                        "description": (
+                            "(filter_documents) Facet criteria to match. Each item is "
+                            "{key, value}; values are matched case-insensitively."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "key": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["key", "value"],
+                        },
+                    },
+                    "match": {
+                        "type": "string",
+                        "enum": ["all", "any"],
+                        "description": "(filter_documents) AND ('all', default) or OR ('any').",
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "description": "(document_facets) The document to list facets for.",
+                    },
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "use_skill",
             "description": (
                 "Load and activate a custom user skill by name. Returns the full "
@@ -1442,6 +1522,79 @@ async def _execute_deep_research(
     )
 
 
+async def _execute_query_document_map(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    """Navigate the Document Map (category-aware smart metadata facets)."""
+    from idpkit.metadata import categories as cat_registry
+    from idpkit.metadata import queries as md_queries
+
+    user_id = (args.get("_user_id") or "").strip()
+    if not user_id:
+        return {"error": "User context not available for Document Map queries."}
+
+    operation = (args.get("operation") or "").strip()
+
+    if operation == "list_categories":
+        return {"operation": operation, "categories": cat_registry.list_categories()}
+
+    if operation == "stats":
+        return {"operation": operation, **(await md_queries.get_stats(db, user_id))}
+
+    if operation == "list_facets":
+        facets = await md_queries.get_facets(
+            db,
+            user_id,
+            category=args.get("category") or None,
+            key=args.get("key") or None,
+            search=args.get("search") or None,
+        )
+        return {"operation": operation, "facets": facets}
+
+    if operation == "filter_documents":
+        raw = args.get("criteria") or []
+        criteria = [
+            {"key": c.get("key"), "value": c.get("value")}
+            for c in raw
+            if isinstance(c, dict) and c.get("key") and c.get("value")
+        ]
+        if not criteria:
+            return {
+                "error": (
+                    "filter_documents requires a non-empty 'criteria' list of "
+                    "{key, value} pairs. Use operation='list_facets' to discover "
+                    "filterable keys and values."
+                )
+            }
+        match = "any" if args.get("match") == "any" else "all"
+        docs = await md_queries.filter_documents(db, user_id, criteria, match=match)
+        # Alias the document id as `document_id` too, so the model can feed it
+        # straight into search_document / extract_data / etc.
+        for d in docs:
+            d["document_id"] = d.get("id")
+        return {
+            "operation": operation,
+            "match": match,
+            "criteria": criteria,
+            "count": len(docs),
+            "documents": docs,
+        }
+
+    if operation == "document_facets":
+        doc_id = (args.get("document_id") or "").strip()
+        if not doc_id:
+            return {"error": "document_facets requires a 'document_id'."}
+        facets = await md_queries.get_document_facets(db, doc_id, owner_id=user_id)
+        return {"operation": operation, "document_id": doc_id, "facets": facets}
+
+    return {
+        "error": (
+            f"Unknown operation '{operation}'. Valid operations: list_categories, "
+            "stats, list_facets, filter_documents, document_facets."
+        )
+    }
+
+
 async def _execute_use_skill(
     args: dict, llm: LLMClient, db: AsyncSession
 ) -> dict:
@@ -1476,6 +1629,7 @@ _EXECUTORS: dict[str, Any] = {
     "install_package": _execute_install_package,
     "browse_web": _execute_browse_web,
     "deep_research": _execute_deep_research,
+    "query_document_map": _execute_query_document_map,
     "use_skill": _execute_use_skill,
 }
 

@@ -1,1 +1,2 @@
 - [Smart Metadata facet filtering](smart-metadata-facets.md) — AND/OR filter uses one GROUP BY/HAVING count; correctness relies on the DocumentFacet unique constraint + pair de-dup.
+- [Agent owner-scoped tool injection](agent-user-context-injection.md) — new owner-scoped IDA tools must be added to `_USER_CONTEXT_TOOLS` or they silently fail with "User context not available".
