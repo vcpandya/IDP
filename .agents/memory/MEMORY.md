@@ -1,0 +1,1 @@
+- [Smart Metadata facet filtering](smart-metadata-facets.md) — AND/OR filter uses one GROUP BY/HAVING count; correctness relies on the DocumentFacet unique constraint + pair de-dup.

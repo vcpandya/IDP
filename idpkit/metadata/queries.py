@@ -6,12 +6,18 @@ users only ever see facets for their own documents.
 
 from __future__ import annotations
 
-from sqlalchemy import distinct, func, select
+from sqlalchemy import distinct, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.db.models import Document
-from idpkit.metadata.categories import field_label
+from idpkit.metadata.categories import field_label, normalize_value
 from idpkit.metadata.models import DocumentFacet
+
+# Bound payloads/memory so a tenant with very many documents can never load the
+# whole facet table into the worker or ship a multi-megabyte JSON response.
+MAX_FACET_ROWS = 2000
+MAX_FILTER_DOCS = 1000
+MAX_GRAPH_FACET_ROWS = 5000
 
 
 async def get_facets(
@@ -50,7 +56,14 @@ async def get_facets(
     if key:
         stmt = stmt.where(DocumentFacet.key == key)
     if search:
-        stmt = stmt.where(DocumentFacet.value_norm.like(f"%{search.lower().strip()}%"))
+        stmt = stmt.where(
+            DocumentFacet.value_norm.like(f"%{normalize_value(search)}%")
+        )
+    # Keep the most common facet values and cap the row set so the response
+    # stays bounded for large libraries.
+    stmt = stmt.order_by(func.count(distinct(DocumentFacet.document_id)).desc()).limit(
+        MAX_FACET_ROWS
+    )
 
     rows = (await db.execute(stmt)).all()
 
@@ -92,59 +105,62 @@ async def filter_documents(
     if not criteria:
         return []
 
-    per_criterion: list[set[str]] = []
+    # Normalise + de-duplicate (key, value_norm) pairs once.
+    pairs: list[tuple[str, str]] = []
     for crit in criteria:
         ckey = crit.get("key")
-        cval = (crit.get("value_norm") or crit.get("value") or "").lower().strip()
-        if not ckey or not cval:
-            continue
-        stmt = (
-            select(distinct(DocumentFacet.document_id))
-            .join(Document, Document.id == DocumentFacet.document_id)
-            .where(
-                Document.owner_id == owner_id,
-                DocumentFacet.key == ckey,
-                DocumentFacet.value_norm == cval,
-            )
-        )
-        ids = {row[0] for row in (await db.execute(stmt)).all()}
-        per_criterion.append(ids)
-
-    if not per_criterion:
+        cval = normalize_value(crit.get("value_norm") or crit.get("value") or "")
+        if ckey and cval:
+            pairs.append((ckey, cval))
+    pairs = list(dict.fromkeys(pairs))
+    if not pairs:
         return []
 
-    if match == "any":
-        doc_ids: set[str] = set().union(*per_criterion)
-    else:
-        doc_ids = set(per_criterion[0])
-        for s in per_criterion[1:]:
-            doc_ids &= s
+    pair_filter = tuple_(DocumentFacet.key, DocumentFacet.value_norm).in_(pairs)
 
+    # Single aggregation to find candidate documents. The unique
+    # (document_id, key, value_norm) constraint guarantees a document can match
+    # each pair at most once, so the matched-row count equals the number of
+    # distinct criteria satisfied: HAVING count == len(pairs) implements AND
+    # ("all"); for OR ("any") any matching row qualifies.
+    cand = (
+        select(DocumentFacet.document_id)
+        .join(Document, Document.id == DocumentFacet.document_id)
+        .where(Document.owner_id == owner_id, pair_filter)
+        .group_by(DocumentFacet.document_id)
+    )
+    if match != "any":
+        cand = cand.having(func.count() == len(pairs))
+    # Deterministic ordering so that, when the result set exceeds the cap, the
+    # truncated subset is stable across repeated calls (most-matching first).
+    cand = cand.order_by(
+        func.count().desc(), DocumentFacet.document_id
+    ).limit(MAX_FILTER_DOCS)
+    doc_ids = [row[0] for row in (await db.execute(cand)).all()]
     if not doc_ids:
         return []
 
-    docs = (
+    # One pass to fetch the documents and the facets that matched (for display),
+    # owner-scoped again as defense-in-depth.
+    rows = (
         await db.execute(
-            select(Document).where(Document.id.in_(doc_ids))
-        )
-    ).scalars().all()
-
-    # Fetch matched facets per doc for display.
-    crit_pairs = {
-        (c.get("key"), (c.get("value_norm") or c.get("value") or "").lower().strip())
-        for c in criteria
-    }
-    facet_rows = (
-        await db.execute(
-            select(DocumentFacet).where(DocumentFacet.document_id.in_(doc_ids))
-        )
-    ).scalars().all()
-    matched_by_doc: dict[str, list[dict]] = {}
-    for f in facet_rows:
-        if (f.key, f.value_norm) in crit_pairs:
-            matched_by_doc.setdefault(f.document_id, []).append(
-                {"key": f.key, "label": f.label, "value": f.value}
+            select(Document, DocumentFacet)
+            .join(DocumentFacet, DocumentFacet.document_id == Document.id)
+            .where(
+                Document.owner_id == owner_id,
+                Document.id.in_(doc_ids),
+                pair_filter,
             )
+        )
+    ).all()
+
+    docs_by_id: dict[str, Document] = {}
+    matched_by_doc: dict[str, list[dict]] = {}
+    for doc, facet in rows:
+        docs_by_id[doc.id] = doc
+        matched_by_doc.setdefault(doc.id, []).append(
+            {"key": facet.key, "label": facet.label, "value": facet.value}
+        )
 
     result = [
         {
@@ -155,7 +171,7 @@ async def filter_documents(
             "status": d.status,
             "matched": matched_by_doc.get(d.id, []),
         }
-        for d in docs
+        for d in docs_by_id.values()
     ]
     result.sort(key=lambda d: (-len(d["matched"]), d["filename"].lower()))
     return result
@@ -181,11 +197,16 @@ async def build_facet_graph(
     doc_ids = [d["id"] for d in docs]
     focus_keys = {c.get("key") for c in criteria if c.get("key")}
 
-    facet_rows = (
-        await db.execute(
-            select(DocumentFacet).where(DocumentFacet.document_id.in_(doc_ids))
-        )
-    ).scalars().all()
+    # Only load the facet rows we actually graph (restricted to the focus keys)
+    # and cap the row set so a broad selection cannot pull the whole table.
+    facet_stmt = select(DocumentFacet).where(DocumentFacet.document_id.in_(doc_ids))
+    if focus_keys:
+        facet_stmt = facet_stmt.where(DocumentFacet.key.in_(focus_keys))
+    # Deterministic order so a capped graph renders a stable subset.
+    facet_stmt = facet_stmt.order_by(
+        DocumentFacet.key, DocumentFacet.value_norm, DocumentFacet.document_id
+    ).limit(MAX_GRAPH_FACET_ROWS)
+    facet_rows = (await db.execute(facet_stmt)).scalars().all()
 
     nodes: dict[str, dict] = {}
     edges: list[dict] = []
@@ -200,8 +221,6 @@ async def build_facet_graph(
         }
 
     for f in facet_rows:
-        if focus_keys and f.key not in focus_keys:
-            continue
         hub_id = f"facet:{f.key}:{f.value_norm}"
         if hub_id not in nodes:
             nodes[hub_id] = {
@@ -220,15 +239,25 @@ async def build_facet_graph(
     return {"nodes": list(nodes.values()), "edges": edges}
 
 
-async def get_document_facets(db: AsyncSession, doc_id: str) -> list[dict]:
-    """Return all facets for a single document, ordered by field."""
-    rows = (
-        await db.execute(
-            select(DocumentFacet)
-            .where(DocumentFacet.document_id == doc_id)
-            .order_by(DocumentFacet.key, DocumentFacet.value)
+async def get_document_facets(
+    db: AsyncSession, doc_id: str, *, owner_id: str | None = None
+) -> list[dict]:
+    """Return all facets for a single document, ordered by field.
+
+    When *owner_id* is supplied the query is scoped via a join on the owning
+    document, so a facet can never be read for another tenant's document even if
+    the caller forgets an upstream ownership check (defense-in-depth).
+    """
+    stmt = (
+        select(DocumentFacet)
+        .where(DocumentFacet.document_id == doc_id)
+        .order_by(DocumentFacet.key, DocumentFacet.value)
+    )
+    if owner_id is not None:
+        stmt = stmt.join(Document, Document.id == DocumentFacet.document_id).where(
+            Document.owner_id == owner_id
         )
-    ).scalars().all()
+    rows = (await db.execute(stmt)).scalars().all()
     return [
         {"key": f.key, "label": f.label, "value": f.value, "confidence": f.confidence}
         for f in rows
