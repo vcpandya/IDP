@@ -48,6 +48,11 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
         - `bulk_runner.py`: Async runner for bulk-send batches (bounded concurrency, per-row isolation).
         - `recipient_parsers.py`: CSV / XLSX / pasted-table parsers for bulk recipient lists.
         - `merge.py`: `{{key}}` mail-merge substitution helpers.
+    - `/idpkit/metadata`: Category-aware smart-metadata layer (Document Map).
+        - `categories.py`: 8 category schemas (general/case_law/contract/act_legislation/financial_statement/invoice/research_paper/resume) with standard field specs.
+        - `extractor.py`: 2-pass LLM classify→extract→persist; non-fatal, idempotent (PG advisory lock + unique facet constraint).
+        - `queries.py`: facet aggregation, AND/OR document filtering, facet graph, per-doc facets, coverage stats.
+        - `models.py`: `DocumentFacet` table (one row per extracted value).
     - `/idpkit/verifier`: Document verification engine.
     - `/idpkit/web/templates`: Jinja2 frontend templates.
 - `idpkit/core/llm.py`: LLM API key resolution logic.
@@ -64,6 +69,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - **Robust E-Signature System**: Full envelope-based e-sign with parallel/sequential signing, bulk-apply fields, HMAC-signed audit certificates, per-token rate limiting (`ESIGN_TOKEN_RATE_*`), one-time public download tokens, geo TTL caching, payload size caps (`ESIGN_MAX_SIG_VALUE_CHARS` / `ESIGN_MAX_TEXT_VALUE_CHARS`), background expiry sweep with PG advisory lock (`ESIGN_EXPIRY_SWEEP_INTERVAL`), envelope delete/extend/reactivate flows, and DocuSign-style typed-signature font picker.
 - **E-Sign Templates + Bulk Send (Batch Signing)**: Reusable envelope templates snapshot a PDF + role-based signers + field placements, with declared merge fields (`{{key}}`). "Use template" creates a single envelope with role assignments + merge values; "Bulk Send" instantiates one envelope per row from CSV/XLSX upload or pasted table (5000 row cap, `ESIGN_BATCH_CONCURRENCY`-bounded async runner with per-row failure isolation).
 - **Leader-locked daily audit prune**: Ensures `connection_audit_log` pruning runs safely and efficiently across multiple Gunicorn workers using PostgreSQL advisory locks.
+- **Category-aware Smart Metadata + Document Map**: Each new document is classified into one of 8 categories and profiled into standard + contextual key-value facets via a 2-pass LLM (classify→extract), persisted as `DocumentFacet` rows plus `Document.doc_category`/`doc_category_confidence`/`smart_metadata`. Extraction is non-fatal (never blocks indexing) and idempotent under concurrency — the replace-facets write section is serialized with a per-document PG advisory lock, backed by a unique `(document_id, key, value_norm)` constraint. The Document Map UI offers faceted filtering (AND/OR), a D3 facet graph, list view, reprocess, and an "Ask IDA about these" handoff to chat.
 
 ## Product
 
@@ -75,6 +81,7 @@ gunicorn idpkit.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:80
 - **E-Signature**: DocuSign-like workflow with sender/signer UIs, field placement, secure signing, audit trails, and bulk-apply field propagation.
 - **Document Verifier**: Multimodal AI verification of documents against expected descriptions, supporting various file types and real-time streaming results.
 - **Per-User Model Preferences**: Users can set default LLM providers and models, with a clear override chain.
+- **Document Map (Smart Metadata)**: Pre-filter document sets by category-aware facets (e.g. "all case laws where this judge was present"). Browse aggregated facets, combine them as AND/OR criteria, view results as a graph or list, reprocess existing documents to (re)extract metadata, and hand a selection to IDA for analysis (`/api/metadata/*`, `/document-map`).
 
 ## User preferences
 

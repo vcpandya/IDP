@@ -431,6 +431,7 @@ def create_app() -> FastAPI:
         verifier_router,
         esign_router,
         connectors_router,
+        metadata_router,
     )
     from idpkit.api.routes.esign_templates import router as esign_templates_router
     from idpkit.api.routes.esign_batches import router as esign_batches_router
@@ -457,6 +458,7 @@ def create_app() -> FastAPI:
     app.include_router(esign_templates_router)
     app.include_router(esign_batches_router)
     app.include_router(connectors_router)
+    app.include_router(metadata_router)
 
     # Register web UI routes
     from idpkit.web.routes import router as web_router
