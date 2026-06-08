@@ -227,3 +227,14 @@ def field_label(category_key: str | None, field_key: str) -> str:
         if field["key"] == field_key:
             return field["label"]
     return field_key.replace("_", " ").title()
+
+
+def normalize_value(value: str) -> str:
+    """Canonical normalisation for facet values / match keys.
+
+    Lowercases, trims, and collapses internal whitespace so that the value
+    stored at extraction time and the value supplied at query/filter time
+    always compare identically (e.g. "High  Court " -> "high court").
+    Used by both the extractor and the query layer — keep them in lockstep.
+    """
+    return " ".join(value.lower().strip().split())
