@@ -144,6 +144,21 @@ async def init_db():
                 if "requirements" not in cols:
                     sync_conn.execute(text("ALTER TABLE skills ADD COLUMN requirements JSON"))
 
+        def _migrate_documents(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "documents" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("documents")}
+                if "doc_category" not in cols:
+                    sync_conn.execute(text("ALTER TABLE documents ADD COLUMN doc_category VARCHAR(100)"))
+                    sync_conn.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_documents_doc_category "
+                        "ON documents (doc_category)"
+                    ))
+                if "doc_category_confidence" not in cols:
+                    sync_conn.execute(text("ALTER TABLE documents ADD COLUMN doc_category_confidence INTEGER"))
+                if "smart_metadata" not in cols:
+                    sync_conn.execute(text("ALTER TABLE documents ADD COLUMN smart_metadata JSON"))
+
         def _migrate_connections(sync_conn):
             insp = sa_inspect(sync_conn)
             if "connections" in insp.get_table_names():
@@ -173,9 +188,11 @@ async def init_db():
         await conn.run_sync(_migrate_esign)
         await conn.run_sync(_migrate_skills)
         await conn.run_sync(_migrate_connections)
+        await conn.run_sync(_migrate_documents)
         # Ensure new e-sign template + batch model classes are registered with Base.metadata
         # before create_all runs (importing the module registers the classes).
         from idpkit.esign import models as _esign_models  # noqa: F401
+        from idpkit.metadata import models as _metadata_models  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_indexes)
 
@@ -202,6 +219,11 @@ def _migrate_indexes(sync_conn):
         "ON batch_items (batch_job_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_conn_audit_conn_created "
         "ON connection_audit_log (connection_id, created_at)",
+        # Enforces facet idempotency for deployments whose document_facets table
+        # predates the uq_facet_doc_key_value constraint (create_all won't add it
+        # to an existing table).
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_facet_doc_key_value "
+        "ON document_facets (document_id, key, value_norm)",
     ]
     import logging as _logging
     _log = _logging.getLogger(__name__)
