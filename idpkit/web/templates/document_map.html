@@ -354,13 +354,13 @@ function documentMap() {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
                 });
                 this.results = r.ok ? await r.json() : [];
-                if (this.view === 'graph') {
-                    const g = await fetch('/api/metadata/graph', {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-                    });
-                    this._graphData = g.ok ? await g.json() : { nodes: [], edges: [] };
-                    this.$nextTick(() => this.renderGraph());
-                }
+                // Always refresh graph data so switching List -> Graph is instant
+                // (otherwise the graph is empty until the next criteria change).
+                const g = await fetch('/api/metadata/graph', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+                });
+                this._graphData = g.ok ? await g.json() : { nodes: [], edges: [] };
+                if (this.view === 'graph') this.$nextTick(() => this.renderGraph());
             } finally {
                 this.loadingResults = false;
             }

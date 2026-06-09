@@ -1069,15 +1069,15 @@ function knowledgeBase() {
                     return;
                 }
                 const data = await res.json();
+                if (!data.job_id || (data.total || 0) === 0) {
+                    alert('Nothing to process for this selection — these documents already have smart metadata.');
+                    return;
+                }
                 this.mdJobLink = link;
                 this.mdJob = {
                     id: data.job_id, status: data.status || 'pending', total: data.total || 0,
                     processed: 0, failed: 0, skipped: 0, current: '', label: data.label || label
                 };
-                if (!data.job_id || (data.total || 0) === 0) {
-                    this.mdJob.status = 'completed';
-                    return;
-                }
                 this.pollMdJob();
             } catch (e) {
                 alert('Could not start: ' + e.message);
