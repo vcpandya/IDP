@@ -72,6 +72,9 @@ class MetadataJob(Base):
     skipped = Column(Integer, default=0)
     current = Column(String(300), nullable=True)  # filename currently being processed
     error = Column(Text, nullable=True)
+    # JSON array of {filename, error} for per-document failures (capped), so the
+    # UI can explain *why* specific files failed rather than only a count.
+    failures = Column(Text, nullable=True)
     created_at = Column(TZDateTime, default=utcnow, index=True)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
 

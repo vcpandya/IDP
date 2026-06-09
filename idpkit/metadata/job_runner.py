@@ -9,6 +9,7 @@ poll request.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from sqlalchemy import select, update
@@ -20,6 +21,10 @@ from idpkit.metadata.extractor import profile_document
 from idpkit.metadata.models import MetadataJob
 
 logger = logging.getLogger(__name__)
+
+# Bound how many per-document failures we persist so the JSON column can never
+# grow unbounded for a large, mostly-failing batch.
+MAX_RECORDED_FAILURES = 50
 
 
 async def run_extraction_job(job_id: str, owner_id: str, doc_ids: list[str]) -> None:
@@ -61,6 +66,7 @@ async def run_extraction_job(job_id: str, owner_id: str, doc_ids: list[str]) -> 
             await db.commit()
 
             processed = failed = skipped = 0
+            failures: list[dict] = []
             for doc_id, filename, has_content in work:
                 await db.execute(
                     update(MetadataJob)
@@ -82,6 +88,11 @@ async def run_extraction_job(job_id: str, owner_id: str, doc_ids: list[str]) -> 
                     except Exception as exc:  # noqa: BLE001 - per-doc isolation
                         await db.rollback()
                         failed += 1
+                        if len(failures) < MAX_RECORDED_FAILURES:
+                            failures.append({
+                                "filename": filename or doc_id,
+                                "error": str(exc)[:300],
+                            })
                         logger.warning(
                             "Metadata job %s: failed on doc %s: %s",
                             job_id, doc_id, exc,
@@ -90,7 +101,12 @@ async def run_extraction_job(job_id: str, owner_id: str, doc_ids: list[str]) -> 
                 await db.execute(
                     update(MetadataJob)
                     .where(MetadataJob.id == job_id)
-                    .values(processed=processed, failed=failed, skipped=skipped)
+                    .values(
+                        processed=processed,
+                        failed=failed,
+                        skipped=skipped,
+                        failures=json.dumps(failures) if failures else None,
+                    )
                 )
                 await db.commit()
 

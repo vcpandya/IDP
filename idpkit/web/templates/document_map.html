@@ -102,10 +102,27 @@
     </div>
     <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
         <div style="height:100%;background:#7c3aed;transition:width 0.3s"
-             :style="'width:' + jobPct() + '%'"></div>
+             :style="{ width: jobPct() + '%' }"></div>
     </div>
     <div x-show="job && job.current && job.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
         <i class="fas fa-file-alt"></i> <span x-text="job ? job.current : ''"></span>
+    </div>
+    <div x-show="job && job.failures && job.failures.length" x-data="{ openFail: false }" style="margin-top:8px">
+        <button class="btn-ghost" style="padding:2px 8px;font-size:0.74rem;color:#b91c1c;border:1px solid #fecaca;background:#fef2f2;border-radius:6px"
+                @click="openFail = !openFail">
+            <i class="fas" :class="openFail ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.68rem"></i>
+            <span x-text="(job.failed) + ' file' + (job.failed === 1 ? '' : 's') + ' failed — see why'"></span>
+        </button>
+        <div x-show="openFail" style="margin-top:6px;max-height:170px;overflow:auto;border:1px solid var(--border,#e5e7eb);border-radius:8px;background:#fff">
+            <template x-for="(f, i) in job.failures" :key="i">
+                <div style="padding:5px 8px;border-bottom:1px solid var(--border,#f1f1f1);font-size:0.74rem">
+                    <strong x-text="f.filename"></strong>
+                    <span style="color:var(--text-muted,#6b7280)" x-text="': ' + f.error"></span>
+                </div>
+            </template>
+            <div x-show="job.failed > job.failures.length" style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted,#6b7280)"
+                 x-text="'+ ' + (job.failed - job.failures.length) + ' more not shown'"></div>
+        </div>
     </div>
 </div>
 
@@ -158,7 +175,7 @@
                 <span class="spinner-sm" style="border-top-color:#7c3aed;border-color:rgba(124,58,237,0.3)"></span> Loading facets…
             </div>
             <div x-show="!loadingFacets && facetGroups.length === 0" style="color:var(--text-muted,#6b7280);font-size:0.85rem;padding:8px 0">
-                No metadata yet. Process some documents to populate facets.
+                No shared facets to group by yet. Facets appear once a value is found in 2+ documents — try a search above, or reprocess documents to (re)extract metadata.
             </div>
             <template x-for="grp in facetGroups" :key="grp.key">
                 <div class="facet-group">

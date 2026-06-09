@@ -31,10 +31,27 @@
                 </div>
             </div>
             <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
-                <div style="height:100%;background:#7c3aed;transition:width 0.3s" :style="'width:' + mdJobPct() + '%'"></div>
+                <div style="height:100%;background:#7c3aed;transition:width 0.3s" :style="{ width: mdJobPct() + '%' }"></div>
             </div>
             <div x-show="mdJob && mdJob.current && mdJob.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
                 <i class="fas fa-file-alt"></i> <span x-text="mdJob ? mdJob.current : ''"></span>
+            </div>
+            <div x-show="mdJob && mdJob.failures && mdJob.failures.length" x-data="{ openFail: false }" style="margin-top:8px">
+                <button class="btn btn-sm" style="padding:2px 8px;font-size:0.74rem;color:#b91c1c;border:1px solid #fecaca;background:#fef2f2"
+                        @click="openFail = !openFail">
+                    <i class="fas" :class="openFail ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.68rem"></i>
+                    <span x-text="(mdJob.failed) + ' file' + (mdJob.failed === 1 ? '' : 's') + ' failed — see why'"></span>
+                </button>
+                <div x-show="openFail" style="margin-top:6px;max-height:170px;overflow:auto;border:1px solid var(--border,#e5e7eb);border-radius:8px;background:#fff">
+                    <template x-for="(f, i) in mdJob.failures" :key="i">
+                        <div style="padding:5px 8px;border-bottom:1px solid var(--border,#f1f1f1);font-size:0.74rem">
+                            <strong x-text="f.filename"></strong>
+                            <span style="color:var(--text-muted,#6b7280)" x-text="': ' + f.error"></span>
+                        </div>
+                    </template>
+                    <div x-show="mdJob.failed > mdJob.failures.length" style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted,#6b7280)"
+                         x-text="'+ ' + (mdJob.failed - mdJob.failures.length) + ' more not shown'"></div>
+                </div>
             </div>
         </div>
 
@@ -92,7 +109,7 @@
                     <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
                         <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
                             <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
-                                 :style="'width:' + (uf.progress || 0) + '%'"></div>
+                                 :style="{ width: (uf.progress || 0) + '%' }"></div>
                         </div>
                         <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
                     </div>
@@ -110,7 +127,26 @@
                     <div class="tag-color-bar" :style="'background:' + tag.color"></div>
                     <h4 x-text="tag.name"></h4>
                     <p class="text-muted" x-text="tag.description || 'No description'" style="font-size:0.8rem;margin:4px 0 8px"></p>
-                    <span class="badge"><span x-text="tag.document_count || 0"></span> docs</span>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                        <span class="badge"><span x-text="tag.document_count || 0"></span> docs</span>
+                        <div class="kb-tag-actions" style="display:flex;align-items:center;gap:4px">
+                            <label class="kb-tag-act" title="Change color" @click.stop
+                                   style="position:relative;width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted,#6b7280)">
+                                <i class="fas fa-palette" style="font-size:0.74rem"></i>
+                                <input type="color" :value="tag.color || '#4f46e5'" @click.stop
+                                       @change="recolorTag(tag, $event.target.value)"
+                                       style="position:absolute;inset:0;opacity:0;cursor:pointer">
+                            </label>
+                            <button class="kb-tag-act" title="Rename" @click.stop="renameTagPrompt(tag)"
+                                    style="width:24px;height:24px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--text-muted,#6b7280)">
+                                <i class="fas fa-pen" style="font-size:0.72rem"></i>
+                            </button>
+                            <button class="kb-tag-act" title="Delete" @click.stop="deleteTagById(tag)"
+                                    style="width:24px;height:24px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:#b91c1c">
+                                <i class="fas fa-trash" style="font-size:0.72rem"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </template>
             <div x-show="tags.length === 0" class="empty-state" style="grid-column:1/-1;padding:40px">
@@ -296,7 +332,7 @@
                     <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
                         <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
                             <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
-                                 :style="'width:' + (uf.progress || 0) + '%'"></div>
+                                 :style="{ width: (uf.progress || 0) + '%' }"></div>
                         </div>
                         <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
                     </div>
@@ -971,6 +1007,11 @@ function knowledgeBase() {
             return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         },
 
+        renameTagPrompt(tag) {
+            const name = prompt('Rename tag', tag.name);
+            if (name !== null) this.renameTag(tag, name);
+        },
+
         async renameTag(tag, name) {
             name = (name || '').trim();
             if (!name || name === tag.name) return;
@@ -1076,7 +1117,8 @@ function knowledgeBase() {
                 this.mdJobLink = link;
                 this.mdJob = {
                     id: data.job_id, status: data.status || 'pending', total: data.total || 0,
-                    processed: 0, failed: 0, skipped: 0, current: '', label: data.label || label
+                    processed: 0, failed: 0, skipped: 0, current: '', failures: [],
+                    label: data.label || label
                 };
                 this.pollMdJob();
             } catch (e) {
@@ -1095,7 +1137,8 @@ function knowledgeBase() {
                     this.mdJob = {
                         id: j.job_id || this.mdJob.id, status: j.status, total: j.total || 0,
                         processed: j.processed || 0, failed: j.failed || 0, skipped: j.skipped || 0,
-                        current: j.current || '', label: j.label || this.mdJob.label
+                        current: j.current || '', failures: Array.isArray(j.failures) ? j.failures : [],
+                        label: j.label || this.mdJob.label
                     };
                     if (j.status === 'completed' || j.status === 'failed') {
                         clearInterval(this.mdJobTimer);

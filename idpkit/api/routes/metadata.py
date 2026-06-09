@@ -6,6 +6,7 @@ existing documents to (re)extract their metadata.
 """
 
 import asyncio
+import json
 import logging
 from typing import Literal
 
@@ -148,8 +149,16 @@ async def get_facets(
     db: AsyncSession = Depends(get_db),
 ):
     doc_ids = await _resolve_scope_doc_ids(db, user.id, tag_id=tag_id)
+    search = search.strip() if search else None
+    # When browsing (no search / no single-key drill-in) hide singleton values:
+    # a facet value carried by only one document can't group a set, and these
+    # one-offs (hyper-specific topics, unique-per-doc titles) are pure noise in
+    # the map. Searching or drilling into a key keeps min_count=1 so a specific
+    # entity (a particular judge / party) stays findable.
+    min_count = 1 if (search or key) else 2
     return await md_queries.get_facets(
-        db, user.id, category=category, key=key, search=search, doc_ids=doc_ids
+        db, user.id, category=category, key=key, search=search,
+        min_count=min_count, doc_ids=doc_ids,
     )
 
 
@@ -219,6 +228,14 @@ async def extract_document(
 
 
 def _job_payload(job: MetadataJob) -> dict:
+    failures: list = []
+    if job.failures:
+        try:
+            parsed = json.loads(job.failures)
+            if isinstance(parsed, list):
+                failures = parsed
+        except (ValueError, TypeError):
+            failures = []
     return {
         "job_id": job.id,
         "status": job.status,
@@ -230,6 +247,7 @@ def _job_payload(job: MetadataJob) -> dict:
         "skipped": job.skipped or 0,
         "current": job.current,
         "error": job.error,
+        "failures": failures,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
