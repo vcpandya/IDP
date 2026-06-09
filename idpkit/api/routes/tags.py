@@ -7,11 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from idpkit.db.session import get_db
+from idpkit.db.session import get_db, lock_tag_name
 from idpkit.db.models import (
     Document,
     Tag,
@@ -96,6 +95,7 @@ async def create_tag(
     of creating a second one (idempotent create).
     """
     name = body.name.strip()
+    await lock_tag_name(db, user.id, name)
     existing = (
         await db.execute(
             select(Tag).where(
@@ -130,39 +130,10 @@ async def create_tag(
         owner_id=user.id,
     )
     db.add(tag)
-    try:
-        # Savepoint so a concurrent same-name insert (caught by the
-        # uq_tags_owner_lower_name unique index) doesn't poison the session.
-        async with db.begin_nested():
-            await db.flush()
-    except IntegrityError:
-        db.expunge(tag)
-        tag = (
-            await db.execute(
-                select(Tag).where(
-                    Tag.owner_id == user.id,
-                    func.lower(Tag.name) == name.lower(),
-                )
-            )
-        ).scalars().first()
-        if tag is None:
-            raise HTTPException(status_code=409, detail="Could not create tag")
-        count = (
-            await db.execute(
-                select(func.count())
-                .select_from(document_tags)
-                .where(document_tags.c.tag_id == tag.id)
-            )
-        ).scalar() or 0
-        return TagResponse(
-            id=tag.id,
-            name=tag.name,
-            color=tag.color,
-            description=tag.description,
-            document_count=count,
-            created_at=tag.created_at.isoformat() if tag.created_at else None,
-            updated_at=tag.updated_at.isoformat() if tag.updated_at else None,
-        )
+    # The advisory lock above serialized the existence check + insert per
+    # (owner, lower(name)), so a concurrent same-name create cannot have slipped
+    # in between — a plain flush is safe here.
+    await db.flush()
     await db.refresh(tag)
     return TagResponse(
         id=tag.id,
@@ -253,6 +224,9 @@ async def update_tag(
     if body.name is not None:
         new_name = body.name.strip()
         if new_name and new_name.lower() != tag.name.lower():
+            # Serialize against concurrent create/rename to the same name so the
+            # clash check + rename can't race another writer into a duplicate.
+            await lock_tag_name(db, user.id, new_name)
             clash = (
                 await db.execute(
                     select(Tag).where(

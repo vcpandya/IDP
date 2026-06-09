@@ -5,11 +5,11 @@ import logging
 from typing import Optional
 
 from sqlalchemy import select, insert, exists, func
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.core.llm import LLMClient
 from idpkit.db.models import Document, Tag, document_tags
+from idpkit.db.session import lock_tag_name
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +192,18 @@ async def apply_tags(
         raise ValueError(f"Document {doc_id} not found")
 
     applied = []
+    # Acquire the per-name advisory locks up front in a deterministic (sorted)
+    # order. Two concurrent auto-tag passes that touch overlapping name sets
+    # would otherwise be able to grab the same locks in opposite order and
+    # deadlock; sorting guarantees a consistent global acquisition order.
+    lock_names = sorted({
+        str(s["name"]).strip().lower()
+        for s in suggestions
+        if not s.get("existing_id") and str(s.get("name", "")).strip()
+    })
+    for _name in lock_names:
+        await lock_tag_name(db, user_id, _name)
+
     for s in suggestions:
         if s.get("existing_id"):
             tag_result = await db.execute(
@@ -220,6 +232,9 @@ async def apply_tags(
             name = str(s["name"]).strip()
             if not name:
                 continue
+            # The (owner, lower(name)) advisory lock was already acquired up
+            # front, so this existence check + insert is serialized against
+            # concurrent creates without risking a lock-ordering deadlock.
             existing = (
                 await db.execute(
                     select(Tag).where(
@@ -235,26 +250,8 @@ async def apply_tags(
             else:
                 tag = Tag(name=name, owner_id=user_id)
                 db.add(tag)
-                try:
-                    # Savepoint so a concurrent same-name insert (caught by the
-                    # uq_tags_owner_lower_name unique index) doesn't poison the
-                    # outer transaction — re-read and reuse instead.
-                    async with db.begin_nested():
-                        await db.flush()
-                    action = "created"
-                except IntegrityError:
-                    db.expunge(tag)
-                    tag = (
-                        await db.execute(
-                            select(Tag).where(
-                                Tag.owner_id == user_id,
-                                func.lower(Tag.name) == name.lower(),
-                            )
-                        )
-                    ).scalars().first()
-                    if tag is None:
-                        continue
-                    action = "assigned"
+                await db.flush()
+                action = "created"
 
             already_linked = await db.execute(
                 select(document_tags).where(
