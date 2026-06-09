@@ -168,7 +168,10 @@ def _extract_prompt(category_key: str, context: str) -> str:
         "- Only include fields you can determine from the context. Omit unknown fields entirely.\n"
         "- For 'list' type fields, return a JSON array of strings.\n"
         "- For all other types, return a single string.\n"
-        "- Keep values concise (names, dates, short phrases). Do not invent data.\n\n"
+        "- Keep values concise (names, dates, short phrases). Do not invent data.\n"
+        "- For broad subject lists (topics/subjects), return at most 5 GENERAL, "
+        "reusable themes shared across many documents — never hyper-specific "
+        "phrases or one-off named entities, so documents can be grouped together.\n\n"
         'Respond ONLY with a JSON object mapping field keys to values, e.g. '
         '{"judge": ["Justice A", "Justice B"], "court": "Supreme Court"}.'
     )

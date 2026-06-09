@@ -182,6 +182,15 @@ async def init_db():
                         "ALTER TABLE connections ADD COLUMN allowed_user_ids JSON"
                     ))
 
+        def _migrate_metadata_jobs(sync_conn):
+            insp = sa_inspect(sync_conn)
+            if "metadata_jobs" in insp.get_table_names():
+                cols = {c["name"] for c in insp.get_columns("metadata_jobs")}
+                if "failures" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE metadata_jobs ADD COLUMN failures TEXT"
+                    ))
+
         await conn.run_sync(_migrate_conversations)
         await conn.run_sync(_migrate_batch_jobs)
         await conn.run_sync(_migrate_users)
@@ -190,6 +199,7 @@ async def init_db():
         await conn.run_sync(_migrate_skills)
         await conn.run_sync(_migrate_connections)
         await conn.run_sync(_migrate_documents)
+        await conn.run_sync(_migrate_metadata_jobs)
         await conn.run_sync(_migrate_dedupe_tags)
         # Ensure new e-sign template + batch model classes are registered with Base.metadata
         # before create_all runs (importing the module registers the classes).
