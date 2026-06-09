@@ -203,11 +203,12 @@ def _migrate_dedupe_tags(sync_conn):
     """Consolidate duplicate per-owner tags, keeping the earliest of each name.
 
     Older deployments could create multiple tags with the same (case-insensitive)
-    name for one owner — chiefly from Auto-Tag racing the create path. Before the
-    unique index goes in (see :func:`_migrate_indexes`), merge each duplicate
-    group into its earliest member: repoint document/conversation links to the
-    keeper (avoiding duplicate links) then delete the losers. Idempotent — a
-    deployment with no duplicates is a no-op.
+    name for one owner — chiefly from Auto-Tag racing the create path. New
+    duplicates are now prevented at the application layer (see
+    :func:`lock_tag_name`); this migration cleans up any legacy duplicates on
+    startup by merging each duplicate group into its earliest member: repoint
+    document/conversation links to the keeper (avoiding duplicate links) then
+    delete the losers. Idempotent — a deployment with no duplicates is a no-op.
     """
     from sqlalchemy import inspect as sa_inspect, text
     import logging as _logging
@@ -300,10 +301,15 @@ def _migrate_indexes(sync_conn):
         # to an existing table).
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_facet_doc_key_value "
         "ON document_facets (document_id, key, value_norm)",
-        # One tag per (owner, case-insensitive name): blocks Auto-Tag and the
-        # create path from re-introducing duplicates after _migrate_dedupe_tags.
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_owner_lower_name "
-        "ON tags (owner_id, lower(name))",
+        # NOTE: we deliberately do NOT create a unique index on
+        # (owner_id, lower(name)) for tags. Replit's publish flow diffs the dev
+        # schema against production and replicates any such index *before the
+        # app boots* — so _migrate_dedupe_tags never gets to clean pre-existing
+        # production duplicates first, and the index creation aborts the
+        # publish. Tag uniqueness is instead enforced at the application layer
+        # via a transaction-scoped advisory lock around get-or-create (see
+        # tags.create_tag and auto_tagger.apply_tags), with _migrate_dedupe_tags
+        # merging any legacy duplicates on startup.
     ]
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -315,6 +321,31 @@ def _migrate_indexes(sync_conn):
             # shouldn't kill startup — log-and-continue is safer than failing,
             # but we log loudly so operators notice missing perf indexes.
             _log.warning("Index migration skipped (%s): %s", stmt, exc)
+
+
+async def lock_tag_name(db: AsyncSession, owner_id: str, name: str) -> None:
+    """Serialize tag get-or-create per (owner, case-insensitive name).
+
+    Without this, two concurrent paths (e.g. Auto-Tag racing a manual create)
+    could both pass the case-insensitive existence check and then each insert a
+    same-name tag, forking a "folder". A transaction-scoped PostgreSQL advisory
+    lock makes the second writer wait for the first to commit, so the
+    check-then-insert is effectively atomic. Released automatically at
+    commit/rollback. No-op on non-PostgreSQL engines (it is an advisory lock,
+    not a constraint) — dev and prod both run PostgreSQL.
+
+    This replaces a DB-level unique index on (owner_id, lower(name)): such an
+    index gets replicated to production by Replit's publish-time schema diff
+    *before the app boots*, so _migrate_dedupe_tags can't clean pre-existing
+    duplicate rows first and the index creation aborts the publish.
+    """
+    bind = db.bind
+    if bind is not None and getattr(bind, "dialect", None) is not None \
+            and bind.dialect.name == "postgresql":
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+            {"k": f"idpkit_tag:{owner_id}:{name.strip().lower()}"},
+        )
 
 
 async def get_db():
