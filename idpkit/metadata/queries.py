@@ -28,12 +28,19 @@ async def get_facets(
     key: str | None = None,
     search: str | None = None,
     min_count: int = 1,
+    doc_ids: list[str] | None = None,
 ) -> list[dict]:
     """Aggregate facets into groups keyed by field.
 
     Returns a list of ``{key, label, values: [{value, value_norm, document_count}]}``
     sorted by total document count desc.
+
+    When *doc_ids* is provided the aggregation is restricted to that set
+    (a knowledge base or an explicit selection). ``None`` means all of the
+    owner's documents; an empty list means "no documents" (empty result).
     """
+    if doc_ids is not None and not doc_ids:
+        return []
     stmt = (
         select(
             DocumentFacet.key,
@@ -51,6 +58,8 @@ async def get_facets(
             DocumentFacet.value_norm,
         )
     )
+    if doc_ids is not None:
+        stmt = stmt.where(DocumentFacet.document_id.in_(doc_ids))
     if category:
         stmt = stmt.where(DocumentFacet.category == category)
     if key:
@@ -95,13 +104,18 @@ async def filter_documents(
     criteria: list[dict],
     *,
     match: str = "all",
+    doc_ids: list[str] | None = None,
 ) -> list[dict]:
     """Return documents matching the facet *criteria*.
 
     Each criterion is ``{"key": str, "value_norm": str}``. With ``match="all"``
     a document must satisfy every criterion; with ``match="any"`` at least one.
     Returns ``{id, filename, format, category, matched: [{key, value}]}``.
+
+    *doc_ids* optionally restricts the search to a knowledge base / selection.
     """
+    if doc_ids is not None and not doc_ids:
+        return []
     if not criteria:
         return []
 
@@ -129,6 +143,8 @@ async def filter_documents(
         .where(Document.owner_id == owner_id, pair_filter)
         .group_by(DocumentFacet.document_id)
     )
+    if doc_ids is not None:
+        cand = cand.where(DocumentFacet.document_id.in_(doc_ids))
     if match != "any":
         cand = cand.having(func.count() == len(pairs))
     # Deterministic ordering so that, when the result set exceeds the cap, the
@@ -183,6 +199,7 @@ async def build_facet_graph(
     criteria: list[dict],
     *,
     match: str = "all",
+    doc_ids: list[str] | None = None,
 ) -> dict:
     """Build a document-centric graph for the documents matching *criteria*.
 
@@ -190,7 +207,7 @@ async def build_facet_graph(
     each facet value it carries (restricted to the criteria field keys so the
     graph stays focused on the dimensions the user is exploring).
     """
-    docs = await filter_documents(db, owner_id, criteria, match=match)
+    docs = await filter_documents(db, owner_id, criteria, match=match, doc_ids=doc_ids)
     if not docs:
         return {"nodes": [], "edges": []}
 
@@ -264,27 +281,35 @@ async def get_document_facets(
     ]
 
 
-async def get_stats(db: AsyncSession, owner_id: str) -> dict:
-    """Summary counts for the Document Map header / reprocess affordance."""
-    total = (
-        await db.execute(
-            select(func.count(Document.id)).where(Document.owner_id == owner_id)
-        )
-    ).scalar_one()
-    profiled = (
-        await db.execute(
-            select(func.count(distinct(DocumentFacet.document_id)))
-            .join(Document, Document.id == DocumentFacet.document_id)
-            .where(Document.owner_id == owner_id)
-        )
-    ).scalar_one()
-    by_cat_rows = (
-        await db.execute(
-            select(Document.doc_category, func.count(Document.id))
-            .where(Document.owner_id == owner_id, Document.doc_category.isnot(None))
-            .group_by(Document.doc_category)
-        )
-    ).all()
+async def get_stats(
+    db: AsyncSession, owner_id: str, *, doc_ids: list[str] | None = None
+) -> dict:
+    """Summary counts for the Document Map header / reprocess affordance.
+
+    *doc_ids* optionally scopes the counts to a knowledge base / selection.
+    """
+    if doc_ids is not None and not doc_ids:
+        return {"total_documents": 0, "profiled_documents": 0, "by_category": {}}
+
+    total_stmt = select(func.count(Document.id)).where(Document.owner_id == owner_id)
+    profiled_stmt = (
+        select(func.count(distinct(DocumentFacet.document_id)))
+        .join(Document, Document.id == DocumentFacet.document_id)
+        .where(Document.owner_id == owner_id)
+    )
+    by_cat_stmt = (
+        select(Document.doc_category, func.count(Document.id))
+        .where(Document.owner_id == owner_id, Document.doc_category.isnot(None))
+        .group_by(Document.doc_category)
+    )
+    if doc_ids is not None:
+        total_stmt = total_stmt.where(Document.id.in_(doc_ids))
+        profiled_stmt = profiled_stmt.where(DocumentFacet.document_id.in_(doc_ids))
+        by_cat_stmt = by_cat_stmt.where(Document.id.in_(doc_ids))
+
+    total = (await db.execute(total_stmt)).scalar_one()
+    profiled = (await db.execute(profiled_stmt)).scalar_one()
+    by_cat_rows = (await db.execute(by_cat_stmt)).all()
     return {
         "total_documents": int(total or 0),
         "profiled_documents": int(profiled or 0),

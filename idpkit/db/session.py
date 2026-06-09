@@ -1,6 +1,7 @@
 """IDP Kit database session management."""
 
 import os
+from sqlalchemy import inspect as sa_inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from .models import Base
 
@@ -189,12 +190,87 @@ async def init_db():
         await conn.run_sync(_migrate_skills)
         await conn.run_sync(_migrate_connections)
         await conn.run_sync(_migrate_documents)
+        await conn.run_sync(_migrate_dedupe_tags)
         # Ensure new e-sign template + batch model classes are registered with Base.metadata
         # before create_all runs (importing the module registers the classes).
         from idpkit.esign import models as _esign_models  # noqa: F401
         from idpkit.metadata import models as _metadata_models  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_indexes)
+
+
+def _migrate_dedupe_tags(sync_conn):
+    """Consolidate duplicate per-owner tags, keeping the earliest of each name.
+
+    Older deployments could create multiple tags with the same (case-insensitive)
+    name for one owner — chiefly from Auto-Tag racing the create path. Before the
+    unique index goes in (see :func:`_migrate_indexes`), merge each duplicate
+    group into its earliest member: repoint document/conversation links to the
+    keeper (avoiding duplicate links) then delete the losers. Idempotent — a
+    deployment with no duplicates is a no-op.
+    """
+    from sqlalchemy import inspect as sa_inspect, text
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+    insp = sa_inspect(sync_conn)
+    names = set(insp.get_table_names())
+    if "tags" not in names:
+        return
+    has_conv_tags = "conversation_tags" in names
+    has_doc_tags = "document_tags" in names
+
+    try:
+        groups = sync_conn.execute(
+            text(
+                "SELECT owner_id, lower(name) AS lname FROM tags "
+                "GROUP BY owner_id, lower(name) HAVING COUNT(*) > 1"
+            )
+        ).fetchall()
+        for owner_id, lname in groups:
+            members = sync_conn.execute(
+                text(
+                    "SELECT id FROM tags WHERE owner_id = :o AND lower(name) = :n "
+                    "ORDER BY created_at ASC, id ASC"
+                ),
+                {"o": owner_id, "n": lname},
+            ).fetchall()
+            ids = [m[0] for m in members]
+            if len(ids) < 2:
+                continue
+            keeper, losers = ids[0], ids[1:]
+            for loser in losers:
+                if has_doc_tags:
+                    sync_conn.execute(
+                        text(
+                            "UPDATE document_tags SET tag_id = :k WHERE tag_id = :l "
+                            "AND document_id NOT IN ("
+                            "SELECT document_id FROM document_tags WHERE tag_id = :k)"
+                        ),
+                        {"k": keeper, "l": loser},
+                    )
+                    sync_conn.execute(
+                        text("DELETE FROM document_tags WHERE tag_id = :l"),
+                        {"l": loser},
+                    )
+                if has_conv_tags:
+                    sync_conn.execute(
+                        text(
+                            "UPDATE conversation_tags SET tag_id = :k WHERE tag_id = :l "
+                            "AND conversation_id NOT IN ("
+                            "SELECT conversation_id FROM conversation_tags WHERE tag_id = :k)"
+                        ),
+                        {"k": keeper, "l": loser},
+                    )
+                    sync_conn.execute(
+                        text("DELETE FROM conversation_tags WHERE tag_id = :l"),
+                        {"l": loser},
+                    )
+                sync_conn.execute(
+                    text("DELETE FROM tags WHERE id = :l"), {"l": loser}
+                )
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        _log.warning("Tag dedupe migration skipped: %s", exc)
 
 
 def _migrate_indexes(sync_conn):
@@ -224,6 +300,10 @@ def _migrate_indexes(sync_conn):
         # to an existing table).
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_facet_doc_key_value "
         "ON document_facets (document_id, key, value_norm)",
+        # One tag per (owner, case-insensitive name): blocks Auto-Tag and the
+        # create path from re-introducing duplicates after _migrate_dedupe_tags.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_tags_owner_lower_name "
+        "ON tags (owner_id, lower(name))",
     ]
     import logging as _logging
     _log = _logging.getLogger(__name__)

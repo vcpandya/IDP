@@ -4,7 +4,8 @@ import json
 import logging
 from typing import Optional
 
-from sqlalchemy import select, insert, exists
+from sqlalchemy import select, insert, exists, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from idpkit.core.llm import LLMClient
@@ -212,15 +213,62 @@ async def apply_tags(
                     )
                     applied.append({"tag_id": tag.id, "name": tag.name, "action": "assigned"})
         else:
-            tag = Tag(name=s["name"], owner_id=user_id)
-            db.add(tag)
-            await db.flush()
-            await db.execute(
-                insert(document_tags).values(
-                    document_id=doc_id, tag_id=tag.id
+            # No existing_id from the LLM — but a same-name tag may still exist
+            # for this owner (the model can omit the id, or normalise casing
+            # differently). Reuse it case-insensitively instead of creating a
+            # duplicate "folder".
+            name = str(s["name"]).strip()
+            if not name:
+                continue
+            existing = (
+                await db.execute(
+                    select(Tag).where(
+                        Tag.owner_id == user_id,
+                        func.lower(Tag.name) == name.lower(),
+                    )
+                )
+            ).scalars().first()
+
+            if existing is not None:
+                tag = existing
+                action = "assigned"
+            else:
+                tag = Tag(name=name, owner_id=user_id)
+                db.add(tag)
+                try:
+                    # Savepoint so a concurrent same-name insert (caught by the
+                    # uq_tags_owner_lower_name unique index) doesn't poison the
+                    # outer transaction — re-read and reuse instead.
+                    async with db.begin_nested():
+                        await db.flush()
+                    action = "created"
+                except IntegrityError:
+                    db.expunge(tag)
+                    tag = (
+                        await db.execute(
+                            select(Tag).where(
+                                Tag.owner_id == user_id,
+                                func.lower(Tag.name) == name.lower(),
+                            )
+                        )
+                    ).scalars().first()
+                    if tag is None:
+                        continue
+                    action = "assigned"
+
+            already_linked = await db.execute(
+                select(document_tags).where(
+                    document_tags.c.document_id == doc_id,
+                    document_tags.c.tag_id == tag.id,
                 )
             )
-            applied.append({"tag_id": tag.id, "name": tag.name, "action": "created"})
+            if not already_linked.first():
+                await db.execute(
+                    insert(document_tags).values(
+                        document_id=doc_id, tag_id=tag.id
+                    )
+                )
+                applied.append({"tag_id": tag.id, "name": tag.name, "action": action})
 
     await db.commit()
     return applied
