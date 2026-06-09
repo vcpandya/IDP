@@ -12,6 +12,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 
@@ -46,4 +47,34 @@ class DocumentFacet(Base):
         UniqueConstraint(
             "document_id", "key", "value_norm", name="uq_facet_doc_key_value"
         ),
+    )
+
+
+class MetadataJob(Base):
+    """Tracks a background smart-metadata (re)extraction run for live progress.
+
+    A single row per "Reprocess" / "Add to Document Map" action. The runner
+    updates ``processed``/``failed``/``skipped``/``current`` as it works so any
+    Gunicorn worker can serve a poll request (progress lives in the DB, not in
+    a worker's memory).
+    """
+
+    __tablename__ = "metadata_jobs"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    status = Column(String(20), default="pending", index=True)  # pending|running|completed|failed
+    scope = Column(String(20), nullable=True)  # all|missing|selection|tag
+    label = Column(String(200), nullable=True)  # human label, e.g. a KB name
+    total = Column(Integer, default=0)
+    processed = Column(Integer, default=0)
+    failed = Column(Integer, default=0)
+    skipped = Column(Integer, default=0)
+    current = Column(String(300), nullable=True)  # filename currently being processed
+    error = Column(Text, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow, index=True)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("ix_metadata_jobs_owner_created", "owner_id", "created_at"),
     )
