@@ -39,7 +39,9 @@ CATEGORIES: dict[str, dict] = {
             {"key": "date", "label": "Date", "type": "date",
              "description": "Most relevant date (publication / creation)."},
             {"key": "topic", "label": "Topics", "type": "list",
-             "description": "Key topics or subjects covered."},
+             "description": "A few (at most 5) broad subject areas or themes, "
+                            "e.g. 'machine learning', 'finance'. Use reusable "
+                            "general themes, not specific phrases or named entities."},
             {"key": "language", "label": "Language", "type": "text",
              "description": "Primary language of the document."},
         ],
