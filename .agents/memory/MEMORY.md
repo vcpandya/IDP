@@ -1,1 +1,2 @@
 - [Alpine :style string overwrites static style](alpine-style-binding.md) — string `:style` wipes the static `style` attr; use object form `{prop: ...}` to merge.
+- [Document Map is IDA's cross-document file selector](document-map-agent-scoping.md) — quality lives in the agent tool path (scope to attachment + denoise), not the browse UI; reconcile prompt rules in both SYSTEM_PROMPT and _build_messages.

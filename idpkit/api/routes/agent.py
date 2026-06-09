@@ -732,6 +732,7 @@ async def agent_chat(
             db=db,
             conversation=memory,
             user_id=user.id,
+            has_attached_scope=bool(body.tag_ids or body.document_ids),
         )
     except Exception as exc:
         logger.error("Agent chat failed for user %s: %s", user.id, exc)
@@ -918,6 +919,7 @@ async def agent_chat_stream(
             db=db,
             conversation=memory,
             user_id=user.id,
+            has_attached_scope=bool(body.tag_ids or body.document_ids),
         )
         try:
             async for ev in agen:
