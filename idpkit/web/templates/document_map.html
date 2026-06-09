@@ -58,6 +58,7 @@
 </style>
 {% endblock %}
 {% block content %}
+<div x-data="documentMap()" x-init="init()" style="display:contents">
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
     <div>
         <h2 style="margin:0"><i class="fas fa-sitemap"></i> Document Map</h2>
@@ -66,23 +67,63 @@
         </p>
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span class="stat-pill" x-show="stats">
+        <span class="stat-pill" x-show="stats && !job">
             <i class="fas fa-database"></i>
             <span x-text="stats ? (stats.profiled_documents + ' of ' + stats.total_documents + ' documents profiled') : ''"></span>
         </span>
-        <button class="btn-ghost" @click="reprocess('missing')" :disabled="reprocessing">
-            <span x-show="!reprocessing"><i class="fas fa-magic"></i> Process unprocessed</span>
-            <span x-show="reprocessing"><span class="spinner-sm" style="border-top-color:#7c3aed;border-color:rgba(124,58,237,0.3)"></span> Processing…</span>
+        <button class="btn-ghost" @click="reprocess('missing')" :disabled="reprocessing" x-show="!job">
+            <i class="fas fa-magic"></i> <span x-text="tagId ? 'Process this KB (unprocessed)' : 'Process unprocessed'"></span>
         </button>
-        <button class="btn-ghost" @click="reprocess('all')" :disabled="reprocessing" title="Re-extract metadata for all documents">
-            <i class="fas fa-sync"></i> Reprocess all
+        <button class="btn-ghost" @click="reprocess(tagId ? 'tag' : 'all')" :disabled="reprocessing" x-show="!job"
+                :title="tagId ? 'Re-extract metadata for this knowledge base' : 'Re-extract metadata for all documents'">
+            <i class="fas fa-sync"></i> <span x-text="tagId ? 'Reprocess this KB' : 'Reprocess all'"></span>
         </button>
     </div>
 </div>
 
-<div class="dm-layout" x-data="documentMap()" x-init="init()">
+<!-- ===== Background job progress ===== -->
+<div x-show="job" x-cloak class="dm-job"
+     style="margin:10px 0 4px;padding:12px 16px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem">
+            <span class="spinner-sm" x-show="job && (job.status==='running' || job.status==='pending')"
+                  style="border-top-color:#7c3aed;border-color:rgba(124,58,237,0.3)"></span>
+            <i class="fas fa-check-circle" x-show="job && job.status==='completed'" style="color:#16a34a"></i>
+            <i class="fas fa-exclamation-circle" x-show="job && job.status==='failed'" style="color:#dc2626"></i>
+            <strong x-text="job ? job.label : ''"></strong>
+            <span style="color:var(--text-muted,#6b7280)"
+                  x-text="job ? ('· ' + (job.processed + job.failed + job.skipped) + ' of ' + job.total) : ''"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+            <span class="stat-pill" x-text="job ? ('✓ ' + job.processed + '  ⚠ ' + job.failed + '  ⤼ ' + job.skipped) : ''"></span>
+            <button class="btn-ghost" style="padding:3px 10px;font-size:0.76rem"
+                    x-show="job && (job.status==='completed' || job.status==='failed')" @click="dismissJob()">Dismiss</button>
+        </div>
+    </div>
+    <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
+        <div style="height:100%;background:#7c3aed;transition:width 0.3s"
+             :style="'width:' + jobPct() + '%'"></div>
+    </div>
+    <div x-show="job && job.current && job.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
+        <i class="fas fa-file-alt"></i> <span x-text="job ? job.current : ''"></span>
+    </div>
+</div>
+
+<div class="dm-layout">
     <!-- ===== Facet sidebar ===== -->
     <aside class="dm-sidebar">
+        <div class="dm-section">
+            <h4>Knowledge base</h4>
+            <select class="dm-select" x-model="tagId" @change="onScopeChange()">
+                <option value="">All documents</option>
+                <template x-for="t in tags" :key="t.id">
+                    <option :value="t.id" x-text="t.name + ' (' + (t.document_count ?? 0) + ')'"></option>
+                </template>
+            </select>
+            <p style="margin:0;font-size:0.72rem;color:var(--text-muted,#6b7280)"
+               x-show="tagId">Scoped to a single knowledge base. Facets, results and reprocessing apply only to it.</p>
+        </div>
+
         <div class="dm-section">
             <h4>Category</h4>
             <select class="dm-select" x-model="category" @change="loadFacets()">
@@ -204,6 +245,7 @@
         </div>
     </section>
 </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -222,17 +264,43 @@ function documentMap() {
         loadingFacets: false,
         loadingResults: false,
         reprocessing: false,
+        tags: [],
+        tagId: '',
+        job: null,
+        _poll: null,
         _sim: null,
 
         async init() {
-            await Promise.all([this.loadCategories(), this.loadStats(), this.loadFacets()]);
+            // Honor ?tag_id= so the "Add to Document Map" handoff lands scoped.
+            const qp = new URLSearchParams(window.location.search);
+            if (qp.get('tag_id')) this.tagId = qp.get('tag_id');
+            await Promise.all([this.loadCategories(), this.loadTags(), this.loadStats(), this.loadFacets()]);
         },
         async loadCategories() {
             const r = await fetch('/api/metadata/categories');
             if (r.ok) this.categories = await r.json();
         },
+        async loadTags() {
+            const r = await fetch('/api/tags/');
+            if (r.ok) {
+                const data = await r.json();
+                this.tags = Array.isArray(data) ? data : (data.tags || data.items || []);
+            }
+        },
+        scopeParam(params) {
+            if (this.tagId) params.set('tag_id', this.tagId);
+            return params;
+        },
+        onScopeChange() {
+            // Reset the working selection — facet value_norms differ per scope.
+            this.criteria = [];
+            this.results = [];
+            this.openGroups = {};
+            this.renderGraph();
+            return Promise.all([this.loadStats(), this.loadFacets()]);
+        },
         async loadStats() {
-            const r = await fetch('/api/metadata/stats');
+            const r = await fetch('/api/metadata/stats?' + this.scopeParam(new URLSearchParams()).toString());
             if (r.ok) this.stats = await r.json();
         },
         async loadFacets() {
@@ -241,6 +309,7 @@ function documentMap() {
                 const params = new URLSearchParams();
                 if (this.category) params.set('category', this.category);
                 if (this.search.trim()) params.set('search', this.search.trim());
+                this.scopeParam(params);
                 const r = await fetch('/api/metadata/facets?' + params.toString());
                 this.facetGroups = r.ok ? await r.json() : [];
                 // Auto-open the first couple of groups for discoverability.
@@ -279,6 +348,7 @@ function documentMap() {
                 const body = JSON.stringify({
                     criteria: this.criteria.map(c => ({ key: c.key, value_norm: c.value_norm })),
                     match: this.match,
+                    tag_id: this.tagId || null,
                 });
                 const r = await fetch('/api/metadata/filter', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
@@ -302,26 +372,65 @@ function documentMap() {
             const prompt = 'I have pre-selected ' + this.results.length + ' document(s) filtered by ' + desc + '. ';
             window.location.href = '/chat?doc_ids=' + encodeURIComponent(ids) + '&prompt=' + encodeURIComponent(prompt);
         },
+        jobPct() {
+            if (!this.job || !this.job.total) return this.job && this.job.status === 'completed' ? 100 : 0;
+            const done = (this.job.processed || 0) + (this.job.failed || 0) + (this.job.skipped || 0);
+            return Math.min(100, Math.round((done / this.job.total) * 100));
+        },
         async reprocess(scope) {
-            const label = scope === 'all' ? 'ALL documents' : 'unprocessed documents';
-            if (!confirm('Re-extract smart metadata for ' + label + '? This runs the AI extractor and may take a while.')) return;
+            // scope: 'all' | 'missing' | 'tag' (tag uses the selected KB)
+            let body, label;
+            if (scope === 'tag') {
+                if (!this.tagId) return;
+                body = { tag_ids: [this.tagId], scope: 'all' };
+                label = 'this knowledge base';
+            } else {
+                body = { scope };
+                label = scope === 'all'
+                    ? (this.tagId ? 'this knowledge base' : 'ALL documents')
+                    : (this.tagId ? 'unprocessed documents in this KB' : 'unprocessed documents');
+                // When a KB is selected, "missing"/"all" should still scope to it
+                // — keep the scope so the backend filters unprocessed docs within the KB.
+                if (this.tagId) { body = { tag_ids: [this.tagId], scope }; }
+            }
+            if (!confirm('Re-extract smart metadata for ' + label + '? This runs in the background — you can keep working.')) return;
             this.reprocessing = true;
             try {
                 const r = await fetch('/api/metadata/extract-bulk', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ scope }),
+                    body: JSON.stringify(body),
                 });
-                if (r.ok) {
-                    const res = await r.json();
-                    alert('Processed ' + res.processed + ' of ' + res.requested + ' (failed: ' + res.failed + ', skipped: ' + res.skipped + ').');
-                    await Promise.all([this.loadStats(), this.loadFacets()]);
-                    if (this.criteria.length) this.refreshResults();
-                } else {
-                    alert('Reprocessing failed.');
+                if (!r.ok) { alert('Could not start reprocessing.'); return; }
+                const res = await r.json();
+                if (!res.total) {
+                    alert('Nothing to process for this selection.');
+                    return;
                 }
+                this.job = { job_id: res.job_id, status: 'pending', label: res.label,
+                             total: res.total, processed: 0, failed: 0, skipped: 0, current: null };
+                this.pollJob(res.job_id);
             } finally {
                 this.reprocessing = false;
             }
+        },
+        pollJob(jobId) {
+            if (this._poll) clearInterval(this._poll);
+            this._poll = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/metadata/jobs/' + jobId);
+                    if (!r.ok) return;
+                    this.job = await r.json();
+                    if (this.job.status === 'completed' || this.job.status === 'failed') {
+                        clearInterval(this._poll); this._poll = null;
+                        await Promise.all([this.loadStats(), this.loadFacets()]);
+                        if (this.criteria.length) this.refreshResults();
+                    }
+                } catch (e) { /* transient — keep polling */ }
+            }, 1200);
+        },
+        dismissJob() {
+            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            this.job = null;
         },
         renderGraph() {
             const svgEl = this.$refs.svg;

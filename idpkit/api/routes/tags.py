@@ -6,11 +6,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from idpkit.db.session import get_db
-from idpkit.db.models import Document, Tag, User, document_tags, generate_uuid
+from idpkit.db.models import (
+    Document,
+    Tag,
+    User,
+    conversation_tags,
+    document_tags,
+    generate_uuid,
+)
 from idpkit.api.deps import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -36,6 +45,10 @@ class TagUpdate(BaseModel):
 
 class TagDocumentsAdd(BaseModel):
     document_ids: list[str]
+
+
+class TagMergeRequest(BaseModel):
+    source_tag_ids: list[str] = Field(..., min_length=1)
 
 
 class TagDocumentInfo(BaseModel):
@@ -76,16 +89,80 @@ async def create_tag(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new tag."""
+    """Create a new tag, reusing an existing same-name tag if one exists.
+
+    Tags act as folders, so a duplicate name would silently fork a "folder".
+    We look the name up case-insensitively and return the existing tag instead
+    of creating a second one (idempotent create).
+    """
+    name = body.name.strip()
+    existing = (
+        await db.execute(
+            select(Tag).where(
+                Tag.owner_id == user.id,
+                func.lower(Tag.name) == name.lower(),
+            )
+        )
+    ).scalars().first()
+    if existing is not None:
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(document_tags)
+                .where(document_tags.c.tag_id == existing.id)
+            )
+        ).scalar() or 0
+        return TagResponse(
+            id=existing.id,
+            name=existing.name,
+            color=existing.color,
+            description=existing.description,
+            document_count=count,
+            created_at=existing.created_at.isoformat() if existing.created_at else None,
+            updated_at=existing.updated_at.isoformat() if existing.updated_at else None,
+        )
+
     tag = Tag(
         id=generate_uuid(),
-        name=body.name,
+        name=name,
         color=body.color,
         description=body.description,
         owner_id=user.id,
     )
     db.add(tag)
-    await db.flush()
+    try:
+        # Savepoint so a concurrent same-name insert (caught by the
+        # uq_tags_owner_lower_name unique index) doesn't poison the session.
+        async with db.begin_nested():
+            await db.flush()
+    except IntegrityError:
+        db.expunge(tag)
+        tag = (
+            await db.execute(
+                select(Tag).where(
+                    Tag.owner_id == user.id,
+                    func.lower(Tag.name) == name.lower(),
+                )
+            )
+        ).scalars().first()
+        if tag is None:
+            raise HTTPException(status_code=409, detail="Could not create tag")
+        count = (
+            await db.execute(
+                select(func.count())
+                .select_from(document_tags)
+                .where(document_tags.c.tag_id == tag.id)
+            )
+        ).scalar() or 0
+        return TagResponse(
+            id=tag.id,
+            name=tag.name,
+            color=tag.color,
+            description=tag.description,
+            document_count=count,
+            created_at=tag.created_at.isoformat() if tag.created_at else None,
+            updated_at=tag.updated_at.isoformat() if tag.updated_at else None,
+        )
     await db.refresh(tag)
     return TagResponse(
         id=tag.id,
@@ -174,7 +251,27 @@ async def update_tag(
         raise HTTPException(status_code=404, detail="Tag not found")
 
     if body.name is not None:
-        tag.name = body.name
+        new_name = body.name.strip()
+        if new_name and new_name.lower() != tag.name.lower():
+            clash = (
+                await db.execute(
+                    select(Tag).where(
+                        Tag.owner_id == user.id,
+                        Tag.id != tag.id,
+                        func.lower(Tag.name) == new_name.lower(),
+                    )
+                )
+            ).scalars().first()
+            if clash is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"A tag named '{clash.name}' already exists. "
+                        "Merge them instead of renaming."
+                    ),
+                )
+        if new_name:
+            tag.name = new_name
     if body.color is not None:
         tag.color = body.color
     if body.description is not None:
@@ -218,6 +315,109 @@ async def delete_tag(
     await db.delete(tag)
     await db.flush()
     return MessageResponse(detail=f"Tag '{tag.name}' deleted")
+
+
+@router.post("/{tag_id}/merge", response_model=MessageResponse)
+async def merge_tags(
+    tag_id: str,
+    body: TagMergeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge one or more *source* tags into the *target* (``tag_id``).
+
+    Every document (and conversation) linked to a source is relinked to the
+    target without creating duplicate links, then the source tags are deleted.
+    Used to consolidate accidental duplicate "folders".
+    """
+    target = (
+        await db.execute(
+            select(Tag).where(Tag.id == tag_id, Tag.owner_id == user.id)
+        )
+    ).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="Target tag not found")
+
+    source_ids = [sid for sid in dict.fromkeys(body.source_tag_ids) if sid != tag_id]
+    if not source_ids:
+        raise HTTPException(status_code=400, detail="No source tags to merge")
+
+    sources = (
+        await db.execute(
+            select(Tag).where(
+                Tag.id.in_(source_ids), Tag.owner_id == user.id
+            )
+        )
+    ).scalars().all()
+    if not sources:
+        raise HTTPException(status_code=404, detail="No matching source tags found")
+
+    moved_docs = 0
+    for src in sources:
+        # Relink documents to the target. Conflict-safe insert avoids PK
+        # collisions if a (document_id, target) link already exists or another
+        # writer races us, then drop the source links.
+        src_doc_ids = [
+            row[0]
+            for row in (
+                await db.execute(
+                    select(document_tags.c.document_id).where(
+                        document_tags.c.tag_id == src.id
+                    )
+                )
+            ).all()
+        ]
+        if src_doc_ids:
+            res = await db.execute(
+                pg_insert(document_tags)
+                .values(
+                    [
+                        {"document_id": did, "tag_id": target.id}
+                        for did in src_doc_ids
+                    ]
+                )
+                .on_conflict_do_nothing()
+            )
+            moved_docs += res.rowcount or 0
+        await db.execute(
+            document_tags.delete().where(document_tags.c.tag_id == src.id)
+        )
+
+        # Same for conversation links.
+        src_conv_ids = [
+            row[0]
+            for row in (
+                await db.execute(
+                    select(conversation_tags.c.conversation_id).where(
+                        conversation_tags.c.tag_id == src.id
+                    )
+                )
+            ).all()
+        ]
+        if src_conv_ids:
+            await db.execute(
+                pg_insert(conversation_tags)
+                .values(
+                    [
+                        {"conversation_id": cid, "tag_id": target.id}
+                        for cid in src_conv_ids
+                    ]
+                )
+                .on_conflict_do_nothing()
+            )
+        await db.execute(
+            conversation_tags.delete().where(conversation_tags.c.tag_id == src.id)
+        )
+
+        await db.delete(src)
+
+    await db.flush()
+    return MessageResponse(
+        detail=(
+            f"Merged {len(sources)} tag(s) into '{target.name}' "
+            f"({moved_docs} document link(s) moved)"
+        )
+    )
 
 
 @router.post("/{tag_id}/documents", response_model=MessageResponse)

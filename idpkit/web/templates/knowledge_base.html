@@ -8,7 +8,33 @@
         <div class="page-header">
             <h2><i class="fas fa-layer-group"></i> Knowledge Base</h2>
             <div class="header-actions">
+                <button @click="openManage()" class="btn"><i class="fas fa-sliders-h"></i> Manage Tags</button>
                 <button @click="showCreateModal = true" class="btn btn-primary"><i class="fas fa-plus"></i> Create Tag</button>
+            </div>
+        </div>
+
+        <!-- Background metadata job progress (Add to Document Map) -->
+        <div x-show="mdJob" x-cloak
+             style="margin:14px 0 0;padding:12px 16px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem">
+                    <i class="fas fa-spinner fa-spin" x-show="mdJob && mdJob.status!=='completed' && mdJob.status!=='failed'" style="color:#7c3aed"></i>
+                    <i class="fas fa-check-circle" x-show="mdJob && mdJob.status==='completed'" style="color:#16a34a"></i>
+                    <i class="fas fa-exclamation-circle" x-show="mdJob && mdJob.status==='failed'" style="color:#dc2626"></i>
+                    <strong x-text="mdJob ? ('Adding to Document Map — ' + mdJob.label) : ''"></strong>
+                    <span style="color:var(--text-muted,#6b7280)" x-text="mdJob ? ('· ' + (mdJob.processed + mdJob.failed + mdJob.skipped) + ' of ' + mdJob.total) : ''"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <span style="font-size:0.74rem;color:var(--text-muted,#6b7280)" x-text="mdJob ? ('✓ ' + mdJob.processed + '  ⚠ ' + mdJob.failed + '  ⤼ ' + mdJob.skipped) : ''"></span>
+                    <a x-show="mdJob && mdJob.status==='completed'" :href="mdJobLink" class="btn btn-sm btn-primary" style="font-size:0.76rem"><i class="fas fa-sitemap"></i> Open Document Map</a>
+                    <button class="btn btn-sm" style="font-size:0.76rem" x-show="mdJob && (mdJob.status==='completed' || mdJob.status==='failed')" @click="dismissMdJob()">Dismiss</button>
+                </div>
+            </div>
+            <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
+                <div style="height:100%;background:#7c3aed;transition:width 0.3s" :style="'width:' + mdJobPct() + '%'"></div>
+            </div>
+            <div x-show="mdJob && mdJob.current && mdJob.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
+                <i class="fas fa-file-alt"></i> <span x-text="mdJob ? mdJob.current : ''"></span>
             </div>
         </div>
 
@@ -142,6 +168,9 @@
                             <div x-show="tags.length === 0" style="padding:12px;font-size:0.8rem;color:var(--text-muted);text-align:center">No tags available</div>
                         </div>
                     </div>
+                    <button class="btn btn-sm" @click="addSelectionToMap()" title="Extract smart metadata for the selected documents and view them in the Document Map">
+                        <i class="fas fa-sitemap"></i> Add to Document Map
+                    </button>
                     <button class="btn btn-sm btn-danger" @click="bulkDeleteSelected()">
                         <i class="fas fa-trash"></i> Delete selected
                     </button>
@@ -167,9 +196,16 @@
                                 <td><span class="badge" x-text="doc.format"></span></td>
                                 <td><span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span></td>
                                 <td>
-                                    <template x-for="t in (doc.tags || [])" :key="t.id">
-                                        <span class="tag-dot" :style="'background:' + t.color" :title="t.name" style="display:inline-block;margin-right:4px"></span>
-                                    </template>
+                                    <div style="display:flex;flex-wrap:wrap;gap:4px">
+                                        <template x-for="t in (doc.tags || [])" :key="t.id">
+                                            <span class="kb-tag-chip" :title="t.name"
+                                                  style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;font-size:0.74rem;line-height:1.4;background:var(--bg-hover,#f0f4ff);border:1px solid var(--border,#e2e8f0);max-width:160px">
+                                                <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0" :style="'background:' + (t.color || '#4f46e5')"></span>
+                                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="t.name"></span>
+                                            </span>
+                                        </template>
+                                        <span x-show="!doc.tags || doc.tags.length === 0" style="color:var(--text-muted);font-size:0.74rem">—</span>
+                                    </div>
                                 </td>
                                 <td class="actions">
                                     <a :href="'/documents/' + doc.id" class="btn btn-sm"><i class="fas fa-eye"></i></a>
@@ -201,6 +237,9 @@
                     <i class="fas" :class="bulkBuildingGraphs ? 'fa-spinner fa-spin' : 'fa-project-diagram'"></i>
                     <span x-show="!bulkBuildingGraphs">Index & Build Graphs</span>
                     <span x-show="bulkBuildingGraphs">Processing...</span>
+                </button>
+                <button @click="addTagToMap(currentTag)" class="btn" title="Extract smart metadata for this knowledge base and view it in the Document Map">
+                    <i class="fas fa-sitemap"></i> Add to Document Map
                 </button>
                 <button @click="editTag = {name: currentTag.name, color: currentTag.color, description: currentTag.description || ''}; showEditModal = true" class="btn"><i class="fas fa-edit"></i> Edit</button>
                 <button @click="deleteCurrentTag()" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Tag</button>
@@ -441,6 +480,49 @@
         </div>
     </div>
 
+    <!-- Manage Tags modal -->
+    <div class="modal-overlay" x-show="showManageModal" x-cloak @click.self="showManageModal = false">
+        <div class="modal" style="max-width:640px;max-height:84vh;display:flex;flex-direction:column">
+            <div class="modal-header">
+                <h3><i class="fas fa-sliders-h"></i> Manage Tags</h3>
+                <button class="btn-close" @click="showManageModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1">
+                <input type="text" x-model="manageSearch" placeholder="Search tags…"
+                       style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;margin-bottom:6px">
+                <p style="font-size:0.76rem;color:var(--text-muted);margin:0 0 10px">
+                    Rename or recolor inline (saved on change). Check rows and pick a target below to merge duplicates.
+                </p>
+                <template x-for="t in filteredManageTags" :key="t.id">
+                    <div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--border,#eee)">
+                        <input type="checkbox" :value="t.id" x-model="mergeSourceIds" :disabled="t.id === mergeTargetId" style="width:15px;height:15px">
+                        <input type="color" :value="t.color || '#4f46e5'" @change="recolorTag(t, $event.target.value)"
+                               style="width:30px;height:30px;border:none;background:none;cursor:pointer;padding:0" title="Change color">
+                        <input type="text" :value="t.name" @change="renameTag(t, $event.target.value)"
+                               style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem" maxlength="100">
+                        <span class="badge" style="flex-shrink:0" x-text="(t.document_count || 0) + ' docs'"></span>
+                        <button class="btn btn-sm btn-danger" @click="deleteTagById(t)" title="Delete tag"><i class="fas fa-trash"></i></button>
+                    </div>
+                </template>
+                <div x-show="filteredManageTags.length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No tags match.</div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <span style="font-size:0.82rem;color:var(--text-muted)" x-text="mergeSourceIds.length + ' selected to merge'"></span>
+                <span style="flex:1"></span>
+                <label style="font-size:0.82rem">Into:</label>
+                <select x-model="mergeTargetId" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;max-width:200px">
+                    <option value="">Choose target…</option>
+                    <template x-for="t in tags" :key="'tgt-' + t.id">
+                        <option :value="t.id" x-text="t.name" :disabled="mergeSourceIds.includes(t.id)"></option>
+                    </template>
+                </select>
+                <button class="btn btn-primary" :disabled="!mergeTargetId || mergeSourceIds.length === 0 || mergeBusy" @click="mergeTags()">
+                    <i class="fas" :class="mergeBusy ? 'fa-spinner fa-spin' : 'fa-code-merge'"></i> Merge
+                </button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -482,6 +564,14 @@ function knowledgeBase() {
         ytDefaultTagName: '',
         ytApplyDefaultTag: true,
         selectedDocIds: [],
+        showManageModal: false,
+        manageSearch: '',
+        mergeSourceIds: [],
+        mergeTargetId: '',
+        mergeBusy: false,
+        mdJob: null,
+        mdJobTimer: null,
+        mdJobLink: '/document-map',
 
         get allVisibleSelected() {
             const visible = this.filteredDocuments;
@@ -864,6 +954,167 @@ function knowledgeBase() {
 
         deselectAll() {
             this.selectedDocIds = [];
+        },
+
+        // ---- Tag management ----
+        openManage() {
+            this.manageSearch = '';
+            this.mergeSourceIds = [];
+            this.mergeTargetId = '';
+            this.showManageModal = true;
+        },
+
+        get filteredManageTags() {
+            const q = (this.manageSearch || '').toLowerCase().trim();
+            let list = this.tags;
+            if (q) list = list.filter(t => (t.name || '').toLowerCase().includes(q));
+            return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        },
+
+        async renameTag(tag, name) {
+            name = (name || '').trim();
+            if (!name || name === tag.name) return;
+            const res = await fetch('/api/tags/' + tag.id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name })
+            });
+            if (res.ok) {
+                await this.loadData();
+            } else {
+                const err = await res.text();
+                alert('Rename failed: ' + err);
+                await this.loadData();
+            }
+        },
+
+        async recolorTag(tag, color) {
+            if (!color || color === tag.color) return;
+            const res = await fetch('/api/tags/' + tag.id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ color })
+            });
+            if (res.ok) await this.loadData();
+        },
+
+        async deleteTagById(tag) {
+            if (!confirm(`Delete tag "${tag.name}"? Documents will not be deleted.`)) return;
+            const res = await fetch('/api/tags/' + tag.id, { method: 'DELETE' });
+            if (res.ok) {
+                this.mergeSourceIds = this.mergeSourceIds.filter(id => id !== tag.id);
+                if (this.mergeTargetId === tag.id) this.mergeTargetId = '';
+                await this.loadData();
+            }
+        },
+
+        async mergeTags() {
+            if (!this.mergeTargetId || this.mergeSourceIds.length === 0) return;
+            const sources = this.mergeSourceIds.filter(id => id !== this.mergeTargetId);
+            if (sources.length === 0) return;
+            const target = this.tags.find(t => t.id === this.mergeTargetId);
+            if (!confirm(`Merge ${sources.length} tag(s) into "${target ? target.name : 'target'}"? The merged tags will be removed.`)) return;
+            this.mergeBusy = true;
+            try {
+                const res = await fetch('/api/tags/' + this.mergeTargetId + '/merge', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ source_tag_ids: sources })
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    alert('Merge failed: ' + err);
+                } else {
+                    this.mergeSourceIds = [];
+                    this.mergeTargetId = '';
+                    await this.loadData();
+                }
+            } catch (e) {
+                alert('Merge failed: ' + e.message);
+            }
+            this.mergeBusy = false;
+        },
+
+        // ---- Add to Document Map (background metadata job) ----
+        async addSelectionToMap() {
+            if (this.selectedDocIds.length === 0) return;
+            const ids = [...this.selectedDocIds];
+            await this._startMetadataJob(
+                { scope: 'all', document_ids: ids },
+                `${ids.length} selected document(s)`,
+                '/document-map'
+            );
+        },
+
+        async addTagToMap(tag) {
+            if (!tag || !tag.id) return;
+            await this._startMetadataJob(
+                { scope: 'all', tag_ids: [tag.id] },
+                `Knowledge base: ${tag.name}`,
+                '/document-map?tag_id=' + encodeURIComponent(tag.id)
+            );
+        },
+
+        async _startMetadataJob(body, label, link) {
+            this.dismissMdJob();
+            try {
+                const res = await fetch('/api/metadata/extract-bulk', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    alert('Could not start: ' + err);
+                    return;
+                }
+                const data = await res.json();
+                this.mdJobLink = link;
+                this.mdJob = {
+                    id: data.job_id, status: data.status || 'pending', total: data.total || 0,
+                    processed: 0, failed: 0, skipped: 0, current: '', label: data.label || label
+                };
+                if (!data.job_id || (data.total || 0) === 0) {
+                    this.mdJob.status = 'completed';
+                    return;
+                }
+                this.pollMdJob();
+            } catch (e) {
+                alert('Could not start: ' + e.message);
+            }
+        },
+
+        pollMdJob() {
+            if (this.mdJobTimer) clearInterval(this.mdJobTimer);
+            this.mdJobTimer = setInterval(async () => {
+                if (!this.mdJob || !this.mdJob.id) { clearInterval(this.mdJobTimer); return; }
+                try {
+                    const res = await fetch('/api/metadata/jobs/' + this.mdJob.id);
+                    if (!res.ok) return;
+                    const j = await res.json();
+                    this.mdJob = {
+                        id: j.job_id || this.mdJob.id, status: j.status, total: j.total || 0,
+                        processed: j.processed || 0, failed: j.failed || 0, skipped: j.skipped || 0,
+                        current: j.current || '', label: j.label || this.mdJob.label
+                    };
+                    if (j.status === 'completed' || j.status === 'failed') {
+                        clearInterval(this.mdJobTimer);
+                        this.mdJobTimer = null;
+                        await this.loadData();
+                    }
+                } catch (e) {}
+            }, 1200);
+        },
+
+        mdJobPct() {
+            if (!this.mdJob || !this.mdJob.total) return 0;
+            const done = this.mdJob.processed + this.mdJob.failed + this.mdJob.skipped;
+            return Math.min(100, Math.round((done / this.mdJob.total) * 100));
+        },
+
+        dismissMdJob() {
+            if (this.mdJobTimer) { clearInterval(this.mdJobTimer); this.mdJobTimer = null; }
+            this.mdJob = null;
         },
 
         async bulkTagSelected(tagId) {
