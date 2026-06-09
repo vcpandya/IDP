@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from idpkit.db.session import get_db, async_session
+from idpkit.db.session import get_db, async_session, lock_tag_name
 from idpkit.db.models import Document, Job, Tag, User, document_tags
 from idpkit.api.deps import get_current_user, get_storage, get_llm
 from idpkit.core.storage import StorageBackend
@@ -124,6 +124,7 @@ async def ingest_youtube(
     if not tag_id and body.default_tag_name:
         clean_name = re.sub(r'[^\w\s-]', '', body.default_tag_name).strip()
         if clean_name:
+            await lock_tag_name(db, user.id, clean_name)
             existing = await db.execute(
                 select(Tag).where(
                     func.lower(Tag.name) == clean_name.lower(),
