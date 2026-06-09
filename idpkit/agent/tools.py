@@ -1534,20 +1534,35 @@ async def _execute_query_document_map(
         return {"error": "User context not available for Document Map queries."}
 
     operation = (args.get("operation") or "").strip()
+    # When the user attached documents / a knowledge base, the chat layer injects
+    # the resolved document set here so the map is restricted to that scope. IDA
+    # then picks files *within* the attached KB; None means the whole library.
+    scope_doc_ids = args.get("_scope_doc_ids")
 
     if operation == "list_categories":
         return {"operation": operation, "categories": cat_registry.list_categories()}
 
     if operation == "stats":
-        return {"operation": operation, **(await md_queries.get_stats(db, user_id))}
+        return {
+            "operation": operation,
+            **(await md_queries.get_stats(db, user_id, doc_ids=scope_doc_ids)),
+        }
 
     if operation == "list_facets":
+        key = args.get("key") or None
+        search = (args.get("search") or "").strip() or None
+        # Browsing all facets hides singleton values (a value carried by only one
+        # document can't group a set — pure noise); drilling into a key or
+        # searching keeps min_count=1 so a specific entity stays findable. This
+        # mirrors the Document Map UI so IDA sees usable grouping dimensions.
         facets = await md_queries.get_facets(
             db,
             user_id,
             category=args.get("category") or None,
-            key=args.get("key") or None,
-            search=args.get("search") or None,
+            key=key,
+            search=search,
+            min_count=1 if (search or key) else 2,
+            doc_ids=scope_doc_ids,
         )
         return {"operation": operation, "facets": facets}
 
@@ -1567,7 +1582,9 @@ async def _execute_query_document_map(
                 )
             }
         match = "any" if args.get("match") == "any" else "all"
-        docs = await md_queries.filter_documents(db, user_id, criteria, match=match)
+        docs = await md_queries.filter_documents(
+            db, user_id, criteria, match=match, doc_ids=scope_doc_ids
+        )
         # Alias the document id as `document_id` too, so the model can feed it
         # straight into search_document / extract_data / etc.
         for d in docs:
