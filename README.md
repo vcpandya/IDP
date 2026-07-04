@@ -4,6 +4,8 @@
 
 Upload PDFs, DOCX, HTML, spreadsheets, presentations, or images. IDP Kit indexes them into a hierarchical tree structure, extracts a knowledge graph of entities and relationships, and lets you query everything through an AI agent or REST API.
 
+> **Deployment variant — this branch is self-hosted.** `main` runs on **SQLite + local filesystem storage** with zero external infra. Mentions of GCS object storage, signed-URL direct uploads, and PostgreSQL/`asyncpg` below describe the **Replit-hosted variant** (the `replit` branch); PostgreSQL is available here as an optional opt-in (`pip install .[postgres]` + set `DATABASE_URL`), while GCS is not used on this branch.
+
 ## Features
 
 | Category | What you get |
@@ -647,8 +649,9 @@ curl -X POST http://localhost:5000/api/graph/documents/DOC_ID/build \
 |----------|----------|-------------|
 | `SESSION_SECRET` | Yes (prod) | JWT signing key. If not set, an ephemeral random key is used (sessions won't survive restarts). |
 | `DATABASE_URL` | No | PostgreSQL connection string. Falls back to SQLite if not set. Auto-set on Replit. |
-| `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | No | GCS bucket ID for file storage. Falls back to local `./storage`. |
-| `PRIVATE_OBJECT_DIR` | No | Private directory prefix in GCS bucket. |
+| `IDP_STORAGE_PATH` | No | Local storage directory. Defaults to `./storage`. |
+| `DEFAULT_OBJECT_STORAGE_BUCKET_ID` | No | _Replit-hosted variant only_ — GCS bucket ID. Ignored on this self-hosted branch. |
+| `PRIVATE_OBJECT_DIR` | No | _Replit-hosted variant only_ — GCS private dir prefix. Ignored on this self-hosted branch. |
 | `OPENAI_API_KEY` | No* | OpenAI API key. *At least one LLM provider key is required. |
 | `ANTHROPIC_API_KEY` | No | Anthropic API key. |
 | `GOOGLE_API_KEY` | No | Google/Gemini API key. |
@@ -698,7 +701,7 @@ idpkit/
   web/             Jinja2 + Alpine.js frontend templates
   db/              SQLAlchemy 2.0 async models, session, seeding, migrations
   engine/          Tree indexing core — PDF/Markdown tree index generation
-  core/            LLMClient (LiteLLM), schemas, storage (GCS + local), exceptions
+  core/            LLMClient (LiteLLM), schemas, storage (local; GCS on replit branch), exceptions
   graph/           Knowledge Graph — entities, edges, builder, linker, queries
   indexing/        Multi-format indexers (PDF, DOCX, HTML, XLSX, PPTX, Image)
   parsing/         Document parsers (6 formats)
@@ -737,7 +740,7 @@ pageindex/         Standalone PageIndex library
 
 ## Key Dependencies
 
-- FastAPI, Uvicorn, SQLAlchemy (async), asyncpg
+- FastAPI, Uvicorn, SQLAlchemy (async), aiosqlite (SQLite); asyncpg optional for PostgreSQL
 - OpenAI, LiteLLM, tiktoken
 - PyMuPDF, PyPDF2, python-docx, beautifulsoup4
 - Jinja2, Pydantic, httpx
