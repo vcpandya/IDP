@@ -1,2 +1,3 @@
 - [Alpine :style string overwrites static style](alpine-style-binding.md) — string `:style` wipes the static `style` attr; use object form `{prop: ...}` to merge.
 - [Document Map is IDA's cross-document file selector](document-map-agent-scoping.md) — quality lives in the agent tool path (scope to attachment + denoise), not the browse UI; reconcile prompt rules in both SYSTEM_PROMPT and _build_messages.
+- [Git push from agent env is unauthenticated](git-push-auth-blocked.md) — CLI `git push` to origin always fails on auth; user must push via Replit Git pane. Agent can only read-only inspect.
