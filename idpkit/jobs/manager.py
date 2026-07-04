@@ -144,6 +144,18 @@ async def run_indexing_job(
             exc_info=True,
         )
 
+    # ------------------------------------------------------------------
+    # 8. Profile smart metadata / facets (non-fatal)
+    # ------------------------------------------------------------------
+    try:
+        await _profile_metadata_for_document(doc_id, session_factory)
+    except Exception:
+        logger.warning(
+            "Job %s: metadata profiling failed (non-fatal), indexing still succeeded",
+            job_id,
+            exc_info=True,
+        )
+
     return result
 
 
@@ -274,6 +286,31 @@ async def _build_graph_for_document(
                 link_result.get("exact_links", 0),
                 link_result.get("fuzzy_links", 0),
             )
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def _profile_metadata_for_document(doc_id: str, session_factory) -> None:
+    """Extract category-aware smart metadata / facets for an indexed document.
+
+    Called after a successful indexing job. Failures here are non-fatal — the
+    indexing result is already persisted.
+    """
+    from idpkit.core.llm import get_default_client
+    from idpkit.metadata.extractor import profile_document_by_id
+
+    llm = get_default_client()
+    async with session_factory() as session:
+        try:
+            result = await profile_document_by_id(session, llm, doc_id)
+            if result:
+                logger.info(
+                    "Metadata profiled for doc %s: category=%s, %d facets",
+                    doc_id,
+                    result.get("category"),
+                    result.get("facet_count", 0),
+                )
         except Exception:
             await session.rollback()
             raise

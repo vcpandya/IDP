@@ -4,7 +4,7 @@
 <div class="page-header">
     <h2><i class="fas fa-brain"></i> IDA — Intelligent Document Assistant</h2>
 </div>
-<div class="chat-container" x-data="agentChat()" @click.away="showAttachPopover = false; showTagMention = false">
+<div class="chat-container" x-data="agentChat()" @click.away="showTagMention = false; showDocMention = false">
     <div class="chat-sidebar" :class="{ 'sidebar-hidden': !sidebarOpen }">
         <!-- Conversations only -->
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -24,16 +24,37 @@
             <template x-for="conv in filteredConversations()" :key="conv.id">
                 <div class="conv-item" :class="{ active: currentConversationId === conv.id }"
                      @click="loadConversation(conv.id)">
-                    <span class="conv-title" x-text="conv.title"></span>
-                    <button class="conv-delete" @click.stop="deleteConversation(conv.id)" title="Delete">
-                        <i class="fas fa-times"></i>
+                    <div class="conv-item-main">
+                        <span class="conv-title" x-text="conv.title"></span>
+                        <div class="conv-tags-row" x-show="conv.tags && conv.tags.length > 0">
+                            <template x-for="t in (conv.tags || [])" :key="t.id">
+                                <span class="conv-tag-chip" :style="'background:' + (t.color || '#4f46e5')" x-text="t.name"></span>
+                            </template>
+                        </div>
+                    </div>
+                    <button class="conv-menu-btn" @click.stop="openConvMenu(conv.id, $event)" title="More" aria-label="Conversation actions">
+                        <i class="fas fa-ellipsis-h"></i>
                     </button>
+                    <div class="conv-menu" x-show="convMenuOpenId === conv.id" x-cloak @click.stop @click.outside="convMenuOpenId = null">
+                        <button @click="openRenameModal(conv); convMenuOpenId = null">
+                            <i class="fas fa-pen"></i> Rename
+                        </button>
+                        <button @click="openTagsModal(conv); convMenuOpenId = null">
+                            <i class="fas fa-tag"></i> Tags
+                        </button>
+                        <button class="danger" @click="openDeleteConfirm(conv); convMenuOpenId = null">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
                 </div>
             </template>
         </div>
     </div>
     <div class="chat-main">
-        <button class="sidebar-toggle-btn" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? 'Hide sidebar' : 'Show conversations'">
+        <button class="sidebar-toggle-btn" @click="sidebarOpen = !sidebarOpen"
+                :title="sidebarOpen ? 'Hide sidebar' : 'Show conversations'"
+                :aria-label="sidebarOpen ? 'Hide conversations sidebar' : 'Show conversations sidebar'"
+                :aria-expanded="sidebarOpen ? 'true' : 'false'">
             <i :class="sidebarOpen ? 'fas fa-chevron-left' : 'fas fa-comments'"></i>
         </button>
         <div class="chat-messages" id="chatMessages">
@@ -58,28 +79,87 @@
                         <i :class="msg.role === 'user' ? 'fas fa-user' : msg.role === 'tool' ? 'fas fa-wrench' : 'fas fa-brain'"></i>
                     </div>
                     <div class="msg-content">
-                        <div class="msg-header">
-                            <span x-text="msg.role === 'user' ? 'You' : msg.role === 'tool' ? 'Tool: ' + (msg.tool_name || '') : 'IDA'"></span>
-                            <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
-                                  x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
-                        </div>
-                        <!-- Source type banner -->
-                        <template x-if="msg.role === 'assistant' && msg.source_type">
-                            <div class="source-type-banner" :class="'banner-' + msg.source_type">
-                                <i :class="msg.source_type === 'documents' ? 'fas fa-file-alt' : msg.source_type === 'mixed' ? 'fas fa-layer-group' : 'fas fa-globe'"></i>
-                                <span x-text="msg.source_type === 'documents' ? 'Based on your documents' : msg.source_type === 'mixed' ? 'Based on documents + general knowledge' : 'Based on general knowledge'"></span>
+                        <!-- Tool messages: collapsed accordion (or styled error card on failure) -->
+                        <template x-if="msg.role === 'tool' && !msg.is_error">
+                            <div class="tool-accordion" x-data="{ open: false }">
+                                <button class="tool-accordion-header" @click="open = !open"
+                                        :aria-expanded="open ? 'true' : 'false'">
+                                    <i class="fas" :class="msg.streaming ? 'fa-spinner fa-spin' : 'fa-wrench'"></i>
+                                    <span x-text="'Tool: ' + (msg.tool_name || 'unknown').replace(/_/g, ' ') + (msg.streaming ? ' — running…' : (msg.stream_summary ? ' — ' + msg.stream_summary : ''))"></span>
+                                    <i class="fas fa-chevron-down tool-accordion-arrow" :class="open && 'open'"></i>
+                                </button>
+                                <div class="tool-accordion-body" x-show="open" x-cloak x-transition.duration.150ms>
+                                    <template x-if="msg.progress_log && msg.progress_log.length">
+                                        <div style="margin-bottom:8px;padding:8px;background:#f9fafb;border-radius:6px;font-size:12px;color:#374151;">
+                                            <div style="font-weight:600;margin-bottom:4px;">Progress</div>
+                                            <template x-for="(p, i) in msg.progress_log" :key="i">
+                                                <div x-text="p" style="padding:2px 0;"></div>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <pre x-text="msg.content"></pre>
+                                </div>
                             </div>
                         </template>
-                        <div class="msg-body"
-                             x-html="msg.role === 'assistant' ? renderMarkdown(msg.content) : msg.role === 'tool' ? '<pre>' + msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>' : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
-                             x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
-                        </div>
+                        <template x-if="msg.role === 'tool' && msg.is_error">
+                            <div class="tool-error-card" role="alert">
+                                <div class="tool-error-header">
+                                    <i class="fas fa-triangle-exclamation"></i>
+                                    <span x-text="(msg.tool_name || 'Tool').replace(/_/g,' ') + ' couldn\'t complete'"></span>
+                                </div>
+                                <div class="tool-error-body" x-text="msg.error_message || 'The tool returned an error.'"></div>
+                                <template x-if="msg.connector_id">
+                                    <a class="tool-error-action"
+                                       :href="'/connections#' + msg.connector_id">
+                                        <i class="fas fa-plug"></i>
+                                        Connect <span x-text="msg.connector_name"></span> →
+                                    </a>
+                                </template>
+                                <details class="tool-error-details" x-data="{ open: false }">
+                                    <summary>Show raw response</summary>
+                                    <pre x-text="msg.content"></pre>
+                                </details>
+                            </div>
+                        </template>
+                        <!-- User & assistant messages -->
+                        <template x-if="msg.role !== 'tool'">
+                            <div>
+                                <div class="msg-header">
+                                    <span x-text="msg.role === 'user' ? 'You' : 'IDA'"></span>
+                                    <span class="sources-badge" x-show="msg.sources && msg.sources.length > 0"
+                                          x-text="'(' + (msg.sources ? msg.sources.length : 0) + ' sources)'"></span>
+                                </div>
+                                <template x-if="msg.role === 'assistant' && msg.source_type">
+                                    <div class="source-type-banner" :class="'banner-' + msg.source_type">
+                                        <i :class="msg.source_type === 'documents' ? 'fas fa-file-alt' : msg.source_type === 'mixed' ? 'fas fa-layer-group' : msg.source_type === 'web' ? 'fas fa-globe' : 'fas fa-globe'"></i>
+                                        <span x-text="msg.source_type === 'documents' ? 'Based on your documents' : msg.source_type === 'mixed' ? 'Based on documents + web search' : msg.source_type === 'web' ? 'Based on web search' : 'Based on general knowledge'"></span>
+                                    </div>
+                                </template>
+                                <div class="msg-body"
+                                     x-html="msg.role === 'assistant' ? renderAssistantContent(msg) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\n/g,'<br>')"
+                                     @click="handleValueChipClick($event, msg)"
+                                     @keydown.enter.prevent="handleValueChipClick($event, msg)"
+                                     @mouseover="handleChipHover($event, msg)"
+                                     @mouseout="handleChipLeave($event)"
+                                     @focusin="handleChipHover($event, msg)"
+                                     @focusout="handleChipLeave($event)"
+                                     x-effect="if (msg.role === 'assistant' && typeof renderMathInElement !== 'undefined') { $nextTick(() => renderMathInElement($el, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false},{left: '\\\\(', right: '\\\\)', display: false},{left: '\\\\[', right: '\\\\]', display: true}]})) }">
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
             </template>
             <div x-show="loading" class="chat-msg msg-assistant">
                 <div class="msg-avatar" style="background: linear-gradient(135deg, #7c3aed, #4f46e5); color: #fff"><i class="fas fa-brain"></i></div>
-                <div class="msg-content"><div class="typing-indicator"><span></span><span></span><span></span></div></div>
+                <div class="msg-content">
+                    <div class="typing-indicator"><span></span><span></span><span></span></div>
+                    <div x-show="thinkingActive" x-cloak style="font-size:12px;color:#6b7280;margin-top:4px;display:flex;align-items:center;gap:8px;">
+                        <i class="fas fa-brain"></i>
+                        <span x-text="thinkingHint"></span>
+                        <span style="color:#9ca3af;" x-text="'· ' + thinkingElapsed + 's'"></span>
+                    </div>
+                </div>
             </div>
         </div>
         <div class="chat-input-area">
@@ -95,55 +175,41 @@
                     <span class="tag-chip" :style="'border-color:' + chip.color">
                         <span class="tag-dot" :style="'background:' + chip.color"></span>
                         <span x-text="chip.name"></span>
-                        <button class="tag-chip-remove" @click="removeTagChip(chip.id)">&times;</button>
+                        <button class="tag-chip-remove" @click="removeTagChip(chip.id)"
+                                :aria-label="'Remove tag ' + chip.name">&times;</button>
                     </span>
                 </template>
-                <template x-for="did in selectedDocs" :key="'doc-'+did">
-                    <span class="chat-upload-tag ready" x-show="!uploadFiles.some(u => u.docId === did)">
+                <template x-for="did in visibleDocChips().slice(0, docChipLimit)" :key="'doc-'+did">
+                    <span class="chat-upload-tag ready">
                         <i class="fas fa-file-alt"></i>
                         <span class="tag-name" x-text="getDocName(did)"></span>
-                        <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit" @click="selectedDocs = selectedDocs.filter(d => d !== did)">&times;</button>
+                        <button style="background:none;border:none;cursor:pointer;font-size:0.7rem;padding:0 2px;color:inherit"
+                                @click="selectedDocs = selectedDocs.filter(d => d !== did)"
+                                aria-label="Remove document from selection">&times;</button>
                     </span>
                 </template>
+                <button type="button" class="chat-upload-tag docs-more-chip"
+                        x-show="visibleDocChips().length > docChipLimit"
+                        @click="showSelectedDocsModal = true"
+                        :aria-label="'View all ' + visibleDocChips().length + ' selected documents'">
+                    <i class="fas fa-layer-group"></i>
+                    <span x-text="'+' + (visibleDocChips().length - docChipLimit) + ' more'"></span>
+                </button>
             </div>
-            <!-- @mention tag dropdown -->
-            <div class="tag-mention-dropdown" x-show="showTagMention" x-cloak>
-                <template x-for="tag in filteredMentionTags()" :key="tag.id">
-                    <div class="tag-mention-item" @click="selectTagMention(tag)">
-                        <span class="tag-dot" :style="'background:' + tag.color"></span>
-                        <span x-text="tag.name"></span>
-                        <span style="font-size:0.7rem;color:var(--text-muted);margin-left:auto" x-text="(tag.document_count || 0) + ' docs'"></span>
-                    </div>
-                </template>
-                <div x-show="filteredMentionTags().length === 0" style="padding:8px 12px;font-size:0.8rem;color:var(--text-muted)">No matching tags</div>
-            </div>
-            <div class="chat-input" style="position:relative">
+            <div class="chat-input">
                 <input type="file" id="chatFileInput" multiple style="display:none" @change="handleChatUpload($event)">
-                <!-- Paperclip with attach popover -->
-                <div style="position:relative">
-                    <button class="btn-upload" @click.stop="showAttachPopover = !showAttachPopover" title="Attach files" :disabled="loading">
-                        <i class="fas fa-paperclip"></i>
-                    </button>
-                    <div class="attach-popover" x-show="showAttachPopover" x-cloak @click.stop>
-                        <button class="attach-upload-btn" @click="document.getElementById('chatFileInput').click(); showAttachPopover = false">
-                            <i class="fas fa-upload"></i> Upload new file
-                        </button>
-                        <div class="attach-search" x-show="documents.length > 5">
-                            <input type="text" x-model="docFilter" placeholder="Search documents..." @click.stop>
-                        </div>
-                        <div class="attach-doc-list">
-                            <template x-for="doc in filteredAttachDocs()" :key="doc.id">
-                                <label class="attach-doc-item" @click.stop>
-                                    <input type="checkbox" :value="doc.id" x-model="selectedDocs">
-                                    <span class="attach-doc-name" x-text="doc.filename"></span>
-                                    <span class="badge" x-text="doc.format" style="font-size:0.65rem;padding:1px 5px"></span>
-                                </label>
-                            </template>
-                            <div x-show="filteredAttachDocs().length === 0" style="padding:8px;font-size:0.8rem;color:var(--text-muted);text-align:center">No documents found</div>
-                        </div>
-                    </div>
-                </div>
-                <input type="text" x-model="input" @keyup.enter="sendMessage()" @input="handleInputChange($event)" placeholder="Ask IDA anything... (type @ for tags)" :disabled="loading">
+                <button class="btn-upload" @click.stop="openAttachModal()" title="Attach files"
+                        aria-label="Attach files" :disabled="loading">
+                    <i class="fas fa-paperclip"></i>
+                </button>
+                <button class="btn-upload btn-enrich" @click.stop="toggleEnrichInput()"
+                        :class="{ active: enrichInput }"
+                        :title="enrichInput ? 'Enrich input: ON — IDA will rewrite your message for better results' : 'Enrich input: OFF — click to let IDA rewrite your message for better results'"
+                        :aria-pressed="enrichInput ? 'true' : 'false'"
+                        aria-label="Toggle enrich input" :disabled="loading">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                </button>
+                <input type="text" x-model="input" @keydown.enter.prevent="if(!showTagMention && !showDocMention){sendMessage()}" @keydown.escape="showTagMention = false; showDocMention = false" placeholder="Ask IDA anything... (@ docs, # tags)" :disabled="loading">
                 <button @click="sendMessage()" class="btn btn-primary" :disabled="loading || !input.trim()">
                     <i class="fas fa-paper-plane"></i>
                 </button>
@@ -167,12 +233,11 @@
                 </template>
             </div>
         </template>
-        <!-- Found Sources -->
-        <template x-if="currentSources.length > 0">
+        <template x-if="currentSources.filter(s => s.source_kind !== 'web').length > 0">
             <div>
-                <h4><i class="fas fa-quote-left"></i> Sources</h4>
-                <template x-for="(src, si) in currentSources" :key="si">
-                    <a :href="'/documents/' + src.document_id" class="source-card" target="_blank">
+                <h4><i class="fas fa-quote-left"></i> Document Sources</h4>
+                <template x-for="(src, si) in currentSources.filter(s => s.source_kind !== 'web')" :key="'doc-'+si">
+                    <div class="source-card" style="cursor:pointer" @click="openSourceModal(src)">
                         <div class="source-title" x-text="src.title || 'Untitled section'"></div>
                         <div class="source-meta">
                             <span class="source-filename" x-text="src.filename"></span>
@@ -181,16 +246,413 @@
                             </span>
                         </div>
                         <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
+                    </div>
+                </template>
+            </div>
+        </template>
+        <template x-if="currentSources.filter(s => s.source_kind === 'web').length > 0">
+            <div style="margin-top:12px">
+                <h4><i class="fas fa-globe"></i> Web Sources</h4>
+                <template x-for="(src, si) in currentSources.filter(s => s.source_kind === 'web')" :key="'web-'+si">
+                    <a :href="src.url" target="_blank" rel="noopener noreferrer" class="source-card" style="cursor:pointer;text-decoration:none;color:inherit;display:block">
+                        <div class="source-title" style="display:flex;align-items:center;gap:6px">
+                            <i class="fas fa-external-link-alt" style="font-size:0.7rem;color:var(--primary)"></i>
+                            <span x-text="src.title || src.url"></span>
+                        </div>
+                        <div class="source-meta">
+                            <span style="color:var(--primary);font-size:0.75rem;word-break:break-all" x-text="src.url"></span>
+                        </div>
+                        <div class="source-summary" x-show="src.summary" x-text="src.summary"></div>
                     </a>
                 </template>
             </div>
         </template>
     </div>
+
+    <!-- Mention Popup: Tags (#) -->
+    <div class="mention-popup-overlay" x-show="showTagMention" x-cloak @click.self="showTagMention = false" x-transition.opacity>
+        <div class="mention-popup" @click.stop>
+            <div class="mention-popup-header">
+                <span><i class="fas fa-hashtag"></i> Select a Tag</span>
+                <button class="mention-popup-close" @click="showTagMention = false" aria-label="Close tag picker">&times;</button>
+            </div>
+            <input type="text" class="mention-popup-search" x-model="tagMentionFilter" placeholder="Filter tags..." x-ref="tagSearchInput">
+            <div class="mention-popup-list">
+                <template x-for="tag in filteredMentionTags()" :key="tag.id">
+                    <div class="mention-popup-item" @click="selectTagMention(tag)">
+                        <span class="tag-dot" :style="'background:' + tag.color"></span>
+                        <span x-text="tag.name"></span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto" x-text="(tag.document_count || 0) + ' docs'"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionTags().length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No matching tags</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mention Popup: Documents (@) -->
+    <div class="mention-popup-overlay" x-show="showDocMention" x-cloak @click.self="showDocMention = false" x-transition.opacity>
+        <div class="mention-popup" @click.stop>
+            <div class="mention-popup-header">
+                <span><i class="fas fa-file-alt"></i> Select a Document</span>
+                <button class="mention-popup-close" @click="showDocMention = false" aria-label="Close document picker">&times;</button>
+            </div>
+            <input type="text" class="mention-popup-search" x-model="docMentionFilter" placeholder="Filter documents..." x-ref="docSearchInput">
+            <div class="mention-popup-list">
+                <template x-for="doc in filteredMentionDocs()" :key="doc.id">
+                    <div class="mention-popup-item" @click="selectDocMention(doc)">
+                        <i class="fas fa-file-alt" style="color:var(--primary);font-size:0.8rem;width:16px;text-align:center"></i>
+                        <span x-text="doc.filename" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                        <span style="font-size:0.75rem;color:var(--text-muted)" x-text="doc.format || ''"></span>
+                    </div>
+                </template>
+                <div x-show="filteredMentionDocs().length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No matching documents</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Source Detail Modal -->
+    <div class="source-modal-overlay" x-show="showSourceModal" x-cloak @click.self="showSourceModal = false" x-transition.opacity>
+        <div class="source-modal" @click.stop>
+            <div class="source-modal-header">
+                <div>
+                    <h3 x-text="sourceModalData.title || 'Untitled section'"></h3>
+                    <div class="source-modal-meta">
+                        <span><i class="fas fa-file-alt"></i> <span x-text="sourceModalData.filename"></span></span>
+                        <span x-show="sourceModalData.start_page != null">
+                            <i class="fas fa-file-invoice"></i> pp. <span x-text="sourceModalData.start_page"></span><span x-show="sourceModalData.end_page != null && sourceModalData.end_page !== sourceModalData.start_page">–<span x-text="sourceModalData.end_page"></span></span>
+                        </span>
+                    </div>
+                </div>
+                <button class="btn-close" @click="showSourceModal = false" aria-label="Close source detail">&times;</button>
+            </div>
+            <div class="source-modal-body">
+                <template x-if="sourceModalData.summary">
+                    <div class="source-modal-summary">
+                        <h4>Summary</h4>
+                        <p x-text="sourceModalData.summary"></p>
+                    </div>
+                </template>
+                <template x-if="sourceModalData.text_preview">
+                    <div class="source-modal-text">
+                        <h4>Full Text</h4>
+                        <pre x-text="sourceModalData.text_preview"></pre>
+                    </div>
+                </template>
+                <template x-if="!sourceModalData.text_preview && !sourceModalLoading">
+                    <div class="source-modal-text">
+                        <p style="color:var(--text-muted);font-style:italic">No text preview available for this source.</p>
+                    </div>
+                </template>
+            </div>
+            <div class="source-modal-footer">
+                <a :href="'/documents/' + sourceModalData.document_id" target="_blank" class="btn btn-sm btn-outline">
+                    <i class="fas fa-external-link-alt"></i> Open Document
+                </a>
+                <button class="btn btn-sm" @click="showSourceModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Computation Detail Modal -->
+    <div class="source-modal-overlay" x-show="showComputationModal" x-cloak @click.self="showComputationModal = false" x-transition.opacity>
+        <div class="source-modal" @click.stop>
+            <div class="source-modal-header">
+                <div>
+                    <h3>
+                        <i class="fas fa-code" style="color:#7c3aed"></i>
+                        Computed in Python
+                        <span x-show="computationModalData.cid" class="comp-cid-tag" x-text="computationModalData.cid"></span>
+                    </h3>
+                    <div class="source-modal-meta">
+                        <span><i class="fas fa-cube"></i> E2B sandbox</span>
+                        <span x-show="computationModalData.success === false" style="color:#dc2626">
+                            <i class="fas fa-triangle-exclamation"></i> Execution error
+                        </span>
+                    </div>
+                </div>
+                <button class="btn-close" @click="showComputationModal = false" aria-label="Close computation detail">&times;</button>
+            </div>
+            <div class="source-modal-body">
+                <div class="source-modal-text">
+                    <h4>Code</h4>
+                    <pre x-text="computationModalData.code || '(no code captured)'"></pre>
+                </div>
+                <template x-if="computationModalData.stdout">
+                    <div class="source-modal-text">
+                        <h4>Output</h4>
+                        <pre x-text="computationModalData.stdout"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.results && computationModalData.results.length > 0">
+                    <div class="source-modal-text">
+                        <h4>Results</h4>
+                        <pre x-text="computationModalData.results.join('\n')"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.stderr">
+                    <div class="source-modal-text">
+                        <h4 style="color:#dc2626">Stderr</h4>
+                        <pre x-text="computationModalData.stderr"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.error">
+                    <div class="source-modal-text">
+                        <h4 style="color:#dc2626" x-text="(computationModalData.error.name || 'Error') + ': ' + (computationModalData.error.value || '')"></h4>
+                        <pre x-text="computationModalData.error.traceback || ''"></pre>
+                    </div>
+                </template>
+                <template x-if="computationModalData.charts && computationModalData.charts.length > 0">
+                    <div class="source-modal-text">
+                        <h4>Charts</h4>
+                        <template x-for="(ch, i) in computationModalData.charts" :key="'ch-'+i">
+                            <div style="margin:0.5rem 0">
+                                <template x-if="ch.data && ch.type === 'image/png'">
+                                    <img :src="'data:image/png;base64,' + ch.data" alt="Computed chart" style="max-width:100%;border:1px solid var(--border, #e5e7eb);border-radius:6px">
+                                </template>
+                                <template x-if="ch.data && ch.type === 'image/svg+xml'">
+                                    <!-- Render untrusted SVG sandbox output as a data-URL <img> so the
+                                         browser treats it as a passive image (no script execution),
+                                         instead of injecting it into the DOM with x-html. -->
+                                    <img :src="svgDataUrl(ch.data)" alt="Computed chart (SVG)" style="max-width:100%;border:1px solid var(--border, #e5e7eb);border-radius:6px;background:#fff">
+                                </template>
+                                <template x-if="!ch.data">
+                                    <p style="color:var(--text-muted);font-style:italic">Chart not available in saved view (only shown live).</p>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="source-modal-footer">
+                <button class="btn btn-sm" @click="showComputationModal = false">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Attach Modal -->
+    <div class="attach-modal-overlay" x-show="showAttachModal" x-cloak @click.self="closeAttachModal()" x-transition.opacity>
+        <div class="attach-modal" @click.stop>
+            <div class="attach-modal-header">
+                <h3><i class="fas fa-paperclip"></i> Attach Documents</h3>
+                <button class="btn-close" @click="closeAttachModal()" aria-label="Close attach dialog">&times;</button>
+            </div>
+            <div class="attach-modal-tabs">
+                <button class="attach-tab" :class="attachTab === 'select' && 'active'" @click="attachTab = 'select'">
+                    <i class="fas fa-folder-open"></i> Select Existing
+                </button>
+                <button class="attach-tab" :class="attachTab === 'upload' && 'active'" @click="attachTab = 'upload'">
+                    <i class="fas fa-cloud-upload-alt"></i> Upload New
+                </button>
+            </div>
+            <div class="attach-modal-body">
+                <!-- Select existing tab -->
+                <div x-show="attachTab === 'select'">
+                    <div class="attach-modal-search">
+                        <i class="fas fa-search"></i>
+                        <input type="text" x-model="docFilter" placeholder="Search by filename..." x-ref="attachSearch">
+                    </div>
+                    <div class="attach-modal-select-info">
+                        <span x-text="modalSelectedDocs.length + ' selected'"></span>
+                        <button x-show="modalSelectedDocs.length > 0" class="attach-clear-btn" @click="modalSelectedDocs = []">Clear all</button>
+                    </div>
+                    <div class="attach-modal-list">
+                        <template x-for="doc in filteredAttachDocs()" :key="doc.id">
+                            <label class="attach-modal-item" :class="modalSelectedDocs.includes(doc.id) && 'selected'">
+                                <input type="checkbox" :value="doc.id" x-model="modalSelectedDocs">
+                                <div class="attach-modal-item-info">
+                                    <span class="attach-modal-item-name" x-text="doc.filename"></span>
+                                    <span class="attach-modal-item-meta">
+                                        <span class="badge" x-text="doc.format" style="font-size:0.65rem;padding:1px 5px"></span>
+                                        <span class="badge" :class="'status-' + doc.status" x-text="doc.status" style="font-size:0.65rem;padding:1px 5px"></span>
+                                        <span x-show="doc.page_count" x-text="doc.page_count + ' pages'" style="font-size:0.7rem;color:var(--text-muted)"></span>
+                                    </span>
+                                </div>
+                            </label>
+                        </template>
+                        <div x-show="filteredAttachDocs().length === 0" class="attach-modal-empty">
+                            <i class="fas fa-inbox"></i>
+                            <span>No documents found</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Upload tab -->
+                <div x-show="attachTab === 'upload'">
+                    <div class="attach-upload-zone" @click="document.getElementById('chatFileInput').click()"
+                         @dragover.prevent="attachDragOver = true" @dragleave.prevent="attachDragOver = false"
+                         @drop.prevent="attachDragOver = false; handleChatUpload($event)"
+                         :class="attachDragOver && 'drag-over'">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Click to browse or drag files here</p>
+                        <span>PDF, DOCX, PPTX, HTML, TXT</span>
+                    </div>
+                    <div x-show="uploadFiles.length > 0" class="attach-upload-list">
+                        <template x-for="(uf, idx) in uploadFiles" :key="'modal-uf-'+idx">
+                            <div class="attach-upload-item" :class="uf.status">
+                                <i :class="uf.status === 'ready' ? 'fas fa-check-circle' : uf.status === 'failed' ? 'fas fa-times-circle' : 'fas fa-spinner fa-spin'"></i>
+                                <span x-text="uf.filename"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="closeAttachModal()">Cancel</button>
+                <button class="btn btn-primary" @click="confirmAttachModal()">
+                    <i class="fas fa-check"></i>
+                    Attach <span x-show="modalSelectedDocs.length > 0" x-text="'(' + modalSelectedDocs.length + ')'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Rename conversation modal ======= -->
+    <div class="attach-modal-overlay" x-show="showRenameModal" x-cloak @click.self="showRenameModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:420px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem"><i class="fas fa-pen"></i> Rename conversation</h3>
+                <button class="btn-close" @click="showRenameModal = false" aria-label="Close rename dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px">
+                <input type="text" x-model="renameDraft" maxlength="200"
+                       @keydown.enter.prevent="confirmRename()"
+                       @keydown.escape="showRenameModal = false"
+                       placeholder="Conversation title"
+                       style="width:100%;padding:8px 10px;border:1px solid var(--border-light);border-radius:6px;font-size:0.9rem"
+                       x-ref="renameInput">
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showRenameModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="confirmRename()" :disabled="!renameDraft.trim()">
+                    <i class="fas fa-check"></i> Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Tag picker modal ======= -->
+    <div class="attach-modal-overlay" x-show="showTagsModal" x-cloak @click.self="showTagsModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:460px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem"><i class="fas fa-tag"></i> Tag conversation</h3>
+                <button class="btn-close" @click="showTagsModal = false" aria-label="Close tags dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px;max-height:50vh;overflow-y:auto">
+                <div x-show="tags.length === 0" style="font-size:0.85rem;color:var(--text-muted)">
+                    No tags yet. Create tags from the Documents page first.
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <template x-for="t in tags" :key="t.id">
+                        <button type="button"
+                                @click="toggleTagsDraft(t.id)"
+                                :style="tagsDraft.includes(t.id)
+                                    ? ('background:' + (t.color || '#4f46e5') + ';color:#fff;border-color:transparent')
+                                    : ''"
+                                style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:14px;border:1px solid var(--border-light);background:var(--bg-white);color:var(--text-default);font-size:0.78rem;cursor:pointer">
+                            <i class="fas" :class="tagsDraft.includes(t.id) ? 'fa-check' : 'fa-tag'"></i>
+                            <span x-text="t.name"></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showTagsModal = false">Cancel</button>
+                <button class="btn btn-primary" @click="confirmTags()">
+                    <i class="fas fa-check"></i> Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Delete confirmation modal ======= -->
+    <div class="attach-modal-overlay" x-show="showDeleteConfirm" x-cloak @click.self="showDeleteConfirm = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:400px">
+            <div class="attach-modal-header">
+                <h3 style="margin:0;font-size:1rem;color:var(--danger)">
+                    <i class="fas fa-exclamation-triangle"></i> Delete conversation?
+                </h3>
+                <button class="btn-close" @click="showDeleteConfirm = false" aria-label="Close confirm dialog">&times;</button>
+            </div>
+            <div style="padding:16px 20px;font-size:0.88rem;color:var(--text-default);line-height:1.5">
+                You're about to delete
+                <strong x-text="'“' + (deleteTarget && deleteTarget.title || 'this conversation') + '”'"></strong>.
+                <br><br>
+                <span style="color:var(--text-muted)">This permanently removes the chat and all of its messages. This can't be undone.</span>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="showDeleteConfirm = false">Cancel</button>
+                <button class="btn btn-danger" @click="confirmDelete()">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Selected documents modal ======= -->
+    <div class="attach-modal-overlay" x-show="showSelectedDocsModal" x-cloak @click.self="showSelectedDocsModal = false" x-transition.opacity>
+        <div class="attach-modal" style="max-width:480px">
+            <div class="attach-modal-header">
+                <h3><i class="fas fa-layer-group"></i> Selected documents <span x-text="'(' + allSelectedDocs().length + ')'"></span></h3>
+                <button class="btn-close" @click="showSelectedDocsModal = false" aria-label="Close selected documents">&times;</button>
+            </div>
+            <div class="attach-modal-body">
+                <div class="attach-modal-list">
+                    <template x-for="did in allSelectedDocs()" :key="'sel-'+did">
+                        <div class="attach-modal-item">
+                            <i class="fas fa-file-alt" style="color:var(--primary);font-size:0.8rem;flex-shrink:0"></i>
+                            <div class="attach-modal-item-info">
+                                <span class="attach-modal-item-name" x-text="getDocName(did)"></span>
+                            </div>
+                            <a :href="'/documents/' + did" target="_blank" class="selected-doc-open" title="Open document" aria-label="Open document">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                            <button class="selected-doc-remove" @click="removeSelectedDoc(did)"
+                                    :aria-label="'Remove ' + getDocName(did)" title="Remove from selection">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </template>
+                    <div x-show="allSelectedDocs().length === 0" class="attach-modal-empty">
+                        <i class="fas fa-inbox"></i>
+                        <span>No documents selected</span>
+                    </div>
+                </div>
+                <p x-show="selectedTagChips.length > 0" style="margin:10px 2px 0;font-size:0.72rem;color:var(--text-muted)">
+                    <i class="fas fa-info-circle"></i> Some documents come from selected tags. “Clear all” also removes those tags.
+                </p>
+            </div>
+            <div class="attach-modal-footer">
+                <button class="btn" @click="clearSelectedDocs()" x-show="allSelectedDocs().length > 0 || selectedTagChips.length > 0">Clear all</button>
+                <button class="btn btn-primary" @click="showSelectedDocsModal = false">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ======= Reference hover tooltip ======= -->
+    <div class="chip-tooltip" x-show="chipTip.show" x-cloak
+         :class="'place-' + chipTip.placement"
+         :style="'left:' + chipTip.x + 'px; top:' + chipTip.y + 'px'">
+        <div class="chip-tooltip-head">
+            <i :class="chipTip.kind === 'computed' ? 'fas fa-code' : 'fas fa-file-alt'"></i>
+            <span x-text="chipTip.heading"></span>
+        </div>
+        <div class="chip-tooltip-meta" x-show="chipTip.filename || chipTip.pages">
+            <span class="chip-tooltip-file" x-show="chipTip.filename" x-text="chipTip.filename"></span>
+            <span class="chip-tooltip-pages" x-show="chipTip.pages" x-text="chipTip.pages"></span>
+        </div>
+        <div class="chip-tooltip-summary" x-show="chipTip.summary" x-text="chipTip.summary"></div>
+        <pre class="chip-tooltip-text" x-show="chipTip.text" x-text="chipTip.text"></pre>
+        <div class="chip-tooltip-more" x-show="chipTip.multi > 1" x-text="chipTip.multi + ' related sections in this document'"></div>
+        <div class="chip-tooltip-hint" x-text="chipTip.kind === 'computed' ? 'Click to view full code & output' : 'Click to open document'"></div>
+    </div>
 </div>
 <script>
 function agentChat() {
     return {
-        messages: [], input: '', loading: false, documents: [], selectedDocs: [],
+        messages: [], input: '', loading: false, thinkingActive: false,
+        thinkingHint: 'Thinking…', thinkingElapsed: 0,
+        _thinkingTimer: null, _thinkingHintTimer: null, _sendToken: 0,
+        documents: [], selectedDocs: [],
         uploadFiles: [],
         tags: [], selectedTags: [],
         currentSources: [],
@@ -199,11 +661,38 @@ function agentChat() {
         currentConversationId: null,
         sidebarOpen: true,
         convSearch: '',
-        showAttachPopover: false,
+        showAttachModal: false,
+        attachTab: 'select',
+        attachDragOver: false,
+        modalSelectedDocs: [],
         docFilter: '',
         showTagMention: false,
         tagMentionFilter: '',
+        showDocMention: false,
+        docMentionFilter: '',
         selectedTagChips: [],
+        showSourceModal: false,
+        sourceModalData: {},
+        sourceModalLoading: false,
+        showComputationModal: false,
+        computationModalData: {},
+        showSelectedDocsModal: false,
+        docChipLimit: 6,
+        chipTip: { show: false, x: 0, y: 0, placement: 'above', kind: '', heading: '', filename: '', pages: '', summary: '', text: '', multi: 0 },
+        // Conversation menu / rename / tags / delete state
+        convMenuOpenId: null,
+        showRenameModal: false,
+        renameTarget: null,
+        renameDraft: '',
+        showTagsModal: false,
+        tagsTarget: null,
+        tagsDraft: [],
+        showDeleteConfirm: false,
+        deleteTarget: null,
+        // "Enrich input" toggle — when on, the server runs an LLM rewrite of
+        // the user's message before sending it to the agent loop. Persisted
+        // to localStorage so the preference sticks across sessions.
+        enrichInput: (typeof localStorage !== 'undefined' && localStorage.getItem('ida.enrichInput') === '1'),
         async init() {
             const [docRes, tagRes, convRes] = await Promise.all([
                 fetch('/api/documents/?limit=100'),
@@ -213,6 +702,51 @@ function agentChat() {
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
             if (tagRes.ok) { this.tags = await tagRes.json(); }
             if (convRes.ok) { this.conversations = await convRes.json(); }
+            const urlParams = new URLSearchParams(window.location.search);
+            const promptParam = urlParams.get('prompt');
+            const docIdsParam = urlParams.get('doc_ids');
+            if (docIdsParam) {
+                const ids = docIdsParam.split(',').filter(Boolean);
+                for (const id of ids) {
+                    if (!this.selectedDocs.includes(id)) {
+                        this.selectedDocs.push(id);
+                    }
+                }
+            }
+            if (promptParam) {
+                this.input = promptParam;
+                this.$nextTick(() => {
+                    const inputEl = this.$el.querySelector('.chat-input input[type="text"]');
+                    if (inputEl) inputEl.focus();
+                });
+                window.history.replaceState({}, '', '/chat');
+            }
+            this.$watch('input', (val) => {
+                const inputEl = this.$el.querySelector('.chat-input input[type="text"]');
+                if (!inputEl) return;
+                const cursorPos = inputEl.selectionStart != null ? inputEl.selectionStart : (val || '').length;
+                const textBefore = (val || '').substring(0, cursorPos);
+                const hashMatch = textBefore.match(/(^|[ ])#([^ ]*)$/);
+                if (hashMatch) {
+                    this.showTagMention = true;
+                    this.tagMentionFilter = hashMatch[2];
+                    this.showDocMention = false;
+                    this.docMentionFilter = '';
+                    return;
+                }
+                const atMatch = textBefore.match(/(^|[ ])@([^ ]*)$/);
+                if (atMatch) {
+                    this.showDocMention = true;
+                    this.docMentionFilter = atMatch[2];
+                    this.showTagMention = false;
+                    this.tagMentionFilter = '';
+                    return;
+                }
+                this.showTagMention = false;
+                this.tagMentionFilter = '';
+                this.showDocMention = false;
+                this.docMentionFilter = '';
+            });
         },
         filteredConversations() {
             if (!this.convSearch.trim()) return this.conversations;
@@ -229,44 +763,88 @@ function agentChat() {
             const q = this.tagMentionFilter.toLowerCase();
             return this.tags.filter(t => t.name.toLowerCase().includes(q));
         },
+        filteredMentionDocs() {
+            let docs = this.documents.filter(d => !this.selectedDocs.includes(d.id));
+            if (this.docMentionFilter.trim()) {
+                const q = this.docMentionFilter.toLowerCase();
+                docs = docs.filter(d => d.filename.toLowerCase().includes(q));
+            }
+            return docs.slice(0, 15);
+        },
         getDocName(docId) {
             const d = this.documents.find(x => x.id === docId);
             return d ? d.filename : docId.substring(0, 8) + '...';
         },
+        // Docs rendered as plain chips in the input row, excluding ones that
+        // are already represented by an in-progress upload tag (those render
+        // separately with their upload status). Used only for the truncated
+        // chip row + "+N more" count.
+        visibleDocChips() {
+            return this.selectedDocs.filter(did => !this.uploadFiles.some(u => u.docId === did));
+        },
+        // Every document currently in the chat context — what the "Selected
+        // documents" modal lists so the user can review/remove the full set.
+        allSelectedDocs() {
+            return this.selectedDocs;
+        },
+        // Remove a doc from the selection and drop any matching upload tag so
+        // it disappears from both the chip row and the upload list.
+        removeSelectedDoc(did) {
+            this.selectedDocs = this.selectedDocs.filter(d => d !== did);
+            this.uploadFiles = this.uploadFiles.filter(u => u.docId !== did);
+        },
+        clearSelectedDocs() {
+            // Also clears tag selections: tag_ids are merged into the query
+            // server-side, so leaving active tags would silently re-add their
+            // documents. Keep in-progress uploads (still uploading/indexing).
+            this.selectedDocs = [];
+            this.selectedTags = [];
+            this.selectedTagChips = [];
+            this.uploadFiles = this.uploadFiles.filter(
+                u => u.status === 'uploading' || u.status === 'indexing');
+        },
+        openAttachModal() {
+            this.modalSelectedDocs = [...this.selectedDocs];
+            this.docFilter = '';
+            this.attachTab = 'select';
+            this.showAttachModal = true;
+            this.$nextTick(() => { if (this.$refs.attachSearch) this.$refs.attachSearch.focus(); });
+        },
+        closeAttachModal() {
+            this.showAttachModal = false;
+            this.docFilter = '';
+        },
+        confirmAttachModal() {
+            this.selectedDocs = [...this.modalSelectedDocs];
+            this.showAttachModal = false;
+            this.docFilter = '';
+        },
         handleInputChange(event) {
-            const val = this.input;
-            const cursorPos = event.target.selectionStart || val.length;
-            const textBefore = val.substring(0, cursorPos);
-            const lastAtIdx = textBefore.lastIndexOf('@');
-            if (lastAtIdx !== -1 && (lastAtIdx === 0 || textBefore[lastAtIdx - 1] === ' ')) {
-                const afterAt = textBefore.substring(lastAtIdx + 1);
-                if (!afterAt.includes(' ')) {
-                    this.showTagMention = true;
-                    this.tagMentionFilter = afterAt;
-                    return;
-                }
-            }
-            this.showTagMention = false;
-            this.tagMentionFilter = '';
         },
         async selectTagMention(tag) {
-            // Remove the @text from input
-            const cursorPos = this.input.length;
-            const lastAtIdx = this.input.lastIndexOf('@');
-            if (lastAtIdx !== -1) {
-                this.input = this.input.substring(0, lastAtIdx) + this.input.substring(cursorPos).replace(/^\S*/, '');
-                this.input = this.input.trim();
+            const lastHashIdx = this.input.lastIndexOf('#');
+            if (lastHashIdx !== -1) {
+                this.input = this.input.substring(0, lastHashIdx).trim();
             }
             this.showTagMention = false;
             this.tagMentionFilter = '';
-            // Add as chip if not already present
             if (!this.selectedTagChips.find(c => c.id === tag.id)) {
                 this.selectedTagChips.push({ id: tag.id, name: tag.name, color: tag.color });
-                // Auto-select tag's docs
                 await this.onTagToggle(tag.id, true);
                 if (!this.selectedTags.includes(tag.id)) {
                     this.selectedTags.push(tag.id);
                 }
+            }
+        },
+        selectDocMention(doc) {
+            const lastAtIdx = this.input.lastIndexOf('@');
+            if (lastAtIdx !== -1) {
+                this.input = this.input.substring(0, lastAtIdx).trim();
+            }
+            this.showDocMention = false;
+            this.docMentionFilter = '';
+            if (!this.selectedDocs.includes(doc.id)) {
+                this.selectedDocs.push(doc.id);
             }
         },
         async removeTagChip(tagId) {
@@ -298,7 +876,7 @@ function agentChat() {
             } catch(e) {}
         },
         async handleChatUpload(event) {
-            const files = event.target.files;
+            const files = event.target?.files || event.dataTransfer?.files;
             if (!files || files.length === 0) return;
             for (const file of files) {
                 const entry = { file, docId: null, status: 'uploading', filename: file.name };
@@ -326,6 +904,9 @@ function agentChat() {
                                 if (!this.selectedDocs.includes(doc.id)) {
                                     this.selectedDocs.push(doc.id);
                                 }
+                                if (this.showAttachModal && !this.modalSelectedDocs.includes(doc.id)) {
+                                    this.modalSelectedDocs.push(doc.id);
+                                }
                                 break;
                             } else if (st === 'failed') {
                                 entry.status = 'failed';
@@ -343,16 +924,200 @@ function agentChat() {
             }
             event.target.value = '';
         },
+        detectToolError(toolName, result) {
+            if (!result) return null;
+            let payload = result;
+            if (typeof payload === 'string') {
+                try { payload = JSON.parse(payload); } catch (e) { return null; }
+            }
+            if (typeof payload !== 'object') return null;
+            const explicitOk = payload.ok === true || payload.success === true;
+            const errMsg = payload.error || payload.detail || payload.message_error || null;
+            const looksFailed = !!errMsg || payload.ok === false || payload.success === false || !!payload.exception;
+            if (explicitOk || !looksFailed) return null;
+            const message = (typeof errMsg === 'string' && errMsg.trim())
+                ? errMsg
+                : 'The tool returned an error.';
+            const connectors = [
+                ['slack', 'Slack'], ['notion', 'Notion'], ['github', 'GitHub'],
+                ['google_drive', 'Google Drive'], ['google_sheets', 'Google Sheets'],
+                ['google_calendar', 'Google Calendar'], ['gmail', 'Gmail'],
+                ['linear', 'Linear'], ['jira', 'Jira'], ['hubspot', 'HubSpot'],
+                ['dropbox', 'Dropbox'], ['s3', 'S3'], ['confluence', 'Confluence'],
+                ['stripe', 'Stripe'], ['salesforce', 'Salesforce'],
+            ];
+            const hay = ((toolName || '') + ' ' + message).toLowerCase();
+            const match = connectors.find(([id, name]) =>
+                hay.includes(id) || hay.includes(name.toLowerCase()));
+            return {
+                message,
+                connectorId: match ? match[0] : null,
+                connectorName: match ? match[1] : null,
+            };
+        },
         showSources(sources, searchAttempts) {
             this.currentSources = sources || [];
             this.currentSearchAttempts = searchAttempts || [];
         },
+        openSourceModal(src) {
+            this.sourceModalData = { ...src };
+            this.showSourceModal = true;
+        },
+        openComputationModal(comp) {
+            this.computationModalData = { ...comp };
+            this.showComputationModal = true;
+        },
+        // Encode raw SVG as a base64 data URL so it can be rendered as a
+        // passive <img> (no script execution) instead of being injected into
+        // the DOM via x-html. unescape(encodeURIComponent(...)) handles
+        // unicode safely before btoa.
+        svgDataUrl(svgStr) {
+            try {
+                const utf8 = unescape(encodeURIComponent(String(svgStr || '')));
+                return 'data:image/svg+xml;base64,' + btoa(utf8);
+            } catch (e) {
+                return '';
+            }
+        },
+        // Pre-render: substitute provenance markers with hoverable chips.
+        // Markers come from IDA per the system prompt:
+        //   [[py]]value[[/py]]            → computed in execute_python
+        //   [[doc:DOCUMENT_ID]]value[[/doc]] → extracted from a document
+        // We escape the inner value to keep it safe inside a span, and
+        // tag the span with data attributes the click handler reads.
+        renderAssistantContent(msg) {
+            const raw = msg.content || '';
+            const esc = (s) => String(s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            // Build doc filename map for the tooltip text.
+            const docNames = {};
+            (msg.sources || []).forEach(s => {
+                if (s && s.document_id && s.filename) docNames[s.document_id] = s.filename;
+            });
+            const compMap = {};
+            (msg.computations || []).forEach(c => { if (c && c.cid) compMap[c.cid] = c; });
+            // Markers carry their cid explicitly: [[py:py3]]value[[/py]].
+            // Fall back to ordinal counting for legacy [[py]]value[[/py]]
+            // emitted by older messages before the cid syntax existed.
+            let pyOrdinal = 0;
+            const replaced = raw
+                .replace(/\[\[py(?::([a-zA-Z0-9_]+))?\]\]([\s\S]*?)\[\[\/py\]\]/g, (_m, explicitCid, val) => {
+                    pyOrdinal += 1;
+                    const cid = explicitCid || ('py' + pyOrdinal);
+                    const has = !!compMap[cid];
+                    const tip = has
+                        ? 'Computed in Python — click for code & output'
+                        : 'Computed in Python';
+                    return `<span class="value-chip computed${has ? '' : ' no-detail'}" `
+                        + `data-cid="${esc(cid)}" role="button" tabindex="0" `
+                        + `aria-label="${esc(tip)}">`
+                        + `<i class="fas fa-code value-chip-icon" aria-hidden="true"></i>`
+                        + `<span class="value-chip-text">${esc(val.trim())}</span>`
+                        + (has ? `<span class="value-chip-link">View code →</span>` : '')
+                        + `</span>`;
+                })
+                .replace(/\[\[doc:([a-zA-Z0-9_\-]+)\]\]([\s\S]*?)\[\[\/doc\]\]/g, (_m, did, val) => {
+                    const fname = docNames[did] || did;
+                    const tip = 'From document: ' + fname;
+                    return `<span class="value-chip extracted" `
+                        + `data-did="${esc(did)}" role="button" tabindex="0" `
+                        + `aria-label="${esc(tip)}">`
+                        + `<i class="fas fa-file-alt value-chip-icon" aria-hidden="true"></i>`
+                        + `<span class="value-chip-text">${esc(val.trim())}</span>`
+                        + `<span class="value-chip-link">Open doc →</span>`
+                        + `</span>`;
+                });
+            return renderMarkdown(replaced);
+        },
+        handleValueChipClick(ev, msg) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            ev.stopPropagation();
+            ev.preventDefault();
+            const cid = chip.getAttribute('data-cid');
+            const did = chip.getAttribute('data-did');
+            if (cid && msg.computations) {
+                const comp = msg.computations.find(c => c.cid === cid);
+                if (comp) this.openComputationModal(comp);
+                return;
+            }
+            if (did) {
+                window.open('/documents/' + did, '_blank');
+            }
+        },
+        // Rich hover tooltip for provenance chips: shows the related chunk
+        // text plus document name / page range (doc chips) or the captured
+        // code (computed chips). Falls back to whatever metadata is available.
+        handleChipHover(ev, msg) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            const did = chip.getAttribute('data-did');
+            const cid = chip.getAttribute('data-cid');
+            let tip = null;
+            if (did) {
+                const srcs = (msg.sources || []).filter(s => s && s.document_id === did);
+                const primary = srcs[0] || null;
+                let pages = '';
+                if (primary && primary.start_page != null) {
+                    pages = 'p. ' + primary.start_page
+                        + ((primary.end_page != null && primary.end_page !== primary.start_page)
+                            ? '–' + primary.end_page : '');
+                }
+                tip = {
+                    kind: 'extracted',
+                    heading: (primary && primary.title) ? primary.title : 'Extracted from document',
+                    filename: primary ? (primary.filename || this.getDocName(did)) : this.getDocName(did),
+                    pages: pages,
+                    summary: primary ? (primary.summary || '') : '',
+                    text: primary ? (primary.text_preview || '') : '',
+                    multi: srcs.length,
+                };
+            } else if (cid) {
+                const comp = (msg.computations || []).find(c => c.cid === cid);
+                tip = {
+                    kind: 'computed',
+                    heading: 'Computed in Python',
+                    filename: '',
+                    pages: '',
+                    summary: comp && comp.stdout ? comp.stdout : '',
+                    text: comp && comp.code ? comp.code : '',
+                    multi: 0,
+                };
+            }
+            if (!tip) return;
+            const rect = chip.getBoundingClientRect();
+            const placeBelow = rect.top < 240;
+            this.chipTip = {
+                show: true,
+                x: Math.max(8, Math.min(rect.left, window.innerWidth - 336)),
+                y: placeBelow ? rect.bottom : rect.top,
+                placement: placeBelow ? 'below' : 'above',
+                ...tip,
+            };
+        },
+        handleChipLeave(ev) {
+            const chip = ev.target.closest('.value-chip');
+            if (!chip) return;
+            const related = ev.relatedTarget;
+            if (related && chip.contains(related)) return;
+            this.chipTip.show = false;
+        },
         async sendMessage(text) {
+            // Single-flight: ignore re-entry while a request is in flight.
+            if (this.loading) return;
             const msg = text || this.input.trim();
             if (!msg) return;
             this.input = '';
-            this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null });
+            this.showTagMention = false;
+            this.showDocMention = false;
+            this.messages.push({ role: 'user', content: msg, sources: null, source_type: null, searchAttempts: null, computations: null });
             this.loading = true;
+            // Token to detect if the user switched conversations mid-flight.
+            // (requestConversationId is captured AFTER the auto-create
+            // block below — otherwise a brand-new conversation makes
+            // every response look stale and gets dropped.)
+            const requestToken = ++this._sendToken;
             this.scrollToBottom();
 
             // Auto-create conversation if none active
@@ -370,38 +1135,67 @@ function agentChat() {
                 } catch(e) {}
             }
 
+            // Non-streaming chat. The SSE endpoint exists at
+            // /api/agent/chat/stream, but Cloud Run / Replit's autoscale
+            // proxy buffers SSE responses, so events arrive in a single
+            // flush at the end — making the UI look "stuck running" until
+            // it suddenly fills in. The plain JSON endpoint avoids this.
+            this.startThinkingIndicator();
+            const requestConversationId = this.currentConversationId;
+            const isStale = () =>
+                requestToken !== this._sendToken ||
+                requestConversationId !== this.currentConversationId;
             try {
                 const res = await fetch('/api/agent/chat', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         message: msg,
                         conversation_id: this.currentConversationId,
                         document_ids: this.selectedDocs,
-                        tag_ids: this.selectedTags
+                        tag_ids: this.selectedTags,
+                        enrich_input: this.enrichInput
                     })
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.tool_calls) {
+                    // Drop the response if the user navigated away from this
+                    // conversation (or sent another message somehow); the
+                    // server already persisted it, so a refresh restores it.
+                    if (isStale()) return;
+                    if (Array.isArray(data.tool_calls)) {
                         for (const tc of data.tool_calls) {
-                            this.messages.push({ role: 'tool', content: JSON.stringify(tc.result, null, 2), tool_name: tc.name, sources: null, source_type: null, searchAttempts: null });
+                            const errInfo = this.detectToolError(tc.name, tc.result);
+                            this.messages.push({
+                                role: 'tool',
+                                content: typeof tc.result === 'string'
+                                    ? tc.result
+                                    : JSON.stringify(tc.result, null, 2),
+                                tool_name: tc.name,
+                                is_error: !!errInfo,
+                                error_message: errInfo ? errInfo.message : null,
+                                connector_id: errInfo ? errInfo.connectorId : null,
+                                connector_name: errInfo ? errInfo.connectorName : null,
+                                sources: null, source_type: null,
+                                searchAttempts: null, computations: null,
+                            });
                         }
                     }
                     const msgSources = (data.sources && data.sources.length > 0) ? data.sources : null;
                     const msgSearchAttempts = (data.search_attempts && data.search_attempts.length > 0) ? data.search_attempts : null;
+                    const msgComputations = (data.computations && data.computations.length > 0) ? data.computations : null;
                     this.messages.push({
                         role: 'assistant',
                         content: data.response || data.detail || 'No response',
                         sources: msgSources,
                         source_type: data.source_type || null,
-                        searchAttempts: msgSearchAttempts
+                        searchAttempts: msgSearchAttempts,
+                        computations: msgComputations,
                     });
-                    // Update right panel
                     if (msgSources || msgSearchAttempts) {
                         this.currentSources = msgSources || [];
                         this.currentSearchAttempts = msgSearchAttempts || [];
                     }
-                    // Update conversation title in sidebar
                     if (this.currentConversationId) {
                         const ci = this.conversations.find(c => c.id === this.currentConversationId);
                         if (ci && ci.title === 'New conversation') {
@@ -409,10 +1203,58 @@ function agentChat() {
                         }
                     }
                 } else {
-                    this.messages.push({ role: 'assistant', content: 'Error: request failed', sources: null, source_type: null, searchAttempts: null });
+                    this.messages.push({
+                        role: 'assistant',
+                        content: 'Error: request failed (' + res.status + ')',
+                        sources: null, source_type: null,
+                        searchAttempts: null, computations: null,
+                    });
                 }
-            } catch(e) { this.messages.push({ role: 'assistant', content: 'Error: ' + e.message, sources: null, source_type: null, searchAttempts: null }); }
-            finally { this.loading = false; this.scrollToBottom(); }
+            } catch(e) {
+                if (!isStale()) {
+                    this.messages.push({
+                        role: 'assistant',
+                        content: 'Error: ' + e.message,
+                        sources: null, source_type: null, searchAttempts: null, computations: null,
+                    });
+                }
+            }
+            finally {
+                this.stopThinkingIndicator();
+                this.loading = false;
+                this.scrollToBottom();
+            }
+        },
+        startThinkingIndicator() {
+            // Defensive: clear any prior intervals so we never leak timers.
+            this.stopThinkingIndicator();
+            const hints = [
+                'Thinking…',
+                'Reading your request…',
+                'Searching documents…',
+                'Reasoning over results…',
+                'Calling tools…',
+                'Synthesizing an answer…',
+                'Almost there…',
+                'Still working — complex queries can take a minute…',
+            ];
+            this.thinkingActive = true;
+            this.thinkingElapsed = 0;
+            this.thinkingHint = hints[0];
+            const startedAt = Date.now();
+            let hintIdx = 0;
+            this._thinkingTimer = setInterval(() => {
+                this.thinkingElapsed = Math.floor((Date.now() - startedAt) / 1000);
+            }, 1000);
+            this._thinkingHintTimer = setInterval(() => {
+                hintIdx = Math.min(hintIdx + 1, hints.length - 1);
+                this.thinkingHint = hints[hintIdx];
+            }, 6000);
+        },
+        stopThinkingIndicator() {
+            this.thinkingActive = false;
+            if (this._thinkingTimer) { clearInterval(this._thinkingTimer); this._thinkingTimer = null; }
+            if (this._thinkingHintTimer) { clearInterval(this._thinkingHintTimer); this._thinkingHintTimer = null; }
         },
         newConversation() {
             this.currentConversationId = null;
@@ -437,21 +1279,101 @@ function agentChat() {
                             tool_name: m.tool_name || null,
                             sources: m.sources || null,
                             source_type: m.source_type || null,
-                            searchAttempts: null
+                            searchAttempts: null,
+                            computations: m.computations || null,
                         });
                     }
                     this.scrollToBottom();
                 }
             } catch(e) {}
         },
-        async deleteConversation(convId) {
+        toggleEnrichInput() {
+            this.enrichInput = !this.enrichInput;
             try {
-                await fetch('/api/agent/conversations/' + convId, { method: 'DELETE' });
-                this.conversations = this.conversations.filter(c => c.id !== convId);
-                if (this.currentConversationId === convId) {
+                localStorage.setItem('ida.enrichInput', this.enrichInput ? '1' : '0');
+            } catch(e) {}
+        },
+        // ----- Conversation actions menu -----
+        openConvMenu(convId, ev) {
+            this.convMenuOpenId = (this.convMenuOpenId === convId) ? null : convId;
+        },
+        openRenameModal(conv) {
+            this.renameTarget = conv;
+            this.renameDraft = conv.title || '';
+            this.showRenameModal = true;
+            this.$nextTick(() => {
+                if (this.$refs.renameInput) {
+                    this.$refs.renameInput.focus();
+                    this.$refs.renameInput.select();
+                }
+            });
+        },
+        async confirmRename() {
+            const conv = this.renameTarget;
+            const title = (this.renameDraft || '').trim();
+            if (!conv || !title) return;
+            try {
+                const res = await fetch('/api/agent/conversations/' + conv.id, {
+                    method: 'PATCH',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ title }),
+                });
+                if (res.ok) {
+                    const updated = await res.json();
+                    const ci = this.conversations.find(c => c.id === conv.id);
+                    if (ci) {
+                        ci.title = updated.title;
+                        ci.tags = updated.tags || ci.tags || [];
+                    }
+                }
+            } catch(e) {}
+            this.showRenameModal = false;
+            this.renameTarget = null;
+        },
+        openTagsModal(conv) {
+            this.tagsTarget = conv;
+            this.tagsDraft = (conv.tags || []).map(t => t.id);
+            this.showTagsModal = true;
+        },
+        toggleTagsDraft(tagId) {
+            const i = this.tagsDraft.indexOf(tagId);
+            if (i >= 0) this.tagsDraft.splice(i, 1);
+            else this.tagsDraft.push(tagId);
+        },
+        async confirmTags() {
+            const conv = this.tagsTarget;
+            if (!conv) return;
+            try {
+                const res = await fetch('/api/agent/conversations/' + conv.id + '/tags', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tag_ids: this.tagsDraft }),
+                });
+                if (res.ok) {
+                    const updated = await res.json();
+                    const ci = this.conversations.find(c => c.id === conv.id);
+                    if (ci) ci.tags = updated.tags || [];
+                }
+            } catch(e) {}
+            this.showTagsModal = false;
+            this.tagsTarget = null;
+        },
+        openDeleteConfirm(conv) {
+            this.deleteTarget = conv;
+            this.showDeleteConfirm = true;
+        },
+        async confirmDelete() {
+            const conv = this.deleteTarget;
+            if (!conv) { this.showDeleteConfirm = false; return; }
+            try {
+                await fetch('/api/agent/conversations/' + conv.id, { method: 'DELETE' });
+                this.conversations = this.conversations.filter(c => c.id !== conv.id);
+                if (this.currentConversationId === conv.id) {
                     this.newConversation();
                 }
             } catch(e) {}
+            this.showDeleteConfirm = false;
+            this.deleteTarget = null;
         },
         scrollToBottom() {
             this.$nextTick(() => {

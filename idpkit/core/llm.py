@@ -14,6 +14,8 @@ from typing import Optional
 
 import litellm
 
+litellm.drop_params = True
+
 from .exceptions import LLMError, LLMMaxRetriesError
 from .schemas import LLMResponse
 
@@ -21,6 +23,33 @@ logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose logging by default
 litellm.suppress_debug_info = True
+
+
+def _resolve_api_key_for_model(model: str) -> Optional[str]:
+    """Return the correct API key for a model based on its provider prefix.
+
+    LiteLLM expects specific env var names per provider, but users may have
+    differently-named keys (e.g. GOOGLE_API_KEY instead of GEMINI_API_KEY).
+    This function bridges that gap.
+    """
+    m = model.lower()
+
+    if m.startswith("gemini/") or m.startswith("google/"):
+        return (
+            os.getenv("GEMINI_API_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+        )
+
+    if m.startswith("openrouter/"):
+        return os.getenv("OPENROUTER_API_KEY")
+
+    if any(m.startswith(p) for p in ("claude-", "anthropic/")):
+        return os.getenv("ANTHROPIC_API_KEY")
+
+    if any(m.startswith(p) for p in ("gpt-", "o1-", "o3-", "o4-", "openai/", "ft:gpt-")):
+        return os.getenv("OPENAI_API_KEY") or os.getenv("CHATGPT_API_KEY")
+
+    return None
 
 
 @dataclass
@@ -47,7 +76,7 @@ class LLMClient:
         response = client.complete("Explain quantum computing")
     """
 
-    default_model: str = "gpt-4o-2024-11-20"
+    default_model: str = "gpt-4o-mini"
     temperature: float = 0
     max_retries: int = 10
     retry_delay: float = 1.0
@@ -56,19 +85,25 @@ class LLMClient:
 
     def _get_completion_kwargs(
         self,
-        prompt: str,
+        prompt,
         model: Optional[str] = None,
         chat_history: Optional[list] = None,
         **kwargs,
     ) -> dict:
-        """Build kwargs dict for litellm.completion/acompletion."""
+        """Build kwargs dict for litellm.completion/acompletion.
+
+        ``prompt`` may be a plain string **or** a list of content blocks
+        for multimodal messages (e.g. ``[{"type": "text", ...}, {"type": "image_url", ...}]``).
+        """
         model = model or self.default_model
+
+        content = prompt if isinstance(prompt, list) else prompt
 
         if chat_history:
             messages = list(chat_history)
-            messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "user", "content": content})
         else:
-            messages = [{"role": "user", "content": prompt}]
+            messages = [{"role": "user", "content": content}]
 
         completion_kwargs = {
             "model": model,
@@ -76,9 +111,15 @@ class LLMClient:
             "temperature": kwargs.get("temperature", self.temperature),
         }
 
-        # Pass API key if explicitly set
         if self.api_key:
             completion_kwargs["api_key"] = self.api_key
+        else:
+            resolved_key = _resolve_api_key_for_model(model)
+            if resolved_key:
+                completion_kwargs["api_key"] = resolved_key
+                logger.debug("Resolved API key for model %s (len=%d)", model, len(resolved_key))
+            else:
+                logger.debug("No API key resolved for model %s, relying on LiteLLM env defaults", model)
         if self.api_base:
             completion_kwargs["api_base"] = self.api_base
 
@@ -140,6 +181,16 @@ class LLMClient:
             try:
                 response = litellm.completion(**completion_kwargs)
                 return self._parse_response(response, used_model)
+            except litellm.AuthenticationError as e:
+                logger.error(f"Authentication error for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Authentication failed for {used_model}: {e}"
+                ) from e
+            except litellm.UnsupportedParamsError as e:
+                logger.error(f"Unsupported params for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Unsupported parameters for {used_model}: {e}"
+                ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
@@ -150,7 +201,6 @@ class LLMClient:
                         f"Max retries ({self.max_retries}) reached: {e}"
                     ) from e
 
-        # Should not reach here, but just in case
         raise LLMMaxRetriesError("Max retries reached")
 
     async def acomplete(
@@ -173,6 +223,16 @@ class LLMClient:
             try:
                 response = await litellm.acompletion(**completion_kwargs)
                 return self._parse_response(response, used_model)
+            except litellm.AuthenticationError as e:
+                logger.error(f"Authentication error for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Authentication failed for {used_model}: {e}"
+                ) from e
+            except litellm.UnsupportedParamsError as e:
+                logger.error(f"Unsupported params for model {used_model}: {e}")
+                raise LLMMaxRetriesError(
+                    f"Unsupported parameters for {used_model}: {e}"
+                ) from e
             except Exception as e:
                 logger.warning(f"LLM API error (attempt {attempt + 1}/{self.max_retries}): {e}")
                 if attempt < self.max_retries - 1:
@@ -223,16 +283,11 @@ def get_default_client(
     global _default_client
 
     if _default_client is None or api_key or model:
-        resolved_key = api_key or os.getenv("CHATGPT_API_KEY") or os.getenv("OPENAI_API_KEY")
-        resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-4o-2024-11-20")
-
-        # Set API keys for LiteLLM to discover
-        if resolved_key and not os.getenv("OPENAI_API_KEY"):
-            os.environ["OPENAI_API_KEY"] = resolved_key
+        resolved_model = model or os.getenv("IDP_DEFAULT_MODEL", "gpt-4o-mini")
 
         client = LLMClient(
             default_model=resolved_model,
-            api_key=resolved_key,
+            api_key=api_key,
         )
 
         if not api_key and not model:

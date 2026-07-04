@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -323,6 +324,291 @@ TOOL_DEFINITIONS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_python",
+            "description": (
+                "Execute Python code in a secure E2B cloud sandbox. Use this for "
+                "mathematical computations, data analysis, statistics, code verification, "
+                "generating charts/plots, or any task requiring code execution. "
+                "The sandbox has access to common Python packages (numpy, pandas, "
+                "matplotlib, scipy, etc.). Returns stdout, stderr, results, and any "
+                "generated charts/images."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "The Python code to execute.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 60, max: 300).",
+                    },
+                },
+                "required": ["code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "install_package",
+            "description": (
+                "Install a Python pip package in the E2B sandbox before running code. "
+                "Use this when the code you need to execute requires a package that "
+                "may not be pre-installed in the sandbox."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_name": {
+                        "type": "string",
+                        "description": "The pip package name to install (e.g. 'scikit-learn', 'requests').",
+                    },
+                },
+                "required": ["package_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "browse_web",
+            "description": (
+                "Browse a web page using a real browser in an E2B sandbox. "
+                "Navigates to the URL, renders JavaScript, extracts page content, "
+                "links, metadata, and takes a screenshot. Use this for interactive "
+                "web content, dynamic pages that require JavaScript rendering, "
+                "or when you need a screenshot of a page. For simple lookups, "
+                "prefer web_search or fetch_url instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to browse (e.g. 'https://example.com').",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "Optional: describe what to extract or do on the page.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Execution timeout in seconds (default: 120).",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the web for real-time information using Jina Search API. "
+                "Returns top search results with titles, URLs, and content snippets. "
+                "Use this to find current facts, recent events, or external data "
+                "that is not in the user's uploaded documents."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query describing what to find on the web.",
+                    },
+                    "site": {
+                        "type": "string",
+                        "description": "Optional: restrict search to a specific domain (e.g. 'wikipedia.org').",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": (
+                "Fetch and read the content of a web page URL. Returns the page "
+                "content as clean, readable text (Markdown). Use this after "
+                "web_search to get the full content of a specific search result, "
+                "or to read any publicly accessible URL the user provides."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to fetch (e.g. 'https://example.com/page').",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deep_research",
+            "description": (
+                "Run a Gemini Deep Research task: an autonomous research agent "
+                "that plans, searches the web, and synthesizes a long, cited "
+                "report. Use this for in-depth questions that need broad web "
+                "research and a multi-section written answer (e.g. 'Compare X "
+                "vs Y vs Z across cost, performance, ecosystem, with sources'). "
+                "DO NOT use for quick facts (use web_search), simple lookups, "
+                "or anything answerable from the user's documents. This tool "
+                "is slow — it can take 5–20 minutes — so call it at most "
+                "once per turn and only when the user explicitly asks for a "
+                "deep / comprehensive / research report. The chat UI shows "
+                "live progress (searches, URL reads, synthesis) while it "
+                "runs, so the user is not stuck staring at a spinner. "
+                "Returns the full report markdown in `report`."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "The research question or topic. Phrase it as a "
+                            "concrete brief, e.g. 'Research the history of "
+                            "Google TPUs and compare them to NVIDIA H100 / "
+                            "AMD MI300 on training cost and ecosystem.'"
+                        ),
+                    },
+                    "use_max": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, use the higher-comprehensiveness "
+                            "`deep-research-max-preview` variant (slower but "
+                            "more thorough). Default false (speed-optimized)."
+                        ),
+                    },
+                    "visualization": {
+                        "type": "string",
+                        "enum": ["auto", "none"],
+                        "description": (
+                            "Set to 'auto' if the user explicitly wants the "
+                            "agent to generate charts / infographics. Default "
+                            "'none'."
+                        ),
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_document_map",
+            "description": (
+                "Navigate the Document Map (category-aware Smart Metadata). Use this "
+                "to PRE-FILTER or discover documents by their extracted facets BEFORE "
+                "reading them — e.g. 'all case laws where Judge Smith presided', "
+                "'contracts governed by New York law', 'invoices from Acme Corp'. "
+                "Each document is auto-classified into a category (general, case_law, "
+                "contract, act_legislation, financial_statement, invoice, "
+                "research_paper, resume) and profiled into key/value facets. "
+                "Operations:\n"
+                "- list_categories: list the available document categories.\n"
+                "- stats: counts of total vs. profiled documents and a per-category "
+                "breakdown for the current user.\n"
+                "- list_facets: browse available facet fields and their values with "
+                "document counts (optionally narrowed by category, key, or a search "
+                "term). Use this to discover what you can filter on.\n"
+                "- filter_documents: find documents matching one or more facet "
+                "criteria (each {key, value}); match='all' (AND) or 'any' (OR). "
+                "Returns matching documents with their matched facets — use the "
+                "returned document_id values with other document tools.\n"
+                "- document_facets: list all extracted facets for one document_id."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "list_categories",
+                            "stats",
+                            "list_facets",
+                            "filter_documents",
+                            "document_facets",
+                        ],
+                        "description": "Which Document Map operation to run.",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "(list_facets) Restrict facets to this category key.",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "(list_facets) Restrict to a single facet field key.",
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "(list_facets) Case-insensitive substring filter on facet values.",
+                    },
+                    "criteria": {
+                        "type": "array",
+                        "description": (
+                            "(filter_documents) Facet criteria to match. Each item is "
+                            "{key, value}; values are matched case-insensitively."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "key": {"type": "string"},
+                                "value": {"type": "string"},
+                            },
+                            "required": ["key", "value"],
+                        },
+                    },
+                    "match": {
+                        "type": "string",
+                        "enum": ["all", "any"],
+                        "description": "(filter_documents) AND ('all', default) or OR ('any').",
+                    },
+                    "document_id": {
+                        "type": "string",
+                        "description": "(document_facets) The document to list facets for.",
+                    },
+                },
+                "required": ["operation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "use_skill",
+            "description": (
+                "Load and activate a custom user skill by name. Returns the full "
+                "SKILL.md content with detailed instructions to follow. Use this "
+                "when a task matches one of the user's available skills listed in "
+                "the system prompt. After loading the skill, follow its instructions "
+                "carefully. If the skill includes scripts, execute them using execute_python."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The name of the skill to load (as listed in available skills).",
+                    },
+                },
+                "required": ["skill_name"],
+            },
+        },
+    },
 ]
 
 # Quick lookup by name
@@ -335,10 +621,27 @@ _TOOL_MAP: dict[str, dict] = {
 # Helper: traverse a tree index
 # ======================================================================
 
+def _unwrap_tree(tree_index: Any) -> list:
+    """Extract the node list from a tree index wrapper.
+
+    The stored tree_index has the shape
+    ``{"doc_name": ..., "doc_description": ..., "structure": [...]}``.
+    This helper returns the ``structure`` list so that flatten / find
+    helpers operate on the actual section nodes.
+    """
+    if isinstance(tree_index, dict) and "structure" in tree_index:
+        return tree_index["structure"]
+    if isinstance(tree_index, list):
+        return tree_index
+    return [tree_index] if tree_index else []
+
+
 def _flatten_tree(tree: Any) -> list[dict]:
     """Recursively flatten a tree index into a list of node dicts."""
     nodes: list[dict] = []
     if isinstance(tree, dict):
+        if "structure" in tree and "doc_name" in tree:
+            return _flatten_tree(tree["structure"])
         node_copy = {k: v for k, v in tree.items() if k != "nodes"}
         nodes.append(node_copy)
         for child in tree.get("nodes", []):
@@ -352,6 +655,8 @@ def _flatten_tree(tree: Any) -> list[dict]:
 def _find_node_by_id(tree: Any, node_id: str) -> dict | None:
     """Find a specific node in the tree by ``node_id``."""
     if isinstance(tree, dict):
+        if "structure" in tree and "doc_name" in tree:
+            return _find_node_by_id(tree["structure"], node_id)
         if tree.get("node_id") == node_id:
             return tree
         for child in tree.get("nodes", []):
@@ -418,31 +723,99 @@ async def _execute_search_document(
 
     try:
         response = await llm.acomplete(ranking_prompt)
-        # Parse the LLM response to get relevant node IDs
         content = response.content.strip()
-        # Strip markdown code fences if present
+        logger.info("Search ranking LLM response: %s", content[:500])
         if content.startswith("```"):
             content = content.split("\n", 1)[-1]
             content = content.rsplit("```", 1)[0]
-        relevant_ids = json.loads(content)
-    except Exception:
-        # Fallback: return all nodes
+        relevant_ids = json.loads(content.strip())
+        relevant_ids = [str(rid) for rid in relevant_ids]
+    except Exception as exc:
+        logger.warning("Failed to parse ranking response: %s", exc)
         relevant_ids = [n.get("node_id") for n in all_nodes[:5]]
 
-    # Gather full data for matched nodes
+    logger.info("Relevant IDs from ranking: %s", relevant_ids)
+
+    node_id_map = {}
+    for node in all_nodes:
+        nid = node.get("node_id")
+        if nid:
+            node_id_map[str(nid)] = node
+
     results = []
     for nid in relevant_ids:
+        node = node_id_map.get(str(nid))
+        if node:
+            results.append({
+                "node_id": nid,
+                "title": node.get("title"),
+                "summary": node.get("summary") or node.get("prefix_summary") or "",
+                "text": node.get("text") or "",
+                "start_page": node.get("start_index"),
+                "end_page": node.get("end_index"),
+            })
+
+    # Load PDF page text — needed for text fallback search and previews
+    page_list = None
+    pdf_formats = {"pdf"}
+    if doc.file_path and getattr(doc, "format", None) in pdf_formats:
+        try:
+            from idpkit.api.deps import get_storage
+            from idpkit.engine.page_index import get_page_tokens
+            from io import BytesIO
+
+            storage = get_storage()
+            pdf_bytes = storage.load(doc.file_path)
+            page_list = get_page_tokens(BytesIO(pdf_bytes), pdf_parser="PyMuPDF")
+        except Exception as exc:
+            logger.warning("Could not load PDF for search: %s", exc)
+
+    # Fallback: if LLM ranking found nothing, do keyword search in page text
+    if not results and page_list and query:
+        logger.info("LLM ranking returned no results; falling back to keyword search for '%s'", query)
+        query_lower = query.lower()
+        query_terms = query_lower.split()
+        scored_nodes = []
         for node in all_nodes:
-            if node.get("node_id") == nid:
-                results.append({
-                    "node_id": nid,
-                    "title": node.get("title"),
-                    "summary": node.get("summary") or node.get("prefix_summary") or "",
-                    "text_preview": (node.get("text") or "")[:500],
-                    "start_page": node.get("start_index"),
-                    "end_page": node.get("end_index"),
-                })
-                break
+            s = (node.get("start_index") or 1) - 1
+            e = node.get("end_index") or s + 1
+            section_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            ).lower()
+            score = sum(1 for term in query_terms if term in section_text)
+            if score > 0:
+                scored_nodes.append((score, node))
+        scored_nodes.sort(key=lambda x: -x[0])
+        for score, node in scored_nodes[:5]:
+            s = (node.get("start_index") or 1) - 1
+            e = node.get("end_index") or s + 1
+            section_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            )
+            results.append({
+                "node_id": node.get("node_id"),
+                "title": node.get("title"),
+                "summary": node.get("summary") or node.get("prefix_summary") or "",
+                "text": section_text[:2000],
+                "start_page": node.get("start_index"),
+                "end_page": node.get("end_index"),
+            })
+        logger.info("Keyword fallback found %d results", len(results))
+
+    # Fill in text for results that lack it (page_list already loaded above)
+    if page_list:
+        for r in results:
+            if r.get("text"):
+                continue
+            s = (r.get("start_page") or 1) - 1
+            e = r.get("end_page") or s + 1
+            pages_text = "\n".join(
+                page_list[i][0] for i in range(max(0, s), min(e, len(page_list)))
+            )
+            r["text"] = pages_text[:2000]
+
+    for r in results:
+        r["text_preview"] = (r.pop("text", "") or "")[:1500]
 
     return {
         "document_id": document_id,
@@ -1086,6 +1459,173 @@ async def _execute_compose_with_context(
 
 
 # ======================================================================
+# Jina web search / fetch tools (delegated to shared utility)
+# ======================================================================
+
+from idpkit.core.web_search import web_search as _shared_web_search
+from idpkit.core.web_search import fetch_url as _shared_fetch_url
+from idpkit.agent.e2b_tools import execute_python as _e2b_execute_python
+from idpkit.agent.e2b_tools import install_package as _e2b_install_package
+from idpkit.agent.e2b_tools import browse_web as _e2b_browse_web
+from idpkit.agent.deep_research_tools import deep_research as _gemini_deep_research
+
+
+async def _execute_web_search(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    return await _shared_web_search(
+        query=args.get("query", ""),
+        site=args.get("site"),
+    )
+
+
+async def _execute_fetch_url(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    return await _shared_fetch_url(url=args.get("url", ""))
+
+
+async def _execute_execute_python(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    timeout = min(args.get("timeout", 60), 300)
+    return await _e2b_execute_python(code=args.get("code", ""), timeout=timeout)
+
+
+async def _execute_install_package(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    return await _e2b_install_package(package_name=args.get("package_name", ""))
+
+
+async def _execute_browse_web(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    timeout = min(args.get("timeout", 120), 300)
+    return await _e2b_browse_web(
+        url=args.get("url", ""),
+        task=args.get("task", ""),
+        timeout=timeout,
+    )
+
+
+async def _execute_deep_research(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    viz = args.get("visualization")
+    if viz not in ("auto", "on"):
+        viz = None
+    return await _gemini_deep_research(
+        prompt=args.get("prompt", ""),
+        use_max=bool(args.get("use_max", False)),
+        visualization=viz,
+    )
+
+
+async def _execute_query_document_map(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    """Navigate the Document Map (category-aware smart metadata facets)."""
+    from idpkit.metadata import categories as cat_registry
+    from idpkit.metadata import queries as md_queries
+
+    user_id = (args.get("_user_id") or "").strip()
+    if not user_id:
+        return {"error": "User context not available for Document Map queries."}
+
+    operation = (args.get("operation") or "").strip()
+    # When the user attached documents / a knowledge base, the chat layer injects
+    # the resolved document set here so the map is restricted to that scope. IDA
+    # then picks files *within* the attached KB; None means the whole library.
+    scope_doc_ids = args.get("_scope_doc_ids")
+
+    if operation == "list_categories":
+        return {"operation": operation, "categories": cat_registry.list_categories()}
+
+    if operation == "stats":
+        return {
+            "operation": operation,
+            **(await md_queries.get_stats(db, user_id, doc_ids=scope_doc_ids)),
+        }
+
+    if operation == "list_facets":
+        key = args.get("key") or None
+        search = (args.get("search") or "").strip() or None
+        # Browsing all facets hides singleton values (a value carried by only one
+        # document can't group a set — pure noise); drilling into a key or
+        # searching keeps min_count=1 so a specific entity stays findable. This
+        # mirrors the Document Map UI so IDA sees usable grouping dimensions.
+        facets = await md_queries.get_facets(
+            db,
+            user_id,
+            category=args.get("category") or None,
+            key=key,
+            search=search,
+            min_count=1 if (search or key) else 2,
+            doc_ids=scope_doc_ids,
+        )
+        return {"operation": operation, "facets": facets}
+
+    if operation == "filter_documents":
+        raw = args.get("criteria") or []
+        criteria = [
+            {"key": c.get("key"), "value": c.get("value")}
+            for c in raw
+            if isinstance(c, dict) and c.get("key") and c.get("value")
+        ]
+        if not criteria:
+            return {
+                "error": (
+                    "filter_documents requires a non-empty 'criteria' list of "
+                    "{key, value} pairs. Use operation='list_facets' to discover "
+                    "filterable keys and values."
+                )
+            }
+        match = "any" if args.get("match") == "any" else "all"
+        docs = await md_queries.filter_documents(
+            db, user_id, criteria, match=match, doc_ids=scope_doc_ids
+        )
+        # Alias the document id as `document_id` too, so the model can feed it
+        # straight into search_document / extract_data / etc.
+        for d in docs:
+            d["document_id"] = d.get("id")
+        return {
+            "operation": operation,
+            "match": match,
+            "criteria": criteria,
+            "count": len(docs),
+            "documents": docs,
+        }
+
+    if operation == "document_facets":
+        doc_id = (args.get("document_id") or "").strip()
+        if not doc_id:
+            return {"error": "document_facets requires a 'document_id'."}
+        facets = await md_queries.get_document_facets(db, doc_id, owner_id=user_id)
+        return {"operation": operation, "document_id": doc_id, "facets": facets}
+
+    return {
+        "error": (
+            f"Unknown operation '{operation}'. Valid operations: list_categories, "
+            "stats, list_facets, filter_documents, document_facets."
+        )
+    }
+
+
+async def _execute_use_skill(
+    args: dict, llm: LLMClient, db: AsyncSession
+) -> dict:
+    from idpkit.agent.skills import get_skill_content
+    skill_name = args.get("skill_name", "").strip()
+    user_id = args.get("_user_id", "")
+    if not skill_name:
+        return {"error": "skill_name is required."}
+    if not user_id:
+        return {"error": "User context not available for skill loading."}
+    return await get_skill_content(db, user_id, skill_name)
+
+
+# ======================================================================
 # Dispatcher
 # ======================================================================
 
@@ -1100,6 +1640,14 @@ _EXECUTORS: dict[str, Any] = {
     "generate_report": _execute_generate_report,
     "run_batch": _execute_run_batch,
     "compose_with_context": _execute_compose_with_context,
+    "web_search": _execute_web_search,
+    "fetch_url": _execute_fetch_url,
+    "execute_python": _execute_execute_python,
+    "install_package": _execute_install_package,
+    "browse_web": _execute_browse_web,
+    "deep_research": _execute_deep_research,
+    "query_document_map": _execute_query_document_map,
+    "use_skill": _execute_use_skill,
 }
 
 

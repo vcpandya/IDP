@@ -1,0 +1,1659 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Graph - IDP Kit{% endblock %}
+{% block head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+.graph-layout { display: grid; grid-template-columns: 320px 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; overflow: hidden; }
+.graph-layout.fullscreen-mode { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; grid-template-columns: 1fr; gap: 0; height: 100vh; background: var(--bg, #f9fafb); padding: 0; }
+.graph-layout.fullscreen-mode .graph-sidebar { display: none; }
+.graph-layout.fullscreen-mode .graph-main { border-radius: 0; border: none; }
+.graph-sidebar { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); padding: 16px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 16px; }
+.graph-main { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); position: relative; overflow: hidden; display: flex; flex-direction: column; }
+.graph-canvas { flex: 1; position: relative; }
+.graph-canvas svg { width: 100%; height: 100%; }
+.sidebar-section { display: flex; flex-direction: column; gap: 8px; }
+.sidebar-section h4 { margin: 0; font-size: 0.85rem; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.5px; }
+.search-input { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.search-input:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+.type-filters { display: flex; flex-wrap: wrap; gap: 4px; }
+.type-btn { padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border, #e5e7eb); background: transparent; font-size: 0.75rem; cursor: pointer; transition: all 0.15s; }
+.type-btn.active { background: #7c3aed; color: #fff; border-color: #7c3aed; }
+.type-btn:hover:not(.active) { border-color: #7c3aed; color: #7c3aed; }
+.doc-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.tag-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); margin-top: 6px; }
+.doc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.doc-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; max-width: 180px; }
+.doc-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.doc-chip button { background: none; border: none; cursor: pointer; font-size: 0.8rem; color: #7c3aed; padding: 0; line-height: 1; }
+.doc-chip button:hover { color: #e11d48; }
+.multi-doc-note { font-size: 0.72rem; color: var(--text-muted, #6b7280); margin-top: 4px; }
+.entity-list { display: flex; flex-direction: column; gap: 4px; }
+.entity-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s; border: 1px solid transparent; }
+.entity-item:hover { background: var(--bg, #f3f4f6); }
+.entity-item.selected { background: #f3e8ff; border-color: #7c3aed; }
+.entity-type-badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px; font-weight: 600; text-transform: uppercase; white-space: nowrap; }
+.entity-name { font-size: 0.85rem; font-weight: 500; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.entity-count { font-size: 0.75rem; color: var(--text-muted, #6b7280); }
+.graph-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--border, #e5e7eb); }
+.graph-toolbar .btn { padding: 4px 12px; font-size: 0.8rem; }
+.graph-info { margin-left: auto; font-size: 0.8rem; color: var(--text-muted, #6b7280); }
+.empty-graph { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--text-muted, #6b7280); gap: 12px; }
+.empty-graph i { font-size: 3rem; opacity: 0.3; }
+.empty-graph p { font-size: 0.95rem; max-width: 400px; text-align: center; }
+.detail-panel { position: absolute; top: 12px; right: 12px; width: 300px; background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); box-shadow: 0 4px 12px rgba(0,0,0,0.1); padding: 16px; z-index: 10; max-height: 60vh; overflow-y: auto; }
+.detail-panel h3 { margin: 0 0 4px; font-size: 1rem; }
+.detail-panel .detail-type { font-size: 0.75rem; margin-bottom: 12px; }
+.detail-section { margin-bottom: 12px; }
+.detail-section h5 { margin: 0 0 4px; font-size: 0.8rem; color: var(--text-muted, #6b7280); text-transform: uppercase; }
+.mention-item { font-size: 0.8rem; padding: 4px 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+.mention-item:last-child { border-bottom: none; }
+.neighbor-item { display: flex; flex-direction: column; gap: 3px; font-size: 0.8rem; padding: 8px; cursor: pointer; border-radius: 8px; border: 1px solid var(--border, #e5e7eb); margin-bottom: 4px; transition: all 0.15s; }
+.neighbor-item:hover { border-color: #7c3aed; background: #faf5ff; }
+.neighbor-item .edge-header { display: flex; align-items: center; gap: 6px; }
+.neighbor-item .edge-context { font-size: 0.72rem; color: var(--text-secondary, #4b5563); line-height: 1.4; margin-top: 2px; }
+.neighbor-item .edge-meta { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.relation-label { font-size: 0.65rem; color: var(--text-muted, #6b7280); background: var(--bg, #f3f4f6); padding: 1px 5px; border-radius: 3px; }
+.scope-badge { font-size: 0.6rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+.scope-badge.inter { background: #dbeafe; color: #1d4ed8; }
+.scope-badge.intra { background: #f3e8ff; color: #7c3aed; }
+.confidence-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.fullscreen-exit-btn { position: fixed; top: 12px; right: 12px; z-index: 1001; background: rgba(0,0,0,0.6); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 0.85rem; backdrop-filter: blur(4px); }
+.fullscreen-exit-btn:hover { background: rgba(0,0,0,0.8); }
+.close-panel { position: absolute; top: 8px; right: 8px; background: none; border: none; cursor: pointer; font-size: 1rem; color: var(--text-muted, #6b7280); }
+.close-panel:hover { color: var(--text, #111); }
+.insights-panel { position: absolute; top: 12px; left: 12px; right: 12px; bottom: 12px; background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); box-shadow: 0 4px 20px rgba(0,0,0,0.12); z-index: 15; display: flex; flex-direction: column; overflow: hidden; }
+.insights-header { padding: 16px 20px 0; flex-shrink: 0; }
+.insights-header h3 { margin: 0 0 12px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; }
+.insights-stats { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.insights-stat { padding: 6px 14px; background: var(--bg, #f9fafb); border-radius: 8px; font-size: 0.78rem; color: var(--text-muted, #6b7280); border: 1px solid var(--border, #e5e7eb); }
+.insights-stat b { margin-right: 4px; }
+.insights-stat.purple b { color: #7c3aed; }
+.insights-stat.blue b { color: #2563eb; }
+.insights-stat.green b { color: #059669; }
+.insights-stat.amber b { color: #d97706; }
+.insights-stat.rose b { color: #e11d48; }
+.insights-tabs { display: flex; gap: 2px; border-bottom: 2px solid var(--border, #e5e7eb); padding: 0 20px; flex-shrink: 0; overflow-x: auto; }
+.insights-tab { padding: 8px 14px; font-size: 0.78rem; font-weight: 500; cursor: pointer; border: none; background: none; color: var(--text-muted, #6b7280); border-bottom: 2px solid transparent; margin-bottom: -2px; white-space: nowrap; transition: all 0.15s; }
+.insights-tab:hover { color: #7c3aed; background: #faf5ff; }
+.insights-tab.active { color: #7c3aed; border-bottom-color: #7c3aed; }
+.insights-tab i { margin-right: 4px; }
+.insights-body { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.insights-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; gap: 16px; color: var(--text-muted, #6b7280); }
+.insights-loading i { font-size: 2rem; color: #7c3aed; }
+.insight-card { background: var(--bg, #f9fafb); border: 1px solid var(--border, #e5e7eb); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.insight-card h4 { margin: 0 0 6px; font-size: 0.88rem; font-weight: 600; color: var(--text, #111); }
+.insight-card p { margin: 0; font-size: 0.82rem; line-height: 1.6; color: var(--text-secondary, #4b5563); }
+.insight-card .entity-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.entity-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; font-weight: 500; cursor: pointer; transition: all 0.15s; border: 1px solid transparent; }
+.entity-chip:hover { filter: brightness(0.9); transform: scale(1.05); }
+.doc-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 6px; font-size: 0.7rem; background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.bar-chart { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.bar-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
+.bar-label { min-width: 90px; text-align: right; color: var(--text-muted, #6b7280); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { flex: 1; height: 18px; background: var(--bg, #f3f4f6); border-radius: 4px; overflow: hidden; position: relative; }
+.bar-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 6px; font-size: 0.68rem; color: #fff; font-weight: 600; min-width: 20px; transition: width 0.4s ease; }
+.scope-bar { display: flex; height: 24px; border-radius: 6px; overflow: hidden; margin: 8px 0; }
+.scope-bar .segment { display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 500; color: #fff; transition: width 0.4s ease; }
+.confidence-meter { display: flex; align-items: center; gap: 12px; margin: 8px 0; padding: 10px 14px; background: var(--bg, #f9fafb); border-radius: 8px; }
+.confidence-meter .meter-bar { flex: 1; height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; }
+.confidence-meter .meter-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, #ef4444, #eab308, #22c55e); }
+.confidence-meter .meter-label { font-size: 0.75rem; color: var(--text-muted, #6b7280); min-width: 80px; }
+.gap-card { background: linear-gradient(135deg, #fef3c7, #fefce8); border: 1px solid #fde68a; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.gap-card h4 { margin: 0 0 4px; font-size: 0.85rem; color: #92400e; }
+.gap-card p { margin: 0 0 8px; font-size: 0.8rem; color: #78350f; line-height: 1.5; }
+.gap-card .actions { display: flex; gap: 6px; margin-top: 8px; }
+.triangulation-card { background: linear-gradient(135deg, #ecfdf5, #f0fdf4); border: 1px solid #a7f3d0; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.triangulation-card h4 { margin: 0 0 4px; font-size: 0.85rem; color: #065f46; }
+.triangulation-card p { margin: 0; font-size: 0.8rem; color: #064e3b; line-height: 1.5; }
+.triangulation-card .sources { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.rec-card { background: linear-gradient(135deg, #ede9fe, #f5f3ff); border: 1px solid #c4b5fd; border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+.rec-card h4 { margin: 0 0 4px; font-size: 0.85rem; color: #5b21b6; }
+.rec-card p { margin: 0 0 8px; font-size: 0.8rem; color: #6b21a8; line-height: 1.5; }
+.overview-text { font-size: 0.9rem; line-height: 1.7; color: var(--text, #111); margin-bottom: 16px; padding: 12px 16px; background: linear-gradient(135deg, #faf5ff, #f0f9ff); border-radius: 10px; border-left: 4px solid #7c3aed; }
+.section-title { font-size: 0.82rem; font-weight: 600; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.5px; margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
+.section-title i { color: #7c3aed; }
+.insights-footer { padding: 12px 20px; border-top: 1px solid var(--border, #e5e7eb); flex-shrink: 0; background: var(--bg, #f9fafb); }
+.followup-messages { max-height: 200px; overflow-y: auto; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
+.followup-msg { padding: 10px 14px; border-radius: 10px; font-size: 0.82rem; line-height: 1.5; max-width: 90%; }
+.followup-msg.user { background: #7c3aed; color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
+.followup-msg.ai { background: var(--card-bg, #fff); border: 1px solid var(--border, #e5e7eb); align-self: flex-start; border-bottom-left-radius: 2px; }
+.followup-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.followup-chip { padding: 4px 10px; border-radius: 14px; font-size: 0.72rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; cursor: pointer; transition: all 0.15s; }
+.followup-chip:hover { background: #ddd6fe; }
+.followup-input-row { display: flex; gap: 8px; }
+.followup-input-row input { flex: 1; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.85rem; background: var(--card-bg, #fff); }
+.followup-input-row input:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+.followup-input-row button { padding: 8px 16px; background: #7c3aed; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 0.82rem; white-space: nowrap; }
+.followup-input-row button:hover { background: #6d28d9; }
+.followup-input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-xs { padding: 3px 10px; font-size: 0.72rem; border-radius: 6px; border: none; cursor: pointer; font-weight: 500; }
+.node-label { font-size: 11px; pointer-events: none; }
+.link-label { font-size: 9px; fill: #999; pointer-events: none; }
+.node-ghosted circle { opacity: 0.08 !important; }
+.node-ghosted text { opacity: 0.08 !important; }
+.link-ghosted line { opacity: 0.04 !important; }
+.node-type-ghosted circle { opacity: 0.1 !important; }
+.node-type-ghosted text { opacity: 0.1 !important; }
+.link-type-ghosted line { opacity: 0.06 !important; }
+.node-focused circle { stroke: #7c3aed !important; stroke-width: 4px !important; filter: drop-shadow(0 0 6px rgba(124,58,237,0.5)); }
+.node-connected circle { opacity: 1 !important; }
+.node-connected text { opacity: 1 !important; }
+.link-connected line { opacity: 0.8 !important; stroke: #a78bfa !important; }
+.focus-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.focus-bar { display: flex; align-items: center; gap: 8px; padding: 6px 16px; background: #faf5ff; border-bottom: 1px solid #e9d5ff; font-size: 0.82rem; color: #6b21a8; }
+.focus-bar button { font-size: 0.78rem; }
+.stats-row { display: flex; gap: 12px; }
+.stat-mini { text-align: center; flex: 1; padding: 8px; background: var(--bg, #f9fafb); border-radius: 8px; }
+.stat-mini .val { font-size: 1.2rem; font-weight: 700; color: #7c3aed; }
+.stat-mini .lbl { font-size: 0.7rem; color: var(--text-muted, #6b7280); }
+.limit-control { display: flex; align-items: center; gap: 8px; }
+.limit-control label { font-size: 0.78rem; color: var(--text-muted, #6b7280); white-space: nowrap; }
+.limit-control select { padding: 4px 8px; border: 1px solid var(--border, #e5e7eb); border-radius: 6px; font-size: 0.8rem; background: var(--bg, #f9fafb); }
+.limit-control select:focus { outline: none; border-color: #7c3aed; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2><i class="fas fa-project-diagram"></i> Knowledge Graph</h2>
+</div>
+
+<div class="graph-layout" :class="{ 'fullscreen-mode': fullscreenMode }" x-data="graphExplorer()" x-init="init()" @keydown.escape.window="if(fullscreenMode) toggleFullscreen()">
+    <div class="graph-sidebar">
+        <div class="stats-row">
+            <div class="stat-mini">
+                <div class="val" x-text="totalEntities"></div>
+                <div class="lbl">Entities</div>
+            </div>
+            <div class="stat-mini">
+                <div class="val" x-text="graphNodes.length"></div>
+                <div class="lbl">Visible</div>
+            </div>
+            <div class="stat-mini">
+                <div class="val" x-text="graphEdges.length"></div>
+                <div class="lbl">Edges</div>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Graph Limits</h4>
+            <div class="limit-control">
+                <label>Max nodes:</label>
+                <select x-model="graphLimit" @change="loadDocGraph()">
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                    <option value="1000">1,000</option>
+                    <option value="2000">2,000</option>
+                    <option value="5000">5,000</option>
+                    <option value="10000">10,000</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Documents</h4>
+            <select class="doc-select" @change="addDocument($event.target.value); $event.target.value = ''">
+                <option value="">Add a document...</option>
+                <template x-for="doc in availableDocs" :key="doc.id">
+                    <option :value="doc.id" x-text="doc.filename"></option>
+                </template>
+            </select>
+            <select class="tag-select" x-model="selectedTagId" @change="loadTagDocuments()">
+                <option value="">Or select a tag group...</option>
+                <template x-for="tag in tags" :key="tag.id">
+                    <option :value="tag.id" x-text="tag.name + ' (' + (tag.document_count || 0) + ')'"></option>
+                </template>
+            </select>
+            <div class="doc-chips" x-show="selectedDocIds.length > 0">
+                <template x-for="did in selectedDocIds" :key="did">
+                    <div class="doc-chip">
+                        <span x-text="docName(did)"></span>
+                        <button @click="removeDocument(did)">&times;</button>
+                    </div>
+                </template>
+            </div>
+            <div class="multi-doc-note" x-show="selectedDocIds.length > 1" x-text="selectedDocIds.length + ' documents selected — showing combined graph'"></div>
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Search Entities</h4>
+            <input type="text" class="search-input" placeholder="Search by name..." x-model="searchQuery" @input.debounce.300ms="searchEntities()">
+        </div>
+
+        <div class="sidebar-section">
+            <h4>Entity Types</h4>
+            <div class="type-filters">
+                <button class="type-btn" :class="{ active: !selectedType }" @click="selectedType = ''; searchEntities(); applyTypeFilter()"><i class="fas fa-globe" style="margin-right:3px"></i> All</button>
+                <template x-for="t in entityTypes" :key="t">
+                    <button class="type-btn" :class="{ active: selectedType === t }" @click="selectedType = (selectedType === t ? '' : t); searchEntities(); applyTypeFilter()"><i class="fas" :class="typeIcon(t)" style="margin-right:3px"></i> <span x-text="t"></span></button>
+                </template>
+            </div>
+        </div>
+
+        <div class="sidebar-section" style="flex:1;min-height:0">
+            <h4>Entities <span x-show="entities.length > 0" x-text="'(' + entities.length + ')'" style="font-weight:normal"></span></h4>
+            <div class="entity-list">
+                <template x-for="ent in entities" :key="ent.id">
+                    <div class="entity-item" :class="{ selected: selectedEntity?.id === ent.id }" @click="selectEntity(ent)">
+                        <span class="entity-type-badge" :style="'background:' + typeColor(ent.entity_type) + '22; color:' + typeColor(ent.entity_type)"><i class="fas" :class="typeIcon(ent.entity_type)" style="margin-right:3px"></i><span x-text="ent.entity_type"></span></span>
+                        <span class="entity-name" x-text="ent.canonical_name || ent.name"></span>
+                        <span class="entity-count" x-text="(ent.mention_count || 0) + ' mentions'"></span>
+                    </div>
+                </template>
+                <div x-show="entities.length === 0 && !loadingEntities" style="font-size:0.85rem;color:var(--text-muted);padding:8px">
+                    <span x-show="searchQuery || selectedType">No matching entities found.</span>
+                    <span x-show="!searchQuery && !selectedType && !selectedDocId">Select a document or search to explore entities.</span>
+                    <span x-show="!searchQuery && !selectedType && selectedDocId">No entities found for this document. Try building the graph first.</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="graph-main">
+        <div class="graph-toolbar">
+            <button class="btn btn-sm" @click="zoomIn()" title="Zoom in"><i class="fas fa-search-plus"></i></button>
+            <button class="btn btn-sm" @click="zoomOut()" title="Zoom out"><i class="fas fa-search-minus"></i></button>
+            <button class="btn btn-sm" @click="resetZoom()" title="Reset view"><i class="fas fa-expand"></i></button>
+            <button class="btn btn-sm" @click="toggleFullscreen()" :title="fullscreenMode ? 'Exit fullscreen' : 'Fullscreen mode'"><i class="fas" :class="fullscreenMode ? 'fa-compress-arrows-alt' : 'fa-expand-arrows-alt'"></i></button>
+            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length === 1 && graphNodes.length === 0" @click="buildGraph()" :disabled="building || bulkBuilding">
+                <i class="fas" :class="building ? 'fa-spinner fa-spin' : 'fa-hammer'"></i> Build Graph
+            </button>
+            <button class="btn btn-sm btn-primary" x-show="selectedDocIds.length > 0" @click="bulkBuildGraphs()" :disabled="bulkBuilding || building">
+                <i class="fas" :class="bulkBuilding ? 'fa-spinner fa-spin' : 'fa-hammer'"></i>
+                <span x-show="!bulkBuilding">Index & Build Graphs</span>
+                <span x-show="bulkBuilding" x-text="bulkBuildStatus"></span>
+            </button>
+            <div style="position:relative" x-data="{ downloadOpen: false }">
+                <button class="btn btn-sm" @click="downloadOpen = !downloadOpen" :disabled="graphNodes.length === 0" title="Download graph data">
+                    <i class="fas fa-download"></i> <i class="fas fa-caret-down" style="font-size:0.7rem;margin-left:2px"></i>
+                </button>
+                <div x-show="downloadOpen" @click.outside="downloadOpen = false" x-cloak style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--card-bg,#fff);border:1px solid var(--border,#e5e7eb);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);min-width:240px;z-index:20;overflow:hidden">
+                    <div style="padding:6px 14px 2px;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Visible Graph</div>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadJSON(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadCSVEntities(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-table" style="width:20px;color:#059669"></i> CSV (Entities)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadCSVRelationships(); downloadOpen = false" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-project-diagram" style="width:20px;color:#2563eb"></i> CSV (Relationships)
+                    </button>
+                    <div style="padding:6px 14px 2px;font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;border-top:1px solid var(--border,#e5e7eb);margin-top:4px">Full Graph (All Data)</div>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullJSON(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-file-code" style="width:20px;color:#7c3aed"></i> JSON (Complete)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullCSVEntities(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-table" style="width:20px;color:#059669"></i> CSV Entities (Complete)
+                    </button>
+                    <button style="display:block;width:100%;text-align:left;padding:8px 14px;border:none;background:none;cursor:pointer;font-size:0.85rem" @click="downloadFullCSVRelationships(); downloadOpen = false" :disabled="selectedDocIds.length === 0" onmouseover="this.style.background='var(--bg,#f3f4f6)'" onmouseout="this.style.background='none'">
+                        <i class="fas fa-project-diagram" style="width:20px;color:#2563eb"></i> CSV Relationships (Complete)
+                    </button>
+                </div>
+            </div>
+            <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#2563eb);color:#fff;border:none" @click="generateInsights()" :disabled="insightsLoading || graphNodes.length === 0" title="AI Insights">
+                <i class="fas" :class="insightsLoading ? 'fa-spinner fa-spin' : 'fa-lightbulb'"></i> Insights
+            </button>
+            <button class="btn btn-sm" :class="focusMode ? 'btn-primary' : ''" @click="toggleFocusMode()" :disabled="graphNodes.length === 0" title="Focus mode: click nodes to highlight their connections">
+                <i class="fas fa-crosshairs"></i> Focus
+            </button>
+            <div style="display:flex;align-items:center;gap:4px;margin-left:4px" x-show="graphNodes.length > 0">
+                <input type="text" class="search-input" style="width:200px;padding:4px 10px;font-size:0.8rem" placeholder="AI Smart Focus..." x-model="smartFocusPrompt" @keydown.enter="runSmartFocus()">
+                <button class="btn btn-sm" style="background:linear-gradient(135deg,#7c3aed,#059669);color:#fff;border:none;white-space:nowrap" @click="runSmartFocus()" :disabled="smartFocusLoading || !smartFocusPrompt.trim()">
+                    <i class="fas" :class="smartFocusLoading ? 'fa-spinner fa-spin' : 'fa-magic'"></i> Focus
+                </button>
+            </div>
+            <div class="graph-info" x-show="graphNodes.length > 0" x-text="graphNodes.length + ' nodes, ' + graphEdges.length + ' edges'"></div>
+        </div>
+        <div class="focus-bar" x-show="focusMode && !smartFocusSummary" x-cloak>
+            <i class="fas fa-crosshairs"></i>
+            <span>Focus Mode</span>
+            <span x-show="focusedNodeIds.length > 0" class="focus-badge" x-text="focusedNodeIds.length + ' node' + (focusedNodeIds.length !== 1 ? 's' : '') + ' selected'"></span>
+            <span x-show="focusedNodeIds.length === 0" style="opacity:0.7">Click nodes to focus on their connections</span>
+            <button class="btn btn-sm" x-show="focusedNodeIds.length > 0" @click="clearFocus()" style="margin-left:auto">Clear Selection</button>
+        </div>
+        <div class="focus-bar" x-show="smartFocusSummary" x-cloak style="background:linear-gradient(135deg,#faf5ff,#ecfdf5);border-color:#c4b5fd">
+            <i class="fas fa-magic" style="color:#7c3aed"></i>
+            <span style="font-weight:500">Smart Focus</span>
+            <span class="focus-badge" x-text="focusedNodeIds.length + ' relevant node' + (focusedNodeIds.length !== 1 ? 's' : '')"></span>
+            <span style="opacity:0.85;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="smartFocusSummary"></span>
+            <button class="btn btn-sm" @click="clearSmartFocus()" style="margin-left:auto;white-space:nowrap">Clear</button>
+        </div>
+        <div class="graph-canvas" id="graphCanvas">
+            <div class="empty-graph" x-show="graphNodes.length === 0 && !loadingGraph">
+                <i class="fas fa-project-diagram"></i>
+                <p x-show="selectedDocIds.length === 0">Select documents or a tag group to visualize the entity graph, or search for entities across all documents.</p>
+                <p x-show="selectedDocIds.length === 1">No graph data for this document yet. Click <strong>Build Graph</strong> to extract entities and relationships.</p>
+                <p x-show="selectedDocIds.length > 1">No graph data found for the selected documents. Click <strong>Build Graphs</strong> to extract entities and relationships.</p>
+            </div>
+        </div>
+        <button class="fullscreen-exit-btn" x-show="fullscreenMode" x-cloak @click="toggleFullscreen()"><i class="fas fa-compress-arrows-alt" style="margin-right:4px"></i> Exit Fullscreen</button>
+
+        <div class="detail-panel" x-show="detailEntity" x-cloak>
+            <button class="close-panel" @click="detailEntity = null">&times;</button>
+            <h3 x-text="detailEntity?.entity?.name"></h3>
+            <div class="detail-type">
+                <span class="entity-type-badge" :style="detailEntity ? 'background:' + typeColor(detailEntity.entity.entity_type) + '22; color:' + typeColor(detailEntity.entity.entity_type) : ''"><i class="fas" :class="typeIcon(detailEntity?.entity?.entity_type || '')" style="margin-right:3px"></i><span x-text="detailEntity?.entity?.entity_type"></span></span>
+            </div>
+
+            <div class="detail-section" x-show="detailEntity?.mentions?.length > 0">
+                <h5>Mentions (<span x-text="detailEntity?.mentions?.length"></span>)</h5>
+                <template x-for="m in (detailEntity?.mentions || []).slice(0, 10)" :key="m.id || m.node_id">
+                    <div class="mention-item">
+                        <div style="font-weight:500">
+                            <i class="fas fa-file-alt" x-show="!m.document_format || m.document_format === 'pdf'" style="margin-right:3px;font-size:0.7rem;color:var(--text-muted)"></i>
+                            <i class="fas fa-video" x-show="m.document_format === 'youtube'" style="margin-right:3px;font-size:0.7rem;color:#e74c3c"></i>
+                            <span x-text="m.document_filename || 'Unknown document'"></span>
+                        </div>
+                        <div x-show="m.node_title" style="font-size:0.75rem;color:var(--text-secondary, #4b5563)" x-text="m.node_title"></div>
+                        <div style="font-size:0.7rem;color:var(--text-muted)">
+                            <template x-if="m.document_format === 'youtube' && m.start_page != null">
+                                <span>
+                                    <a x-show="m.source_url" :href="youtubeTimestampUrl(m.source_url, m.start_page)" target="_blank" rel="noopener" style="color:#e74c3c;text-decoration:none" @mouseover="$el.style.textDecoration='underline'" @mouseout="$el.style.textDecoration='none'">
+                                        <i class="fab fa-youtube" style="margin-right:2px"></i>
+                                        <span x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                                    </a>
+                                    <span x-show="!m.source_url" x-text="formatTimestamp(m.start_page) + (m.end_page != null ? ' - ' + formatTimestamp(m.end_page) : '')"></span>
+                                </span>
+                            </template>
+                            <template x-if="m.document_format !== 'youtube' && m.start_page != null">
+                                <span x-text="'Pages ' + m.start_page + (m.end_page != null && m.end_page !== m.start_page ? '-' + m.end_page : '')"></span>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="(detailEntity?.mentions || []).length > 10" style="font-size:0.75rem;color:var(--text-muted);padding-top:4px" x-text="'+ ' + (detailEntity.mentions.length - 10) + ' more'"></div>
+            </div>
+
+            <div class="detail-section" x-show="detailEntity?.edges?.length > 0">
+                <h5>Connections (<span x-text="detailEntity?.edges?.length"></span>)</h5>
+                <template x-for="e in (detailEntity?.edges || []).slice(0, 15)" :key="e.id || (e.source_entity_id + e.target_entity_id)">
+                    <div class="neighbor-item" @click="navigateToEdgeEntity(e)" x-data="{ get otherName() { return e.target_entity_id === $data.detailEntity?.entity?.id ? (e.source_entity_name || '...') : (e.target_entity_name || '...') }, get otherType() { return e.target_entity_id === $data.detailEntity?.entity?.id ? (e.source_entity_type || 'UNKNOWN') : (e.target_entity_type || 'UNKNOWN') } }">
+                        <div class="edge-header">
+                            <span class="entity-type-badge" style="font-size:0.6rem;padding:1px 5px" :style="'background:' + typeColor(otherType) + '22; color:' + typeColor(otherType)">
+                                <i class="fas" :class="typeIcon(otherType)" style="margin-right:2px"></i>
+                                <span x-text="otherType"></span>
+                            </span>
+                            <span style="font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="otherName"></span>
+                        </div>
+                        <div class="edge-meta">
+                            <span class="relation-label" x-text="e.relation_type"></span>
+                            <span class="scope-badge" :class="e.scope || 'intra'" x-text="e.scope === 'inter' ? 'cross-doc' : 'same-doc'"></span>
+                            <template x-if="e.confidence">
+                                <span style="display:flex;align-items:center;gap:2px;font-size:0.6rem;color:var(--text-muted)">
+                                    <span class="confidence-dot" :style="'background:' + (e.confidence >= 80 ? '#059669' : e.confidence >= 50 ? '#d97706' : '#dc2626')"></span>
+                                    <span x-text="e.confidence + '%'"></span>
+                                </span>
+                            </template>
+                        </div>
+                        <div class="edge-context" x-show="e.context_snippet" x-text="(e.context_snippet || '').slice(0, 120) + (e.context_snippet && e.context_snippet.length > 120 ? '...' : '')"></div>
+                    </div>
+                </template>
+                <div x-show="(detailEntity?.edges || []).length > 15" style="font-size:0.75rem;color:var(--text-muted);padding-top:4px" x-text="'+ ' + (detailEntity.edges.length - 15) + ' more connections'"></div>
+            </div>
+
+            <a :href="buildAskIdaUrl()" class="btn btn-sm btn-primary" style="width:100%;text-align:center;margin-top:8px">
+                <i class="fas fa-brain"></i> Ask IDA about this
+            </a>
+        </div>
+
+        <div class="insights-panel" x-show="showInsights" x-cloak x-transition>
+            <button class="close-panel" @click="showInsights = false" style="z-index:5">&times;</button>
+
+            <div class="insights-header">
+                <h3><i class="fas fa-lightbulb" style="color:#7c3aed"></i> Knowledge Graph Insights</h3>
+                <div class="insights-stats" x-show="insightsData?.stats">
+                    <div class="insights-stat purple"><b x-text="insightsData?.stats?.entities || 0"></b> Entities</div>
+                    <div class="insights-stat blue"><b x-text="insightsData?.stats?.edges || 0"></b> Relationships</div>
+                    <div class="insights-stat green"><b x-text="insightsData?.stats?.entity_types || 0"></b> Types</div>
+                    <div class="insights-stat amber"><b x-text="insightsData?.stats?.cross_doc_entities || 0"></b> Cross-Doc</div>
+                    <div class="insights-stat rose" x-show="insightsData?.analytics?.confidence_stats?.avg">
+                        <b x-text="insightsData?.analytics?.confidence_stats?.avg || 0"></b> Avg Confidence
+                    </div>
+                </div>
+            </div>
+
+            <div class="insights-tabs" x-show="!insightsLoading && insightsData">
+                <button class="insights-tab" :class="{ active: insightsTab === 'overview' }" @click="insightsTab = 'overview'"><i class="fas fa-chart-pie"></i> Overview</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'connections' }" @click="insightsTab = 'connections'"><i class="fas fa-link"></i> Connections</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'crossdoc' }" @click="insightsTab = 'crossdoc'"><i class="fas fa-layer-group"></i> Cross-Doc</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'dimensions' }" @click="insightsTab = 'dimensions'"><i class="fas fa-cubes"></i> Dimensions</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'gaps' }" @click="insightsTab = 'gaps'"><i class="fas fa-search-location"></i> Gaps & Sources</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'deep' }" @click="insightsTab = 'deep'" style="font-weight:600"><i class="fas fa-microscope"></i> Deep Analysis</button>
+                <button class="insights-tab" :class="{ active: insightsTab === 'recommendations' }" @click="insightsTab = 'recommendations'"><i class="fas fa-compass"></i> Recommendations</button>
+            </div>
+
+            <div class="insights-body">
+                <div x-show="insightsLoading" class="insights-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <p>Analyzing your knowledge graph...</p>
+                    <p style="font-size:0.75rem">The AI is examining entities, relationships, cross-document patterns, and knowledge gaps.</p>
+                </div>
+
+                <div x-show="!insightsLoading && insightsData">
+
+                    <div x-show="insightsTab === 'overview'">
+                        <div class="overview-text" x-show="insightsData?.insights?.overview" x-html="renderMarkdown(insightsData?.insights?.overview || '')"></div>
+
+                        <div class="section-title"><i class="fas fa-shapes"></i> Entity Type Distribution</div>
+                        <div class="bar-chart">
+                            <template x-for="[type, count] in insightsTypeEntries()" :key="type">
+                                <div class="bar-row">
+                                    <span class="bar-label" x-text="type"></span>
+                                    <div class="bar-track">
+                                        <div class="bar-fill" :style="'width:' + insightsBarWidth(count, 'type') + '%;background:' + typeColor(type)" x-text="count"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="section-title"><i class="fas fa-project-diagram"></i> Relationship Types</div>
+                        <div class="bar-chart">
+                            <template x-for="[rel, count] in insightsRelEntries()" :key="rel">
+                                <div class="bar-row">
+                                    <span class="bar-label" x-text="rel"></span>
+                                    <div class="bar-track">
+                                        <div class="bar-fill" :style="'width:' + insightsBarWidth(count, 'rel') + '%;background:#6366f1'" x-text="count"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <div class="section-title"><i class="fas fa-exchange-alt"></i> Scope Breakdown</div>
+                        <div class="scope-bar" x-show="insightsData?.analytics?.scope_breakdown">
+                            <div class="segment" :style="'width:' + insightsScopePercent('intra') + '%;background:#2563eb'" x-text="(insightsData?.analytics?.scope_breakdown?.intra || 0) + ' intra'"></div>
+                            <div class="segment" :style="'width:' + insightsScopePercent('inter') + '%;background:#059669'" x-text="(insightsData?.analytics?.scope_breakdown?.inter || 0) + ' inter'"></div>
+                        </div>
+
+                        <div class="section-title" x-show="insightsData?.analytics?.source_types"><i class="fas fa-file-alt"></i> Source Types</div>
+                        <div class="bar-chart" x-show="insightsData?.analytics?.source_types">
+                            <template x-for="[src, count] in Object.entries(insightsData?.analytics?.source_types || {})" :key="src">
+                                <div class="bar-row">
+                                    <span class="bar-label" x-text="src"></span>
+                                    <div class="bar-track">
+                                        <div class="bar-fill" :style="'width:' + insightsBarWidth(count, 'src') + '%;background:#0891b2'" x-text="count"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div x-show="insightsTab === 'connections'">
+                        <template x-for="(item, idx) in (insightsData?.insights?.hidden_connections || [])" :key="'hc'+idx">
+                            <div class="insight-card">
+                                <h4><i class="fas fa-link" style="color:#7c3aed;margin-right:4px"></i> <span x-text="item.finding"></span></h4>
+                                <p x-text="item.explanation"></p>
+                                <div class="entity-chips">
+                                    <template x-for="ent in (item.entities || [])" :key="ent">
+                                        <span class="entity-chip" :style="'background:' + entityChipBg(ent) + ';color:' + entityChipColor(ent)" @click="focusEntityByName(ent)" :title="'Click to highlight ' + ent + ' in graph'">
+                                            <i class="fas fa-circle" style="font-size:0.4rem"></i> <span x-text="ent"></span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="(insightsData?.insights?.hidden_connections || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No hidden connections identified.</div>
+                    </div>
+
+                    <div x-show="insightsTab === 'crossdoc'">
+                        <template x-for="(item, idx) in (insightsData?.insights?.cross_document_patterns || [])" :key="'cd'+idx">
+                            <div class="insight-card">
+                                <h4><i class="fas fa-layer-group" style="color:#2563eb;margin-right:4px"></i> <span x-text="item.finding"></span></h4>
+                                <p x-text="item.explanation"></p>
+                                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+                                    <template x-for="doc in (item.documents || [])" :key="doc">
+                                        <span class="doc-badge"><i class="fas fa-file-alt" style="font-size:0.6rem"></i> <span x-text="doc"></span></span>
+                                    </template>
+                                </div>
+                                <div class="entity-chips" x-show="item.entities?.length">
+                                    <template x-for="ent in (item.entities || [])" :key="ent">
+                                        <span class="entity-chip" :style="'background:' + entityChipBg(ent) + ';color:' + entityChipColor(ent)" @click="focusEntityByName(ent)">
+                                            <i class="fas fa-circle" style="font-size:0.4rem"></i> <span x-text="ent"></span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="(insightsData?.insights?.cross_document_patterns || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No cross-document patterns found. Add more documents to discover multi-source connections.</div>
+                    </div>
+
+                    <div x-show="insightsTab === 'dimensions'">
+                        <div class="section-title"><i class="fas fa-tachometer-alt"></i> Confidence Distribution</div>
+                        <div class="confidence-meter" x-show="insightsData?.analytics?.confidence_stats">
+                            <div class="meter-label">Min: <b x-text="insightsData?.analytics?.confidence_stats?.min || 0"></b></div>
+                            <div class="meter-bar">
+                                <div class="meter-fill" :style="'width:' + (insightsData?.analytics?.confidence_stats?.avg || 0) + '%'"></div>
+                            </div>
+                            <div class="meter-label">Max: <b x-text="insightsData?.analytics?.confidence_stats?.max || 0"></b></div>
+                        </div>
+
+                        <div class="section-title"><i class="fas fa-star"></i> Top Entities</div>
+                        <div class="bar-chart">
+                            <template x-for="ent in (insightsData?.analytics?.top_entities || [])" :key="ent.name">
+                                <div class="bar-row" style="cursor:pointer" @click="focusEntityByName(ent.name)">
+                                    <span class="bar-label" x-text="ent.name" :title="ent.name"></span>
+                                    <div class="bar-track">
+                                        <div class="bar-fill" :style="'width:' + insightsBarWidth(ent.doc_count, 'ent') + '%;background:' + typeColor(ent.type)" x-text="ent.doc_count + ' docs'"></div>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+
+                        <template x-for="(item, idx) in (insightsData?.insights?.temporal_dimensional || [])" :key="'td'+idx">
+                            <div class="insight-card">
+                                <h4><i class="fas fa-cubes" style="color:#d97706;margin-right:4px"></i> <span x-text="item.finding"></span></h4>
+                                <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:4px" x-text="'Dimension: ' + (item.dimension || 'general')"></div>
+                                <p x-text="item.explanation"></p>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div x-show="insightsTab === 'gaps'">
+                        <div class="section-title"><i class="fas fa-search-location"></i> Knowledge Gaps</div>
+                        <template x-for="(item, idx) in (insightsData?.insights?.knowledge_gaps || [])" :key="'kg'+idx">
+                            <div class="gap-card">
+                                <h4><i class="fas fa-exclamation-triangle" style="margin-right:4px"></i> <span x-text="item.gap"></span></h4>
+                                <p><strong>Affected area:</strong> <span x-text="item.affected_area"></span></p>
+                                <p x-text="item.suggestion"></p>
+                                <div class="actions">
+                                    <button class="btn-xs" style="background:#7c3aed;color:#fff" @click="fillFollowup(item.search_query || item.suggestion)" title="Ask about this in follow-up chat">
+                                        <i class="fas fa-comment-dots"></i> Ask About This
+                                    </button>
+                                    <a class="btn-xs" :href="'/chat?prompt=' + encodeURIComponent('Research and fill this knowledge gap: ' + (item.search_query || item.gap))" target="_blank" style="background:#059669;color:#fff;text-decoration:none">
+                                        <i class="fas fa-brain"></i> Ask IDA
+                                    </a>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="(insightsData?.insights?.knowledge_gaps || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No knowledge gaps detected.</div>
+
+                        <div class="section-title" style="margin-top:20px"><i class="fas fa-check-double"></i> Cross-Source Triangulation</div>
+                        <template x-for="(item, idx) in (insightsData?.insights?.cross_source_triangulation || [])" :key="'cst'+idx">
+                            <div class="triangulation-card">
+                                <h4><i class="fas fa-check-circle" style="color:#059669;margin-right:4px"></i> <span x-text="item.claim"></span></h4>
+                                <p x-text="item.confidence_note"></p>
+                                <div class="sources">
+                                    <template x-for="src in (item.sources_confirming || [])" :key="src">
+                                        <span class="doc-badge"><i class="fas fa-check" style="font-size:0.5rem"></i> <span x-text="src"></span></span>
+                                    </template>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="(insightsData?.insights?.cross_source_triangulation || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No cross-source triangulation found. Add documents from different sources to enable this feature.</div>
+                    </div>
+
+                    <div x-show="insightsTab === 'deep'">
+                        <template x-if="insightsData?.insights?.deep_analysis?.meta_observation">
+                            <div class="insight-card" style="background:linear-gradient(135deg,#faf5ff,#ede9fe);border-left:4px solid #7c3aed;margin-bottom:16px">
+                                <h4 style="color:#7c3aed;margin-bottom:6px"><i class="fas fa-bullseye" style="margin-right:4px"></i> Key Observation</h4>
+                                <p style="font-weight:500;line-height:1.5" x-text="insightsData.insights.deep_analysis.meta_observation"></p>
+                            </div>
+                        </template>
+
+                        <template x-for="(item, idx) in (insightsData?.insights?.deep_analysis?.findings || [])" :key="'da'+idx">
+                            <div class="insight-card" :style="item.severity === 'high' ? 'border-left:4px solid #dc2626' : item.severity === 'medium' ? 'border-left:4px solid #d97706' : 'border-left:4px solid #6b7280'">
+                                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap">
+                                    <span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;font-weight:600;text-transform:uppercase"
+                                          :style="item.severity === 'high' ? 'background:#fef2f2;color:#dc2626' : item.severity === 'medium' ? 'background:#fffbeb;color:#d97706' : 'background:#f3f4f6;color:#6b7280'"
+                                          x-text="item.severity"></span>
+                                    <span style="font-size:0.65rem;padding:2px 6px;border-radius:8px;background:#f3f4f6;color:#374151"
+                                          x-text="(item.category || '').replace('_', ' ')"></span>
+                                    <span x-show="item.web_enriched" style="font-size:0.6rem;padding:2px 6px;border-radius:8px;background:#dbeafe;color:#2563eb">
+                                        <i class="fas fa-globe" style="margin-right:2px"></i> web-enriched
+                                    </span>
+                                </div>
+                                <h4 style="margin-bottom:4px"><span x-text="item.title"></span></h4>
+                                <p x-text="item.analysis"></p>
+                                <div x-show="item.evidence" style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);background:var(--bg-card,#f9fafb);padding:8px 10px;border-radius:6px;border:1px solid var(--border,#e5e7eb)">
+                                    <strong>Evidence:</strong> <span x-text="item.evidence"></span>
+                                </div>
+                            </div>
+                        </template>
+
+                        <div x-show="(insightsData?.insights?.deep_analysis?.web_sources || []).length > 0" style="margin-top:16px;padding:12px;background:var(--bg-card,#f9fafb);border-radius:8px;border:1px solid var(--border,#e5e7eb)">
+                            <div style="font-size:0.75rem;font-weight:600;color:var(--text-muted);margin-bottom:8px"><i class="fas fa-globe" style="margin-right:4px"></i> Web Sources Used</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:4px">
+                                <template x-for="(src, idx) in (insightsData?.insights?.deep_analysis?.web_sources || [])" :key="'ws'+idx">
+                                    <a :href="src.url" target="_blank" class="doc-badge" style="text-decoration:none;cursor:pointer;font-size:0.7rem">
+                                        <i class="fas fa-external-link-alt" style="font-size:0.5rem;margin-right:2px"></i> <span x-text="src.title || src.url"></span>
+                                    </a>
+                                </template>
+                            </div>
+                        </div>
+
+                        <div x-show="!insightsData?.insights?.deep_analysis || (insightsData?.insights?.deep_analysis?.findings || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">
+                            Deep analysis could not be generated. This may be due to limited graph data or web search unavailability.
+                        </div>
+                    </div>
+
+                    <div x-show="insightsTab === 'recommendations'">
+                        <template x-for="(item, idx) in (insightsData?.insights?.recommendations || [])" :key="'rec'+idx">
+                            <div class="rec-card">
+                                <h4><i class="fas fa-compass" style="color:#7c3aed;margin-right:4px"></i> <span x-text="item.suggestion"></span></h4>
+                                <p x-text="item.reason"></p>
+                                <div class="actions" style="display:flex;gap:6px;margin-top:8px">
+                                    <a class="btn-xs" :href="'/chat?prompt=' + encodeURIComponent(item.chat_prompt || item.suggestion)" target="_blank" style="background:#7c3aed;color:#fff;text-decoration:none">
+                                        <i class="fas fa-brain"></i> Ask IDA
+                                    </a>
+                                    <button class="btn-xs" style="background:#2563eb;color:#fff" @click="fillFollowup(item.chat_prompt || item.suggestion)">
+                                        <i class="fas fa-comment-dots"></i> Ask Here
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
+                        <div x-show="(insightsData?.insights?.recommendations || []).length === 0" style="color:var(--text-muted);font-size:0.85rem;padding:20px;text-align:center">No recommendations available.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="insights-footer" x-show="!insightsLoading && insightsData">
+                <div class="followup-messages" x-show="insightsFollowups.length > 0">
+                    <template x-for="(msg, idx) in insightsFollowups" :key="'fu'+idx">
+                        <div class="followup-msg" :class="msg.role">
+                            <div x-html="msg.role === 'ai' ? renderMarkdown(msg.text) : msg.text"></div>
+                        </div>
+                    </template>
+                </div>
+                <div class="followup-chips">
+                    <template x-for="(q, idx) in insightsSuggestedQuestions" :key="'sq'+idx">
+                        <button class="followup-chip" @click="fillFollowup(q)" x-text="q"></button>
+                    </template>
+                </div>
+                <div class="followup-input-row">
+                    <input type="text" x-model="followupQuestion" placeholder="Ask a follow-up question about these insights..." @keydown.enter="askInsightsFollowup()">
+                    <button @click="askInsightsFollowup()" :disabled="followupLoading || !followupQuestion.trim()">
+                        <i class="fas" :class="followupLoading ? 'fa-spinner fa-spin' : 'fa-paper-plane'"></i>
+                        <span x-text="followupLoading ? 'Asking...' : 'Ask'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const TYPE_COLORS = {
+    PERSON: '#e11d48', ORGANIZATION: '#2563eb', LOCATION: '#059669',
+    CONCEPT: '#7c3aed', TERM: '#d97706', REGULATION: '#dc2626',
+    PRODUCT: '#0891b2', EVENT: '#ea580c', DATE: '#65a30d', METRIC: '#db2777',
+    DATE_REF: '#65a30d', TECHNOLOGY: '#0d9488', METHODOLOGY: '#8b5cf6',
+    DISEASE: '#f43f5e', CURRENCY: '#eab308', LANGUAGE: '#6366f1',
+    DOCUMENT: '#78716c', SOFTWARE: '#06b6d4', INDUSTRY: '#f97316',
+    COUNTRY: '#10b981', ROLE: '#a855f7', STANDARD: '#ef4444',
+    PROCESS: '#14b8a6', MATERIAL: '#84cc16', INSTRUMENT: '#ec4899'
+};
+const TYPE_ICONS_MAP = {
+    PERSON: '\uf007', ORGANIZATION: '\uf1ad', LOCATION: '\uf3c5',
+    CONCEPT: '\uf0eb', TERM: '\uf02d', REGULATION: '\uf0e3',
+    PRODUCT: '\uf466', EVENT: '\uf073', DATE: '\uf017', METRIC: '\uf201',
+    DATE_REF: '\uf017', TECHNOLOGY: '\uf085', METHODOLOGY: '\uf0d0',
+    DISEASE: '\uf469', CURRENCY: '\uf155', LANGUAGE: '\uf1ab',
+    DOCUMENT: '\uf15c', SOFTWARE: '\uf121', INDUSTRY: '\uf275',
+    COUNTRY: '\uf024', ROLE: '\uf2c2', STANDARD: '\uf0cb',
+    PROCESS: '\uf074', MATERIAL: '\uf0c3', INSTRUMENT: '\uf0f1'
+};
+const TYPE_FA_MAP = {
+    PERSON: 'fa-user', ORGANIZATION: 'fa-building', LOCATION: 'fa-map-marker-alt',
+    CONCEPT: 'fa-lightbulb', TERM: 'fa-book', REGULATION: 'fa-gavel',
+    PRODUCT: 'fa-box-open', EVENT: 'fa-calendar-alt', DATE: 'fa-clock', METRIC: 'fa-chart-line',
+    DATE_REF: 'fa-clock', TECHNOLOGY: 'fa-cogs', METHODOLOGY: 'fa-drafting-compass',
+    DISEASE: 'fa-virus', CURRENCY: 'fa-dollar-sign', LANGUAGE: 'fa-language',
+    DOCUMENT: 'fa-file-alt', SOFTWARE: 'fa-code', INDUSTRY: 'fa-industry',
+    COUNTRY: 'fa-flag', ROLE: 'fa-id-badge', STANDARD: 'fa-list-ol',
+    PROCESS: 'fa-random', MATERIAL: 'fa-flask', INSTRUMENT: 'fa-stethoscope'
+};
+const ICON_KEYWORD_FALLBACKS = [
+    [/PERSON|PEOPLE|HUMAN|AUTHOR|EMPLOYEE|PATIENT/i, 'fa-user', '\uf007'],
+    [/ORG|COMPANY|CORP|INSTITUTION|AGENCY|FIRM/i, 'fa-building', '\uf1ad'],
+    [/LOCATION|PLACE|CITY|REGION|ADDRESS|GEO/i, 'fa-map-marker-alt', '\uf3c5'],
+    [/CONCEPT|IDEA|THEORY|PRINCIPLE|PHILOSOPHY/i, 'fa-lightbulb', '\uf0eb'],
+    [/TERM|DEFINITION|WORD|VOCAB|GLOSSARY/i, 'fa-book', '\uf02d'],
+    [/LAW|LEGAL|REGULATION|RULE|COMPLIANCE|POLICY/i, 'fa-gavel', '\uf0e3'],
+    [/PRODUCT|ITEM|GOOD|SERVICE|OFFERING/i, 'fa-box-open', '\uf466'],
+    [/EVENT|INCIDENT|MEETING|CONFERENCE/i, 'fa-calendar-alt', '\uf073'],
+    [/DATE|TIME|PERIOD|YEAR|MONTH|DURATION/i, 'fa-clock', '\uf017'],
+    [/METRIC|MEASURE|KPI|SCORE|STAT|NUMBER|QUANTITY/i, 'fa-chart-line', '\uf201'],
+    [/TECH|SOFTWARE|SYSTEM|PLATFORM|TOOL|FRAMEWORK/i, 'fa-cogs', '\uf085'],
+    [/METHOD|PROCESS|PROCEDURE|APPROACH|TECHNIQUE/i, 'fa-drafting-compass', '\uf0d0'],
+    [/DISEASE|HEALTH|MEDICAL|CONDITION|SYMPTOM|DRUG/i, 'fa-virus', '\uf469'],
+    [/MONEY|CURRENCY|FINANCIAL|PRICE|COST|FEE/i, 'fa-dollar-sign', '\uf155'],
+    [/LANGUAGE|LANG|TONGUE|DIALECT/i, 'fa-language', '\uf1ab'],
+    [/DOCUMENT|REPORT|FILE|PAPER|PUBLICATION/i, 'fa-file-alt', '\uf15c'],
+    [/CODE|PROGRAMMING|ALGORITHM/i, 'fa-code', '\uf121'],
+    [/COUNTRY|NATION|STATE|TERRITORY/i, 'fa-flag', '\uf024'],
+    [/ROLE|TITLE|POSITION|JOB|OCCUPATION/i, 'fa-id-badge', '\uf2c2'],
+    [/STANDARD|SPECIFICATION|PROTOCOL|FORMAT/i, 'fa-list-ol', '\uf0cb'],
+    [/MATERIAL|CHEMICAL|SUBSTANCE|ELEMENT/i, 'fa-flask', '\uf0c3'],
+];
+function autoTypeColor(t) {
+    if (TYPE_COLORS[t]) return TYPE_COLORS[t];
+    let hash = 0;
+    for (let i = 0; i < t.length; i++) hash = t.charCodeAt(i) + ((hash << 5) - hash);
+    const hue = ((hash % 360) + 360) % 360;
+    return `hsl(${hue}, 55%, 45%)`;
+}
+function autoTypeIcon(t) {
+    if (TYPE_FA_MAP[t]) return TYPE_FA_MAP[t];
+    for (const [re, cls] of ICON_KEYWORD_FALLBACKS) { if (re.test(t)) return cls; }
+    return 'fa-tag';
+}
+function autoTypeIconUnicode(t) {
+    if (TYPE_ICONS_MAP[t]) return TYPE_ICONS_MAP[t];
+    for (const [re, , uc] of ICON_KEYWORD_FALLBACKS) { if (re.test(t)) return uc; }
+    return '\uf02b';
+}
+
+function graphExplorer() {
+    return {
+        documents: [],
+        tags: [],
+        entities: [],
+        selectedDocIds: [],
+        selectedTagId: '',
+        searchQuery: '',
+        selectedType: '',
+        entityTypes: [],
+        selectedEntity: null,
+        detailEntity: null,
+        graphNodes: [],
+        graphEdges: [],
+        totalEntities: 0,
+        loadingEntities: false,
+        loadingGraph: false,
+        building: false,
+        bulkBuilding: false,
+        bulkBuildStatus: '',
+        simulation: null,
+        svg: null,
+        zoom: null,
+        graphLimit: '1000',
+        showInsights: false,
+        insightsLoading: false,
+        insightsData: null,
+        insightsTab: 'overview',
+        insightsFollowups: [],
+        insightsSuggestedQuestions: [],
+        followupQuestion: '',
+        followupLoading: false,
+        focusMode: false,
+        focusedNodeIds: [],
+        smartFocusPrompt: '',
+        smartFocusLoading: false,
+        smartFocusSummary: '',
+        fullscreenMode: false,
+
+        get availableDocs() {
+            return this.documents.filter(d => !this.selectedDocIds.includes(d.id));
+        },
+
+        docName(id) {
+            const doc = this.documents.find(d => d.id === id);
+            return doc ? doc.filename : id.slice(0, 8) + '...';
+        },
+
+        async init() {
+            const contentEl = document.querySelector('.content');
+            if (contentEl) {
+                contentEl.style.height = '100vh';
+                contentEl.style.overflow = 'hidden';
+                contentEl.style.display = 'flex';
+                contentEl.style.flexDirection = 'column';
+                contentEl.style.boxSizing = 'border-box';
+            }
+            const [docRes, typesRes, tagsRes] = await Promise.all([
+                fetch('/api/documents/?limit=500'),
+                fetch('/api/graph/entity-types'),
+                fetch('/api/tags/')
+            ]);
+            if (docRes.ok) {
+                const data = await docRes.json();
+                this.documents = (data.items || data.documents || []).filter(d => d.status === 'indexed');
+            }
+            if (typesRes.ok) {
+                this.entityTypes = await typesRes.json();
+            }
+            if (tagsRes.ok) {
+                this.tags = await tagsRes.json();
+            }
+            if (this.entityTypes.length === 0) {
+                this.entityTypes = ['PERSON','ORGANIZATION','LOCATION','CONCEPT','TERM','REGULATION','PRODUCT','EVENT','DATE_REF','METRIC'];
+            }
+            await this.searchEntities();
+        },
+
+        typeColor(t) { return autoTypeColor(t); },
+        typeIcon(t) { return autoTypeIcon(t); },
+
+        formatTimestamp(seconds) {
+            if (seconds == null) return '';
+            const s = Math.round(Number(seconds));
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            if (h > 0) return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+            return m + ':' + String(sec).padStart(2, '0');
+        },
+
+        youtubeTimestampUrl(sourceUrl, startSeconds) {
+            if (!sourceUrl) return '#';
+            try {
+                const url = new URL(sourceUrl);
+                let videoId = url.searchParams.get('v');
+                if (!videoId) {
+                    const path = url.pathname.replace(/^\//, '');
+                    const segments = path.split('/');
+                    const last = segments[segments.length - 1];
+                    if (last && last.length >= 5 && !['watch', 'embed', 'shorts', 'channel', 'playlist'].includes(last)) {
+                        videoId = last;
+                    }
+                }
+                if (!videoId) return sourceUrl;
+                const t = Math.round(Number(startSeconds) || 0);
+                return 'https://www.youtube.com/watch?v=' + videoId + '&t=' + t + 's';
+            } catch(e) {
+                return sourceUrl;
+            }
+        },
+
+        renderMarkdown(text) {
+            if (!text) return '';
+            const lines = text.split('\n');
+            let html = '';
+            let inList = false;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (trimmed.startsWith('### ')) {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<h3>' + trimmed.slice(4) + '</h3>';
+                } else if (trimmed.startsWith('- ')) {
+                    if (!inList) { html += '<ul>'; inList = true; }
+                    html += '<li>' + trimmed.slice(2) + '</li>';
+                } else if (trimmed === '') {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<br>';
+                } else {
+                    if (inList) { html += '</ul>'; inList = false; }
+                    html += '<p>' + trimmed + '</p>';
+                }
+            }
+            if (inList) html += '</ul>';
+            html = html
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`(.*?)`/g, '<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>');
+            return html;
+        },
+
+        buildAskIdaUrl() {
+            const entity = this.detailEntity?.entity;
+            if (!entity) return '/chat';
+
+            const mentions = this.detailEntity?.mentions || [];
+            const edges = this.detailEntity?.edges || [];
+
+            const docIds = [...new Set(mentions.map(m => m.document_id).filter(Boolean))];
+            const docNames = [...new Set(mentions.map(m => m.document_filename).filter(Boolean))];
+
+            let prompt = `Analyze the entity "${entity.name}" (${entity.entity_type})`;
+            if (entity.description) {
+                prompt += ` — ${entity.description}`;
+            }
+            prompt += '.';
+
+            if (edges.length > 0) {
+                const relSummary = edges.slice(0, 5).map(e => {
+                    const other = e.target_entity_name || e.source_entity_name || 'unknown';
+                    return `${e.relation_type} → ${other}`;
+                }).join(', ');
+                prompt += ` It has ${edges.length} relationship(s) including: ${relSummary}.`;
+            }
+
+            if (mentions.length > 0) {
+                prompt += ` Found in ${mentions.length} section(s)`;
+                if (docNames.length > 0) {
+                    prompt += ` across: ${docNames.slice(0, 3).join(', ')}`;
+                    if (docNames.length > 3) prompt += ` and ${docNames.length - 3} more`;
+                }
+                prompt += '.';
+            }
+
+            prompt += ' Please provide a deep analysis of this entity: its significance, how it connects to other entities, key insights from the documents where it appears, and any patterns worth noting.';
+
+            let url = '/chat?prompt=' + encodeURIComponent(prompt);
+            if (docIds.length > 0) {
+                url += '&doc_ids=' + encodeURIComponent(docIds.join(','));
+            }
+            return url;
+        },
+
+        async generateInsights() {
+            this.showInsights = true;
+            this.insightsLoading = true;
+            this.insightsData = null;
+            this.insightsTab = 'overview';
+            this.insightsFollowups = [];
+            this.insightsSuggestedQuestions = [];
+            this.followupQuestion = '';
+            try {
+                const res = await fetch('/api/graph/insights', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ document_ids: this.selectedDocIds })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.insightsData = data;
+                    this.insightsSuggestedQuestions = data.suggested_questions || [];
+                    if (typeof data.insights === 'string') {
+                        this.insightsData.insights = { overview: data.insights };
+                    }
+                } else {
+                    this.insightsData = { insights: { overview: 'Failed to generate insights. Please try again.' }, analytics: {}, stats: {} };
+                }
+            } catch(e) {
+                this.insightsData = { insights: { overview: 'An error occurred while generating insights.' }, analytics: {}, stats: {} };
+            }
+            this.insightsLoading = false;
+        },
+
+        insightsTypeEntries() {
+            const dist = this.insightsData?.analytics?.type_distribution || {};
+            return Object.entries(dist).slice(0, 12);
+        },
+
+        insightsRelEntries() {
+            const dist = this.insightsData?.analytics?.relation_distribution || {};
+            return Object.entries(dist).slice(0, 10);
+        },
+
+        insightsBarWidth(count, kind) {
+            let maxVal = 1;
+            const a = this.insightsData?.analytics;
+            if (!a) return 10;
+            if (kind === 'type') {
+                maxVal = Math.max(...Object.values(a.type_distribution || {1:1}), 1);
+            } else if (kind === 'rel') {
+                maxVal = Math.max(...Object.values(a.relation_distribution || {1:1}), 1);
+            } else if (kind === 'src') {
+                maxVal = Math.max(...Object.values(a.source_types || {1:1}), 1);
+            } else if (kind === 'ent') {
+                const vals = (a.top_entities || []).map(e => e.doc_count || 1);
+                maxVal = Math.max(...vals, 1);
+            }
+            return Math.max(Math.round((count / maxVal) * 100), 5);
+        },
+
+        insightsScopePercent(scope) {
+            const sb = this.insightsData?.analytics?.scope_breakdown || {};
+            const total = (sb.intra || 0) + (sb.inter || 0);
+            if (total === 0) return 50;
+            return Math.round(((sb[scope] || 0) / total) * 100);
+        },
+
+        entityChipBg(name) {
+            const node = this.graphNodes.find(n => n.name?.toLowerCase() === name?.toLowerCase());
+            const type = node?.entity_type || 'CONCEPT';
+            return this.typeColor(type) + '18';
+        },
+
+        entityChipColor(name) {
+            const node = this.graphNodes.find(n => n.name?.toLowerCase() === name?.toLowerCase());
+            const type = node?.entity_type || 'CONCEPT';
+            return this.typeColor(type);
+        },
+
+        focusEntityByName(name) {
+            const node = this.graphNodes.find(n => n.name?.toLowerCase() === name?.toLowerCase());
+            if (node) {
+                this.focusMode = true;
+                this.focusedNodeIds = [node.id];
+                this.applyFocusHighlight();
+                this.showInsights = false;
+            }
+        },
+
+        fillFollowup(text) {
+            this.followupQuestion = text;
+            this.$nextTick(() => {
+                const input = this.$el?.querySelector?.('.followup-input-row input');
+                if (input) input.focus();
+            });
+        },
+
+        _buildEntityContext() {
+            if (!this.detailEntity?.entity) return null;
+            const e = this.detailEntity.entity;
+            const mentions = (this.detailEntity.mentions || []).slice(0, 10).map(m => ({
+                document_filename: m.document_filename || '',
+                node_title: m.node_title || '',
+                start_page: m.start_page,
+                end_page: m.end_page,
+            }));
+            const relationships = (this.detailEntity.edges || []).slice(0, 10).map(edge => ({
+                relation_type: edge.relation_type || '',
+                target_name: edge.target_entity_name || '',
+                target_type: edge.target_entity_type || '',
+                source_name: edge.source_entity_name || '',
+                source_type: edge.source_entity_type || '',
+            }));
+            return {
+                name: e.name || e.canonical_name || '',
+                type: e.entity_type || '',
+                description: e.description || '',
+                mentions,
+                relationships,
+            };
+        },
+
+        _findEntityContextFromQuestion(question) {
+            if (!this.graphData?.entities?.length) return null;
+            const qLower = question.toLowerCase();
+            let bestMatch = null;
+            let bestLen = 0;
+            for (const ent of this.graphData.entities) {
+                const name = (ent.name || ent.canonical_name || '').toLowerCase();
+                if (name.length >= 3 && qLower.includes(name) && name.length > bestLen) {
+                    bestMatch = ent;
+                    bestLen = name.length;
+                }
+            }
+            if (!bestMatch) return null;
+            return {
+                name: bestMatch.name || bestMatch.canonical_name || '',
+                type: bestMatch.entity_type || '',
+                description: bestMatch.description || '',
+                mentions: [],
+                relationships: [],
+            };
+        },
+
+        async askInsightsFollowup() {
+            const q = this.followupQuestion.trim();
+            if (!q || this.followupLoading) return;
+            this.followupLoading = true;
+            this.insightsFollowups.push({ role: 'user', text: q });
+            this.followupQuestion = '';
+            const prevContext = this.insightsData?.insights?.overview || '';
+
+            let entityCtx = this._buildEntityContext();
+            if (!entityCtx) {
+                entityCtx = this._findEntityContextFromQuestion(q);
+            }
+
+            try {
+                const payload = {
+                    question: q,
+                    document_ids: this.selectedDocIds,
+                    previous_context: prevContext.slice(0, 3000),
+                };
+                if (entityCtx) {
+                    payload.entity_context = entityCtx;
+                }
+                const res = await fetch('/api/graph/insights/followup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    let answerText = data.answer || 'No answer received.';
+                    if (data.web_sources?.length) {
+                        answerText += '\n\n---\n**Web sources:** ' + data.web_sources.map(s => `[${s.title}](${s.url})`).join(', ');
+                    }
+                    this.insightsFollowups.push({ role: 'ai', text: answerText });
+                    if (data.suggested_questions?.length) {
+                        this.insightsSuggestedQuestions = data.suggested_questions;
+                    }
+                } else {
+                    this.insightsFollowups.push({ role: 'ai', text: 'Sorry, I could not process that question. Please try again.' });
+                }
+            } catch(e) {
+                this.insightsFollowups.push({ role: 'ai', text: 'An error occurred. Please try again.' });
+            }
+            this.followupLoading = false;
+            this.$nextTick(() => {
+                const msgs = this.$el?.querySelector?.('.followup-messages');
+                if (msgs) msgs.scrollTop = msgs.scrollHeight;
+            });
+        },
+
+        addDocument(docId) {
+            if (!docId || this.selectedDocIds.includes(docId)) return;
+            this.selectedDocIds.push(docId);
+            this.loadDocGraph();
+        },
+
+        removeDocument(docId) {
+            this.selectedDocIds = this.selectedDocIds.filter(id => id !== docId);
+            this.loadDocGraph();
+        },
+
+        async loadTagDocuments() {
+            if (!this.selectedTagId) return;
+            try {
+                const res = await fetch(`/api/tags/${this.selectedTagId}`);
+                if (res.ok) {
+                    const tag = await res.json();
+                    const tagDocs = (tag.documents || []).filter(d => d.status !== 'failed');
+                    const tagDocIds = tagDocs.map(d => d.id);
+                    for (const td of tagDocs) {
+                        if (!this.documents.find(d => d.id === td.id)) {
+                            this.documents.push(td);
+                        }
+                    }
+                    this.selectedDocIds = tagDocIds;
+                    this.loadDocGraph();
+                }
+            } catch(e) {}
+        },
+
+        async searchEntities() {
+            this.loadingEntities = true;
+            let url = '/api/graph/entities?limit=100';  
+            if (this.searchQuery) url += '&name=' + encodeURIComponent(this.searchQuery);
+            if (this.selectedType) url += '&entity_type=' + encodeURIComponent(this.selectedType);
+            try {
+                const res = await fetch(url);
+                if (res.ok) {
+                    this.entities = await res.json();
+                    if (!this.searchQuery && !this.selectedType) this.totalEntities = this.entities.length;
+                }
+            } catch(e) {}
+            this.loadingEntities = false;
+        },
+
+        async loadDocGraph() {
+            if (this.selectedDocIds.length === 0) {
+                this.graphNodes = [];
+                this.graphEdges = [];
+                this.clearGraph();
+                return;
+            }
+            this.loadingGraph = true;
+            try {
+                let vizUrl, entUrl;
+                const nodeLimit = parseInt(this.graphLimit) || 1000;
+                if (this.selectedDocIds.length === 1) {
+                    const docId = this.selectedDocIds[0];
+                    vizUrl = `/api/graph/documents/${docId}/visualization?limit=${nodeLimit}`;
+                    entUrl = `/api/graph/documents/${docId}/entities`;
+                } else {
+                    const ids = this.selectedDocIds.join(',');
+                    vizUrl = `/api/graph/visualization?doc_ids=${encodeURIComponent(ids)}&limit=${nodeLimit}`;
+                    entUrl = `/api/graph/entities?limit=100`;
+                }
+                const [vizRes, entRes] = await Promise.all([
+                    fetch(vizUrl),
+                    fetch(entUrl)
+                ]);
+                if (vizRes.ok) {
+                    const data = await vizRes.json();
+                    this.graphNodes = data.nodes || [];
+                    this.graphEdges = data.edges || [];
+                    this.$nextTick(() => this.renderGraph());
+                }
+                if (entRes.ok) {
+                    this.entities = await entRes.json();
+                    this.totalEntities = this.entities.length;
+                }
+            } catch(e) {}
+            this.loadingGraph = false;
+        },
+
+        async selectEntity(ent) {
+            this.selectedEntity = ent;
+            try {
+                const res = await fetch(`/api/graph/entities/${ent.id}`);
+                if (res.ok) {
+                    this.detailEntity = await res.json();
+                }
+            } catch(e) {}
+            this.highlightNode(ent.id);
+        },
+
+        async navigateToEdgeEntity(edge) {
+            const currentId = this.detailEntity?.entity?.id;
+            const targetId = edge.target_entity_id === currentId ? edge.source_entity_id : edge.target_entity_id;
+            if (!targetId) return;
+            try {
+                const res = await fetch(`/api/graph/entities/${targetId}`);
+                if (res.ok) {
+                    this.detailEntity = await res.json();
+                    this.highlightNode(targetId);
+                }
+            } catch(e) {}
+        },
+
+        toggleFullscreen() {
+            this.fullscreenMode = !this.fullscreenMode;
+            this.$nextTick(() => {
+                if (this.simulation) {
+                    const canvas = document.getElementById('graphCanvas');
+                    if (canvas && this.svg) {
+                        const w = canvas.clientWidth;
+                        const h = canvas.clientHeight;
+                        this.svg.attr('viewBox', null);
+                        this.simulation.force('center', d3.forceCenter(w / 2, h / 2));
+                        this.simulation.alpha(0.1).restart();
+                    }
+                }
+            });
+        },
+
+        applyTypeFilter() {
+            const svg = d3.select('#graphCanvas svg');
+            if (svg.empty()) return;
+            const filterType = this.selectedType;
+            if (!filterType) {
+                svg.selectAll('.node-group').classed('node-type-ghosted', false);
+                svg.selectAll('.link-group').classed('link-type-ghosted', false);
+                svg.selectAll('.link-label').each(function() {
+                    const el = d3.select(this);
+                    if (!el.classed('link-ghosted')) el.style('opacity', null);
+                });
+                return;
+            }
+            const matchingIds = new Set();
+            this.graphNodes.forEach(n => {
+                if ((n.type || '').toUpperCase() === filterType.toUpperCase()) matchingIds.add(n.id);
+            });
+            const connectedEdgeIndices = new Set();
+            this.graphEdges.forEach((e, i) => {
+                const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+                const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+                if (matchingIds.has(srcId) || matchingIds.has(tgtId)) connectedEdgeIndices.add(i);
+            });
+            svg.selectAll('.node-group').each(function(d) {
+                d3.select(this).classed('node-type-ghosted', !matchingIds.has(d.id));
+            });
+            svg.selectAll('.link-group').each(function(d, i) {
+                d3.select(this).classed('link-type-ghosted', !connectedEdgeIndices.has(i));
+            });
+            svg.selectAll('.link-label').each(function(d, i) {
+                if (!d3.select(this).classed('link-ghosted')) {
+                    d3.select(this).style('opacity', connectedEdgeIndices.has(i) ? 1 : 0.08);
+                }
+            });
+        },
+
+        async buildGraph() {
+            if (this.selectedDocIds.length !== 1) return;
+            this.building = true;
+            try {
+                const res = await fetch(`/api/graph/documents/${this.selectedDocIds[0]}/build`, { method: 'POST' });
+                if (res.ok) {
+                    await this.loadDocGraph();
+                }
+            } catch(e) {}
+            this.building = false;
+        },
+
+        async bulkBuildGraphs() {
+            if (this.selectedDocIds.length === 0) return;
+            this.bulkBuilding = true;
+            const ids = [...this.selectedDocIds];
+            const total = ids.length;
+            let indexed = 0, built = 0, skipped = 0, failed = 0;
+            for (let i = 0; i < total; i++) {
+                const docId = ids[i];
+                const name = this.docName(docId);
+                this.bulkBuildStatus = `Processing ${i + 1}/${total}: ${name}...`;
+                try {
+                    const res = await fetch('/api/graph/build-bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_ids: [docId] })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        indexed += data.indexed || 0;
+                        built += data.built || 0;
+                        skipped += data.skipped || 0;
+                        failed += data.failed || 0;
+                    } else {
+                        failed++;
+                    }
+                } catch(e) {
+                    failed++;
+                }
+            }
+            const parts = [];
+            if (indexed > 0) parts.push(`${indexed} indexed`);
+            if (built > 0) parts.push(`${built} graphs built`);
+            if (skipped > 0) parts.push(`${skipped} skipped`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            this.bulkBuildStatus = `Done: ${parts.join(', ')}`;
+            await this.loadDocGraph();
+            await this.searchEntities();
+            setTimeout(() => { this.bulkBuildStatus = ''; }, 5000);
+            this.bulkBuilding = false;
+        },
+
+        clearGraph() {
+            const canvas = document.getElementById('graphCanvas');
+            const existing = canvas.querySelector('svg');
+            if (existing) existing.remove();
+            if (this.simulation) { this.simulation.stop(); this.simulation = null; }
+        },
+
+        renderGraph() {
+            this.clearGraph();
+            this.focusedNodeIds = [];
+            if (this.graphNodes.length === 0) return;
+
+            const canvas = document.getElementById('graphCanvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            const svg = d3.select(canvas).append('svg')
+                .attr('width', width).attr('height', height);
+
+            this.zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
+            svg.call(this.zoom).on('dblclick.zoom', null);
+            this.svg = svg;
+
+            const g = svg.append('g');
+
+            const nodes = this.graphNodes.map(n => ({...n}));
+            const edges = this.graphEdges.map(e => ({
+                source: e.source, target: e.target,
+                relation_type: e.relation_type, weight: e.weight || 1
+            }));
+
+            const nodeIds = new Set(nodes.map(n => n.id));
+            const validEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(validEdges).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-200))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(35));
+            this.simulation = simulation;
+
+            const link = g.append('g').selectAll('g')
+                .data(validEdges).join('g')
+                .attr('class', 'link-group');
+            link.append('line')
+                .attr('stroke', '#ddd').attr('stroke-width', d => Math.min(d.weight, 3))
+                .attr('stroke-opacity', 0.6);
+
+            const linkLabel = g.append('g').selectAll('text')
+                .data(validEdges).join('text')
+                .attr('class', 'link-label').attr('text-anchor', 'middle')
+                .text(d => d.relation_type);
+
+            const node = g.append('g').selectAll('g')
+                .data(nodes).join('g')
+                .attr('class', 'graph-node node-group')
+                .style('cursor', 'pointer')
+                .call(d3.drag()
+                    .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+                    .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+                    .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+                );
+
+            const self = this;
+            node.on('click', (e, d) => {
+                if (self.focusMode) {
+                    self.toggleFocusNode(d.id);
+                    return;
+                }
+                const ent = self.entities.find(en => en.id === d.id);
+                if (ent) self.selectEntity(ent);
+            });
+            node.on('dblclick', (e, d) => {
+                e.stopPropagation();
+                if (self.focusMode) {
+                    const ent = self.entities.find(en => en.id === d.id);
+                    if (ent) self.selectEntity(ent);
+                }
+            });
+
+            node.append('circle')
+                .attr('r', 16)
+                .attr('fill', d => autoTypeColor(d.type))
+                .attr('stroke', '#fff').attr('stroke-width', 2.5);
+
+            node.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('fill', '#fff')
+                .attr('font-family', '"Font Awesome 6 Free"')
+                .attr('font-weight', 900)
+                .attr('font-size', '12px')
+                .attr('pointer-events', 'none')
+                .text(d => autoTypeIconUnicode(d.type));
+
+            node.append('text')
+                .attr('class', 'node-label')
+                .attr('dy', -22).attr('text-anchor', 'middle')
+                .text(d => d.label.length > 20 ? d.label.slice(0, 18) + '...' : d.label);
+
+            simulation.on('tick', () => {
+                link.select('line').attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                linkLabel.attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+        },
+
+        highlightNode(entityId) {
+            if (!this.svg) return;
+            this.svg.selectAll('.graph-node circle')
+                .attr('stroke', d => d.id === entityId ? '#7c3aed' : '#fff')
+                .attr('stroke-width', d => d.id === entityId ? 4 : 2.5)
+                .attr('r', d => d.id === entityId ? 20 : 16);
+        },
+
+        zoomIn() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 1.3); },
+        zoomOut() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.scaleBy, 0.7); },
+        resetZoom() { if (this.svg && this.zoom) this.svg.transition().call(this.zoom.transform, d3.zoomIdentity); },
+
+        _triggerDownload(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        },
+
+        _escapeCSV(val) {
+            const s = String(val == null ? '' : val);
+            if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+                return '"' + s.replace(/"/g, '""') + '"';
+            }
+            return s;
+        },
+
+        downloadJSON() {
+            const data = { nodes: this.graphNodes, edges: this.graphEdges };
+            this._triggerDownload(JSON.stringify(data, null, 2), 'knowledge-graph.json', 'application/json');
+        },
+
+        downloadCSVEntities() {
+            const rows = [['name', 'type', 'mention_count', 'document_ids'].join(',')];
+            for (const n of this.graphNodes) {
+                const docIds = Array.isArray(n.document_ids) ? n.document_ids.join(';') : (n.document_ids || '');
+                rows.push([
+                    this._escapeCSV(n.label || n.name),
+                    this._escapeCSV(n.type || n.entity_type),
+                    this._escapeCSV(n.mention_count || 0),
+                    this._escapeCSV(docIds)
+                ].join(','));
+            }
+            this._triggerDownload(rows.join('\n'), 'graph-entities.csv', 'text/csv');
+        },
+
+        downloadCSVRelationships() {
+            const nodeMap = {};
+            for (const n of this.graphNodes) { nodeMap[n.id] = n.label || n.name || n.id; }
+            const rows = [['source_name', 'relation', 'target_name', 'weight'].join(',')];
+            for (const e of this.graphEdges) {
+                const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+                const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+                rows.push([
+                    this._escapeCSV(nodeMap[srcId] || srcId),
+                    this._escapeCSV(e.relation_type || ''),
+                    this._escapeCSV(nodeMap[tgtId] || tgtId),
+                    this._escapeCSV(e.weight || 1)
+                ].join(','));
+            }
+            this._triggerDownload(rows.join('\n'), 'graph-relationships.csv', 'text/csv');
+        },
+
+        _buildExportParams() {
+            const params = new URLSearchParams();
+            if (this.selectedDocIds.length > 0) params.set('doc_ids', this.selectedDocIds.join(','));
+            if (this.selectedTagId) params.set('tag_id', this.selectedTagId);
+            return params;
+        },
+
+        async _downloadFullExport(format, filename) {
+            const params = this._buildExportParams();
+            params.set('format', format);
+            try {
+                const resp = await fetch(`/api/graph/export?${params.toString()}`);
+                if (!resp.ok) throw new Error('Export failed');
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = filename;
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                console.error('Full graph export error:', err);
+                alert('Failed to export full graph. Please try again.');
+            }
+        },
+
+        downloadFullJSON() { this._downloadFullExport('json', 'knowledge-graph-full.json'); },
+        downloadFullCSVEntities() { this._downloadFullExport('csv_entities', 'knowledge-graph-entities-full.csv'); },
+        downloadFullCSVRelationships() { this._downloadFullExport('csv_relationships', 'knowledge-graph-relationships-full.csv'); },
+
+        toggleFocusMode() {
+            this.focusMode = !this.focusMode;
+            if (!this.focusMode) {
+                this.focusedNodeIds = [];
+                this.applyFocusHighlight();
+            }
+        },
+
+        toggleFocusNode(nodeId) {
+            const idx = this.focusedNodeIds.indexOf(nodeId);
+            if (idx >= 0) {
+                this.focusedNodeIds.splice(idx, 1);
+            } else {
+                this.focusedNodeIds.push(nodeId);
+            }
+            this.applyFocusHighlight();
+        },
+
+        clearFocus() {
+            this.focusedNodeIds = [];
+            this.applyFocusHighlight();
+        },
+
+        async runSmartFocus() {
+            const prompt = this.smartFocusPrompt.trim();
+            if (!prompt) return;
+            this.smartFocusLoading = true;
+            this.smartFocusSummary = '';
+            try {
+                const res = await fetch('/api/graph/smart-focus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        document_ids: this.selectedDocIds,
+                        tag_id: this.selectedTagId || undefined
+                    })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const focusIds = data.focus_entity_ids || [];
+                    if (focusIds.length > 0) {
+                        this.focusMode = true;
+                        this.focusedNodeIds = focusIds;
+                        this.smartFocusSummary = data.summary || `${focusIds.length} relevant entities found`;
+                        this.applyFocusHighlight();
+                    } else {
+                        this.smartFocusSummary = data.summary || 'No matching entities found.';
+                        setTimeout(() => { this.smartFocusSummary = ''; }, 4000);
+                    }
+                }
+            } catch(e) {
+                console.error('Smart Focus error:', e);
+            }
+            this.smartFocusLoading = false;
+        },
+
+        clearSmartFocus() {
+            this.smartFocusSummary = '';
+            this.smartFocusPrompt = '';
+            this.focusedNodeIds = [];
+            this.focusMode = false;
+            this.applyFocusHighlight();
+        },
+
+        applyFocusHighlight() {
+            const svg = d3.select('#graphCanvas svg');
+            if (svg.empty()) return;
+
+            const focused = new Set(this.focusedNodeIds);
+
+            if (focused.size === 0) {
+                svg.selectAll('.node-group')
+                    .classed('node-focused', false)
+                    .classed('node-connected', false)
+                    .classed('node-ghosted', false);
+                svg.selectAll('.link-group')
+                    .classed('link-connected', false)
+                    .classed('link-ghosted', false);
+                svg.selectAll('.link-label')
+                    .style('opacity', null);
+                return;
+            }
+
+            const connectedNodes = new Set(focused);
+            const connectedEdges = new Set();
+
+            for (let i = 0; i < this.graphEdges.length; i++) {
+                const e = this.graphEdges[i];
+                const srcId = typeof e.source === 'object' ? e.source.id : e.source;
+                const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
+                if (focused.has(srcId) || focused.has(tgtId)) {
+                    connectedNodes.add(srcId);
+                    connectedNodes.add(tgtId);
+                    connectedEdges.add(i);
+                }
+            }
+
+            svg.selectAll('.node-group').each(function(d) {
+                const el = d3.select(this);
+                const isFocused = focused.has(d.id);
+                const isConnected = connectedNodes.has(d.id);
+                el.classed('node-focused', isFocused);
+                el.classed('node-connected', isConnected && !isFocused);
+                el.classed('node-ghosted', !isConnected);
+            });
+
+            svg.selectAll('.link-group').each(function(d, i) {
+                const el = d3.select(this);
+                const isConn = connectedEdges.has(i);
+                el.classed('link-connected', isConn);
+                el.classed('link-ghosted', !isConn);
+            });
+
+            svg.selectAll('.link-label').each(function(d, i) {
+                d3.select(this).style('opacity', connectedEdges.has(i) ? 1 : 0.04);
+            });
+        }
+    };
+}
+</script>
+{% endblock %}

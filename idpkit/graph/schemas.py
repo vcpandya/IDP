@@ -16,6 +16,7 @@ class EntitySchema(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     first_document_id: Optional[str] = None
     document_count: int = 1
+    mention_count: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -29,6 +30,9 @@ class MentionSchema(BaseModel):
     mention_text: Optional[str] = None
     start_page: Optional[int] = None
     end_page: Optional[int] = None
+    document_filename: Optional[str] = None
+    document_format: Optional[str] = None
+    source_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -46,6 +50,10 @@ class EdgeSchema(BaseModel):
     weight: int = 1
     confidence: int = 80
     context_snippet: Optional[str] = None
+    source_entity_name: Optional[str] = None
+    source_entity_type: Optional[str] = None
+    target_entity_name: Optional[str] = None
+    target_entity_type: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

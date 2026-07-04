@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}E-Sign — IDP Kit{% endblock %}
+{% block content %}
+<div x-data="esignDashboard()" x-init="load()">
+
+  <div class="page-header">
+    <h2><i class="fas fa-file-signature"></i> E-Sign</h2>
+    <a href="/esign/new" class="btn btn-primary"><i class="fas fa-plus"></i> New Envelope</a>
+  </div>
+  {% with active="envelopes" %}{% include "_esign_tabs.html" %}{% endwith %}
+
+  <!-- Stats Row -->
+  <div class="stats-grid" style="margin-bottom:24px">
+    <div class="stat-card">
+      <div class="stat-icon"><i class="fas fa-envelope-open-text"></i></div>
+      <div class="stat-info">
+        <span class="stat-value" x-text="envelopes.length"></span>
+        <span class="stat-label">Total</span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="color:#f59e0b"><i class="fas fa-paper-plane"></i></div>
+      <div class="stat-info">
+        <span class="stat-value" x-text="envelopes.filter(e=>e.status==='sent').length"></span>
+        <span class="stat-label">Awaiting Signatures</span>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="color:#10b981"><i class="fas fa-check-circle"></i></div>
+      <div class="stat-info">
+        <span class="stat-value" x-text="envelopes.filter(e=>e.status==='completed').length"></span>
+        <span class="stat-label">Completed</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading" style="text-align:center;padding:40px;color:var(--text-muted)">
+    <i class="fas fa-spinner fa-spin" style="font-size:2rem"></i>
+    <p>Loading envelopes…</p>
+  </div>
+
+  <!-- Empty state -->
+  <div x-show="!loading && envelopes.length === 0" style="text-align:center;padding:60px 20px">
+    <div style="font-size:4rem;margin-bottom:16px;opacity:0.3"><i class="fas fa-file-signature"></i></div>
+    <h3 style="color:var(--text-secondary);margin-bottom:8px">No envelopes yet</h3>
+    <p style="color:var(--text-muted);margin-bottom:24px">Upload a document and invite people to sign it.</p>
+    <a href="/esign/new" class="btn btn-primary"><i class="fas fa-plus"></i> Create First Envelope</a>
+  </div>
+
+  <!-- Envelope list -->
+  <div x-show="!loading && envelopes.length > 0">
+    <template x-for="env in envelopes" :key="env.id">
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+
+        <!-- Top row -->
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <h4 style="margin:0;font-size:1rem" x-text="env.title"></h4>
+              <span class="badge" :class="statusClass(env.status)" x-text="statusLabel(env.status)"
+                style="padding:3px 10px;border-radius:20px;font-size:0.75rem;font-weight:600"></span>
+            </div>
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px">
+              Created <span x-text="formatDate(env.created_at)"></span>
+              <template x-if="env.expires_at">
+                &nbsp;· Expires <span x-text="formatDate(env.expires_at)"></span>
+              </template>
+            </div>
+          </div>
+          <!-- Actions -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <template x-if="env.status === 'draft'">
+              <a :href="'/esign/' + env.id + '/prepare'" class="btn btn-sm btn-primary">
+                <i class="fas fa-pen"></i> Prepare
+              </a>
+            </template>
+            <template x-if="env.status === 'completed' && env.has_finalized">
+              <a :href="'/api/esign/envelopes/' + env.id + '/download'" class="btn btn-sm" style="background:#10b981;color:#fff;border-color:#10b981">
+                <i class="fas fa-download"></i> Signed PDF
+              </a>
+            </template>
+            <template x-if="env.status === 'completed'">
+              <a :href="'/api/esign/envelopes/' + env.id + '/audit-report'" class="btn btn-sm" style="background:#6366f1;color:#fff;border-color:#6366f1">
+                <i class="fas fa-shield-alt"></i> Audit Report
+              </a>
+            </template>
+            <template x-if="env.status === 'sent' || env.status === 'draft'">
+              <button @click="voidEnvelope(env)" class="btn btn-sm btn-danger" title="Void">
+                <i class="fas fa-ban"></i> Void
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- Signer progress -->
+        <div style="margin-top:14px" x-show="env.signers && env.signers.length > 0">
+          <div style="font-size:0.75rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Signers</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <template x-for="signer in env.signers" :key="signer.id">
+              <div style="display:flex;align-items:center;gap:6px;background:var(--bg-secondary,#f9fafb);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:0.82rem">
+                <i class="fas" :class="signerIcon(signer.status)" :style="'color:' + signerColor(signer.status)"></i>
+                <span x-text="signer.name"></span>
+                <span style="color:var(--text-muted);font-size:0.75rem" x-text="'<' + signer.email + '>'"></span>
+                <template x-if="signer.status === 'sent' && env.status === 'sent'">
+                  <button @click="resend(env.id, signer.id)" class="btn btn-sm" style="padding:2px 6px;font-size:0.7rem" title="Resend">
+                    <i class="fas fa-redo"></i>
+                  </button>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- Progress bar -->
+          <template x-if="env.signers.length > 0">
+            <div style="margin-top:10px">
+              <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--text-muted);margin-bottom:4px">
+                <span x-text="env.signers.filter(s=>s.status==='signed').length + ' of ' + env.signers.length + ' signed'"></span>
+                <span x-text="Math.round(env.signers.filter(s=>s.status==='signed').length / env.signers.length * 100) + '%'"></span>
+              </div>
+              <div style="height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                <div style="height:100%;background:#10b981;border-radius:3px;transition:width 0.4s ease"
+                  :style="'width:' + Math.round(env.signers.filter(s=>s.status==='signed').length / env.signers.length * 100) + '%'"></div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+      </div>
+    </template>
+  </div>
+
+</div>
+
+<script>
+function esignDashboard() {
+  return {
+    envelopes: [],
+    loading: true,
+
+    async load() {
+      this.loading = true;
+      try {
+        const res = await fetch('/api/esign/envelopes');
+        if (res.ok) this.envelopes = await res.json();
+      } catch(e) {}
+      this.loading = false;
+    },
+
+    statusLabel(s) {
+      return { draft:'Draft', sent:'Awaiting Signatures', viewed:'Viewed', partially_signed:'Partially Signed', completed:'Completed', declined:'Declined', voided:'Voided', expired:'Expired' }[s] || s;
+    },
+
+    statusClass(s) {
+      return { draft:'status-uploaded', sent:'status-indexing', viewed:'status-indexing', partially_signed:'status-indexing', completed:'status-indexed', declined:'status-failed', voided:'status-failed', expired:'status-failed' }[s] || '';
+    },
+
+    signerIcon(s) {
+      return { signed:'fa-check-circle', viewed:'fa-eye', sent:'fa-clock', pending:'fa-clock', declined:'fa-times-circle' }[s] || 'fa-circle';
+    },
+
+    signerColor(s) {
+      return { signed:'#10b981', viewed:'#f59e0b', sent:'#9ca3af', pending:'#9ca3af', declined:'#ef4444' }[s] || '#9ca3af';
+    },
+
+    formatDate(d) {
+      if (!d) return '';
+      return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+    },
+
+    async voidEnvelope(env) {
+      if (!confirm(`Void envelope "${env.title}"? All signing links will be invalidated.`)) return;
+      const res = await fetch(`/api/esign/envelopes/${env.id}/void`, { method: 'POST' });
+      if (res.ok) { await this.load(); }
+      else { alert('Failed to void envelope'); }
+    },
+
+    async resend(envId, signerId) {
+      const res = await fetch(`/api/esign/envelopes/${envId}/resend/${signerId}`, { method: 'POST' });
+      if (res.ok) alert('Invitation resent!');
+      else alert('Failed to resend');
+    },
+  }
+}
+</script>
+{% endblock %}

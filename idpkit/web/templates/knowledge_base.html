@@ -8,32 +8,114 @@
         <div class="page-header">
             <h2><i class="fas fa-layer-group"></i> Knowledge Base</h2>
             <div class="header-actions">
+                <button @click="openManage()" class="btn"><i class="fas fa-sliders-h"></i> Manage Tags</button>
                 <button @click="showCreateModal = true" class="btn btn-primary"><i class="fas fa-plus"></i> Create Tag</button>
             </div>
         </div>
 
-        <!-- Upload Zone (untagged) -->
-        <div class="upload-zone kb-upload-zone"
-             @click="$refs.kbFileInput.click()"
-             @dragover.prevent="$el.classList.add('dragover')"
-             @dragleave.prevent="$el.classList.remove('dragover')"
-             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event)">
-            <input type="file" x-ref="kbFileInput" multiple style="display:none" @change="handleUpload($event)">
-            <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
-            <h3>Drop files here or click to upload</h3>
-            <p class="upload-hint">PDF, DOCX, MD, HTML, XLSX, CSV, PPTX, Images</p>
+        <!-- Background metadata job progress (Add to Document Map) -->
+        <div x-show="mdJob" x-cloak
+             style="margin:14px 0 0;padding:12px 16px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem">
+                    <i class="fas fa-spinner fa-spin" x-show="mdJob && mdJob.status!=='completed' && mdJob.status!=='failed'" style="color:#7c3aed"></i>
+                    <i class="fas fa-check-circle" x-show="mdJob && mdJob.status==='completed'" style="color:#16a34a"></i>
+                    <i class="fas fa-exclamation-circle" x-show="mdJob && mdJob.status==='failed'" style="color:#dc2626"></i>
+                    <strong x-text="mdJob ? ('Adding to Document Map — ' + mdJob.label) : ''"></strong>
+                    <span style="color:var(--text-muted,#6b7280)" x-text="mdJob ? ('· ' + (mdJob.processed + mdJob.failed + mdJob.skipped) + ' of ' + mdJob.total) : ''"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <span style="font-size:0.74rem;color:var(--text-muted,#6b7280)" x-text="mdJob ? ('✓ ' + mdJob.processed + '  ⚠ ' + mdJob.failed + '  ⤼ ' + mdJob.skipped) : ''"></span>
+                    <a x-show="mdJob && mdJob.status==='completed'" :href="mdJobLink" class="btn btn-sm btn-primary" style="font-size:0.76rem"><i class="fas fa-sitemap"></i> Open Document Map</a>
+                    <button class="btn btn-sm" style="font-size:0.76rem" x-show="mdJob && (mdJob.status==='completed' || mdJob.status==='failed')" @click="dismissMdJob()">Dismiss</button>
+                </div>
+            </div>
+            <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
+                <div style="height:100%;background:#7c3aed;transition:width 0.3s" :style="{ width: mdJobPct() + '%' }"></div>
+            </div>
+            <div x-show="mdJob && mdJob.current && mdJob.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
+                <i class="fas fa-file-alt"></i> <span x-text="mdJob ? mdJob.current : ''"></span>
+            </div>
+            <div x-show="mdJob && mdJob.failures && mdJob.failures.length" x-data="{ openFail: false }" style="margin-top:8px">
+                <button class="btn btn-sm" style="padding:2px 8px;font-size:0.74rem;color:#b91c1c;border:1px solid #fecaca;background:#fef2f2"
+                        @click="openFail = !openFail">
+                    <i class="fas" :class="openFail ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.68rem"></i>
+                    <span x-text="(mdJob.failed) + ' file' + (mdJob.failed === 1 ? '' : 's') + ' failed — see why'"></span>
+                </button>
+                <div x-show="openFail" style="margin-top:6px;max-height:170px;overflow:auto;border:1px solid var(--border,#e5e7eb);border-radius:8px;background:#fff">
+                    <template x-for="(f, i) in mdJob.failures" :key="i">
+                        <div style="padding:5px 8px;border-bottom:1px solid var(--border,#f1f1f1);font-size:0.74rem">
+                            <strong x-text="f.filename"></strong>
+                            <span style="color:var(--text-muted,#6b7280)" x-text="': ' + f.error"></span>
+                        </div>
+                    </template>
+                    <div x-show="mdJob.failed > mdJob.failures.length" style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted,#6b7280)"
+                         x-text="'+ ' + (mdJob.failed - mdJob.failures.length) + ' more not shown'"></div>
+                </div>
+            </div>
         </div>
 
-        <!-- Upload progress -->
+        <!-- Upload Zone (untagged) -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+            <div class="upload-zone kb-upload-zone"
+                 @click="$refs.kbFileInput.click()"
+                 @dragover.prevent="$el.classList.add('dragover')"
+                 @dragleave.prevent="$el.classList.remove('dragover')"
+                 @drop.prevent="$el.classList.remove('dragover'); handleDrop($event)">
+                <input type="file" x-ref="kbFileInput" multiple style="display:none" @change="handleUpload($event)">
+                <div class="upload-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+                <h3>Drop files here or click to upload</h3>
+                <p class="upload-hint">PDF, DOCX, MD, HTML, XLSX, CSV, PPTX, Images</p>
+            </div>
+
+            <div class="upload-zone kb-upload-zone" style="cursor:default" @click.stop>
+                <div class="upload-icon"><i class="fab fa-youtube" style="color:#ff0000"></i></div>
+                <h3>Add YouTube Content</h3>
+                <p class="upload-hint">Video, Playlist, or Channel URL</p>
+                <div style="display:flex;gap:8px;margin-top:12px;width:100%;max-width:400px" @click.stop>
+                    <input type="text" x-model="youtubeUrl" placeholder="https://youtube.com/watch?v=..."
+                           style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem"
+                           @keydown.enter="ingestYouTube()">
+                    <button @click="ingestYouTube()" class="btn btn-primary" :disabled="ytIngesting || !youtubeUrl.trim()">
+                        <span x-show="!ytIngesting"><i class="fas fa-plus"></i> Add</span>
+                        <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
+                    </button>
+                    <button x-show="ytCurrentJobId" @click="cancelYouTubeJob()" class="btn btn-danger" x-cloak>
+                        <i class="fas fa-stop"></i> Stop
+                    </button>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+                    <label class="checkbox-label" style="font-size:0.75rem"><input type="checkbox" x-model="ytAutoTag"> Auto-tag</label>
+                </div>
+                <div x-show="ytStatus" class="upload-hint" :class="ytStatusClass" style="margin-top:6px" x-text="ytStatus"></div>
+            </div>
+        </div>
+
         <div class="file-list" x-show="uploadFiles.length > 0">
-            <h3>Uploading</h3>
+            <h3 style="display:flex;align-items:center;gap:8px">
+                <span>Processing Files</span>
+                <span class="text-muted" style="font-size:0.8rem;font-weight:normal" x-text="'(' + uploadFiles.filter(f => f.status === 'ready').length + '/' + uploadFiles.length + ' done)'"></span>
+            </h3>
             <template x-for="(uf, idx) in uploadFiles" :key="idx">
-                <div class="file-item">
-                    <div class="file-info">
-                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
-                        <span x-text="uf.filename"></span>
+                <div class="file-item" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div class="file-info" style="gap:8px">
+                            <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'" style="font-size:1rem"></i>
+                            <span x-text="uf.filename" style="font-weight:500"></span>
+                        </div>
+                        <span class="status-badge" :class="'status-' + uf.status"
+                              x-text="uf.status === 'ready' ? 'Complete' : uf.status === 'failed' ? 'Failed' : uf.stage || uf.status"></span>
                     </div>
-                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                    <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
+                        <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                            <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
+                                 :style="{ width: (uf.progress || 0) + '%' }"></div>
+                        </div>
+                        <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
+                    </div>
+                    <div x-show="uf.status === 'ready'" style="height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:100%;border-radius:3px;background:#059669"></div>
+                    </div>
                 </div>
             </template>
         </div>
@@ -45,7 +127,26 @@
                     <div class="tag-color-bar" :style="'background:' + tag.color"></div>
                     <h4 x-text="tag.name"></h4>
                     <p class="text-muted" x-text="tag.description || 'No description'" style="font-size:0.8rem;margin:4px 0 8px"></p>
-                    <span class="badge"><span x-text="tag.document_count || 0"></span> docs</span>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+                        <span class="badge"><span x-text="tag.document_count || 0"></span> docs</span>
+                        <div class="kb-tag-actions" style="display:flex;align-items:center;gap:4px">
+                            <label class="kb-tag-act" title="Change color" @click.stop
+                                   style="position:relative;width:24px;height:24px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted,#6b7280)">
+                                <i class="fas fa-palette" style="font-size:0.74rem"></i>
+                                <input type="color" :value="tag.color || '#4f46e5'" @click.stop
+                                       @change="recolorTag(tag, $event.target.value)"
+                                       style="position:absolute;inset:0;opacity:0;cursor:pointer">
+                            </label>
+                            <button class="kb-tag-act" title="Rename" @click.stop="renameTagPrompt(tag)"
+                                    style="width:24px;height:24px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:var(--text-muted,#6b7280)">
+                                <i class="fas fa-pen" style="font-size:0.72rem"></i>
+                            </button>
+                            <button class="kb-tag-act" title="Delete" @click.stop="deleteTagById(tag)"
+                                    style="width:24px;height:24px;border-radius:6px;border:none;background:transparent;cursor:pointer;color:#b91c1c">
+                                <i class="fas fa-trash" style="font-size:0.72rem"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </template>
             <div x-show="tags.length === 0" class="empty-state" style="grid-column:1/-1;padding:40px">
@@ -56,28 +157,103 @@
         <!-- Recent untagged documents -->
         <div class="dashboard-section" style="margin-top:24px" x-show="documents.length > 0">
             <div class="documents-table">
-                <h3>All Documents</h3>
+                <h3>All Documents <span class="text-muted" style="font-size:0.85rem;font-weight:normal" x-text="'(' + filteredDocuments.length + ' of ' + documents.length + ')'"></span></h3>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center">
+                    <input type="text" x-model="filterSearch" placeholder="Search by filename..."
+                           style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;min-width:180px;flex:1;max-width:280px">
+                    <select x-model="filterFormat" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Formats</option>
+                        <template x-for="fmt in availableFormats" :key="fmt">
+                            <option :value="fmt" x-text="fmt"></option>
+                        </template>
+                    </select>
+                    <select x-model="filterStatus" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Statuses</option>
+                        <template x-for="st in availableStatuses" :key="st">
+                            <option :value="st" x-text="st"></option>
+                        </template>
+                    </select>
+                    <select x-model="filterTag" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem">
+                        <option value="">All Tags</option>
+                        <option value="__untagged__">Untagged</option>
+                        <template x-for="tag in tags" :key="tag.id">
+                            <option :value="tag.id" x-text="tag.name"></option>
+                        </template>
+                    </select>
+                    <button class="btn btn-sm" @click="filterSearch=''; filterFormat=''; filterStatus=''; filterTag=''"
+                            x-show="filterSearch || filterFormat || filterStatus || filterTag"
+                            style="font-size:0.8rem"><i class="fas fa-times"></i> Clear</button>
+                </div>
+                <div x-show="selectedDocIds.length > 0"
+                     style="display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:10px;background:var(--bg-hover,#f0f4ff);border:1px solid var(--border);border-radius:8px">
+                    <span style="font-size:0.85rem;font-weight:500" x-text="selectedDocIds.length + ' selected'"></span>
+                    <div style="position:relative" x-data="{ showTagPicker: false }">
+                        <button class="btn btn-sm btn-primary" @click="showTagPicker = !showTagPicker">
+                            <i class="fas fa-tag"></i> Tag selected
+                        </button>
+                        <div x-show="showTagPicker" @click.away="showTagPicker = false" x-cloak
+                             style="position:absolute;top:100%;left:0;margin-top:4px;background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:50;min-width:180px;max-height:220px;overflow-y:auto">
+                            <template x-for="tag in tags" :key="tag.id">
+                                <button @click="bulkTagSelected(tag.id); showTagPicker = false"
+                                        style="display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border:none;background:none;cursor:pointer;font-size:0.85rem;text-align:left"
+                                        onmouseover="this.style.background='var(--bg-hover,#f0f4ff)'" onmouseout="this.style.background='none'">
+                                    <span style="width:10px;height:10px;border-radius:50%;flex-shrink:0" :style="'background:' + tag.color"></span>
+                                    <span x-text="tag.name"></span>
+                                </button>
+                            </template>
+                            <div x-show="tags.length === 0" style="padding:12px;font-size:0.8rem;color:var(--text-muted);text-align:center">No tags available</div>
+                        </div>
+                    </div>
+                    <button class="btn btn-sm" @click="addSelectionToMap()" title="Extract smart metadata for the selected documents and view them in the Document Map">
+                        <i class="fas fa-sitemap"></i> Add to Document Map
+                    </button>
+                    <button class="btn btn-sm btn-danger" @click="bulkDeleteSelected()">
+                        <i class="fas fa-trash"></i> Delete selected
+                    </button>
+                    <button class="btn btn-sm" @click="deselectAll()" style="margin-left:auto">
+                        <i class="fas fa-times"></i> Deselect
+                    </button>
+                </div>
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th>Actions</th></tr>
+                        <tr>
+                            <th style="width:36px"><input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAllVisible($event.target.checked)" style="width:16px;height:16px"></th>
+                            <th>Name</th><th>Format</th><th>Status</th><th>Tags</th><th style="min-width:120px">Actions</th>
+                        </tr>
                     </thead>
                     <tbody>
-                        <template x-for="doc in documents" :key="doc.id">
-                            <tr>
-                                <td><a :href="'/documents/' + doc.id" x-text="doc.filename" class="doc-link"></a></td>
+                        <template x-for="doc in filteredDocuments" :key="doc.id">
+                            <tr :style="selectedDocIds.includes(doc.id) ? 'background:var(--bg-hover,#f0f4ff)' : ''">
+                                <td><input type="checkbox" :checked="selectedDocIds.includes(doc.id)" @change="toggleDocSelection(doc.id)" style="width:16px;height:16px"></td>
+                                <td>
+                                    <i x-show="doc.format === 'youtube'" class="fab fa-youtube" style="color:#ff0000;margin-right:4px"></i>
+                                    <a :href="doc.source_url || ('/documents/' + doc.id)" :target="doc.source_url ? '_blank' : '_self'" x-text="doc.filename" class="doc-link"></a>
+                                </td>
                                 <td><span class="badge" x-text="doc.format"></span></td>
                                 <td><span class="status-badge" :class="'status-' + doc.status" x-text="doc.status"></span></td>
                                 <td>
-                                    <template x-for="t in (doc.tags || [])" :key="t.id">
-                                        <span class="tag-dot" :style="'background:' + t.color" :title="t.name" style="display:inline-block;margin-right:4px"></span>
-                                    </template>
+                                    <div style="display:flex;flex-wrap:wrap;gap:4px">
+                                        <template x-for="t in (doc.tags || [])" :key="t.id">
+                                            <span class="kb-tag-chip" :title="t.name"
+                                                  style="display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;font-size:0.74rem;line-height:1.4;background:var(--bg-hover,#f0f4ff);border:1px solid var(--border,#e2e8f0);max-width:160px">
+                                                <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0" :style="'background:' + (t.color || '#4f46e5')"></span>
+                                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="t.name"></span>
+                                            </span>
+                                        </template>
+                                        <span x-show="!doc.tags || doc.tags.length === 0" style="color:var(--text-muted);font-size:0.74rem">—</span>
+                                    </div>
                                 </td>
                                 <td class="actions">
                                     <a :href="'/documents/' + doc.id" class="btn btn-sm"><i class="fas fa-eye"></i></a>
+                                    <a x-show="doc.format === 'pdf'" :href="'/esign/new?document_id=' + doc.id + '&title=' + encodeURIComponent(doc.filename || '')" class="btn btn-sm" title="E-Sign this document" style="color:#4f46e5;border-color:#4f46e5"><i class="fas fa-file-signature"></i></a>
+                                    <button @click="autoTagDoc(doc.id)" class="btn btn-sm" title="Auto-tag"><i class="fas fa-magic"></i></button>
                                     <button @click="deleteDoc(doc.id)" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
                                 </td>
                             </tr>
                         </template>
+                        <tr x-show="filteredDocuments.length === 0">
+                            <td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted)">No documents match the current filters.</td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
@@ -93,34 +269,76 @@
                 <span x-text="currentTag.name"></span>
             </h2>
             <div class="header-actions">
+                <button @click="bulkBuildTagGraphs()" class="btn btn-primary" :disabled="bulkBuildingGraphs">
+                    <i class="fas" :class="bulkBuildingGraphs ? 'fa-spinner fa-spin' : 'fa-project-diagram'"></i>
+                    <span x-show="!bulkBuildingGraphs">Index & Build Graphs</span>
+                    <span x-show="bulkBuildingGraphs">Processing...</span>
+                </button>
+                <button @click="addTagToMap(currentTag)" class="btn" title="Extract smart metadata for this knowledge base and view it in the Document Map">
+                    <i class="fas fa-sitemap"></i> Add to Document Map
+                </button>
                 <button @click="editTag = {name: currentTag.name, color: currentTag.color, description: currentTag.description || ''}; showEditModal = true" class="btn"><i class="fas fa-edit"></i> Edit</button>
                 <button @click="deleteCurrentTag()" class="btn btn-danger"><i class="fas fa-trash"></i> Delete Tag</button>
             </div>
         </div>
 
+        <div x-show="bulkBuildGraphStatus" style="margin-bottom:12px;padding:10px 14px;background:var(--bg-hover,#f0f4ff);border-radius:8px;font-size:0.85rem;color:var(--text-secondary)" x-text="bulkBuildGraphStatus"></div>
+
         <p class="text-muted" x-show="currentTag.description" x-text="currentTag.description" style="margin-bottom:16px"></p>
 
         <!-- Upload into tag -->
-        <div class="upload-zone kb-upload-zone"
-             style="padding:30px 20px"
-             @click="$refs.tagFileInput.click()"
-             @dragover.prevent="$el.classList.add('dragover')"
-             @dragleave.prevent="$el.classList.remove('dragover')"
-             @drop.prevent="$el.classList.remove('dragover'); handleDrop($event, currentTag.id)">
-            <input type="file" x-ref="tagFileInput" multiple style="display:none" @change="handleUpload($event, currentTag.id)">
-            <div class="upload-icon" style="font-size:1.5rem"><i class="fas fa-cloud-upload-alt"></i></div>
-            <p>Drop files here to add to this tag</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="upload-zone kb-upload-zone"
+                 style="padding:24px 16px"
+                 @click="$refs.tagFileInput.click()"
+                 @dragover.prevent="$el.classList.add('dragover')"
+                 @dragleave.prevent="$el.classList.remove('dragover')"
+                 @drop.prevent="$el.classList.remove('dragover'); handleDrop($event, currentTag.id)">
+                <input type="file" x-ref="tagFileInput" multiple style="display:none" @change="handleUpload($event, currentTag.id)">
+                <div class="upload-icon" style="font-size:1.5rem"><i class="fas fa-cloud-upload-alt"></i></div>
+                <p>Drop files here to add to this tag</p>
+            </div>
+
+            <div class="upload-zone kb-upload-zone" style="padding:24px 16px;cursor:default" @click.stop>
+                <div class="upload-icon" style="font-size:1.5rem"><i class="fab fa-youtube" style="color:#ff0000"></i></div>
+                <p>Add YouTube to this tag</p>
+                <div style="display:flex;gap:8px;margin-top:8px;width:100%;max-width:350px" @click.stop>
+                    <input type="text" x-model="youtubeUrl" placeholder="YouTube URL..."
+                           style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.8rem"
+                           @keydown.enter="ingestYouTube(currentTag.id)">
+                    <button @click="ingestYouTube(currentTag.id)" class="btn btn-primary btn-sm" :disabled="ytIngesting || !youtubeUrl.trim()">
+                        <span x-show="!ytIngesting"><i class="fas fa-plus"></i></span>
+                        <span x-show="ytIngesting"><i class="fas fa-spinner fa-spin"></i></span>
+                    </button>
+                    <button x-show="ytCurrentJobId" @click="cancelYouTubeJob()" class="btn btn-danger btn-sm" x-cloak>
+                        <i class="fas fa-stop"></i>
+                    </button>
+                </div>
+                <div x-show="ytStatus" class="upload-hint" :class="ytStatusClass" style="margin-top:4px;font-size:0.75rem" x-text="ytStatus"></div>
+            </div>
         </div>
 
-        <!-- Upload progress (tag context) -->
         <div class="file-list" x-show="uploadFiles.length > 0" style="margin-top:12px">
             <template x-for="(uf, idx) in uploadFiles" :key="idx">
-                <div class="file-item">
-                    <div class="file-info">
-                        <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'"></i>
-                        <span x-text="uf.filename"></span>
+                <div class="file-item" style="flex-direction:column;align-items:stretch;gap:6px;padding:10px 14px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div class="file-info" style="gap:8px">
+                            <i :class="uf.status === 'ready' ? 'fas fa-check-circle text-success' : uf.status === 'failed' ? 'fas fa-times-circle text-danger' : 'fas fa-spinner fa-spin text-info'" style="font-size:1rem"></i>
+                            <span x-text="uf.filename" style="font-weight:500"></span>
+                        </div>
+                        <span class="status-badge" :class="'status-' + uf.status"
+                              x-text="uf.status === 'ready' ? 'Complete' : uf.status === 'failed' ? 'Failed' : uf.stage || uf.status"></span>
                     </div>
-                    <span class="status-badge" :class="'status-' + uf.status" x-text="uf.status"></span>
+                    <div x-show="uf.status !== 'ready' && uf.status !== 'failed'" style="display:flex;align-items:center;gap:10px">
+                        <div style="flex:1;height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                            <div style="height:100%;border-radius:3px;transition:width 0.3s ease;background:var(--primary,#4f46e5)"
+                                 :style="{ width: (uf.progress || 0) + '%' }"></div>
+                        </div>
+                        <span style="font-size:0.75rem;color:var(--text-muted);min-width:32px;text-align:right" x-text="(uf.progress || 0) + '%'"></span>
+                    </div>
+                    <div x-show="uf.status === 'ready'" style="height:6px;background:var(--border,#e2e8f0);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:100%;border-radius:3px;background:#059669"></div>
+                    </div>
                 </div>
             </template>
         </div>
@@ -177,6 +395,93 @@
         </div>
     </div>
 
+    <!-- YouTube Video Selection Modal -->
+    <div class="modal-overlay" x-show="showYtSelectModal" x-cloak @click.self="showYtSelectModal = false">
+        <div class="modal" style="max-width:650px;max-height:80vh;display:flex;flex-direction:column">
+            <div class="modal-header">
+                <h3><i class="fab fa-youtube" style="color:#ff0000;margin-right:6px"></i> Select Videos to Import</h3>
+                <button class="btn-close" @click="showYtSelectModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div style="padding:12px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+                <span class="badge" x-text="ytPreviewType === 'playlist' ? 'Playlist' : 'Channel'" style="text-transform:capitalize"></span>
+                <span x-show="ytSourceName" style="font-size:0.85rem;font-weight:500" x-text="ytSourceName"></span>
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytFilteredVideos.length + ' of ' + ytPreviewVideos.length + ' videos'"></span>
+                <div style="margin-left:auto;display:flex;gap:6px">
+                    <button class="btn btn-sm" @click="ytSelectFiltered(true)">Select Shown</button>
+                    <button class="btn btn-sm" @click="ytSelectFiltered(false)">Deselect Shown</button>
+                </div>
+            </div>
+            <div x-show="ytDefaultTagName && !ytPendingTagId" style="padding:8px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;background:var(--bg-secondary,#f9fafb)">
+                <i class="fas fa-tag" style="color:#ff0000;font-size:0.8rem"></i>
+                <span style="font-size:0.8rem">Tag:</span>
+                <span style="font-size:0.8rem;font-weight:500;background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:10px" x-text="ytDefaultTagName"></span>
+                <label class="checkbox-label" style="font-size:0.75rem;margin-left:auto">
+                    <input type="checkbox" x-model="ytApplyDefaultTag"> Apply tag
+                </label>
+            </div>
+            <div style="padding:10px 20px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--bg-secondary,#f9fafb)">
+                <input type="text" x-model="ytFilterSearch" placeholder="Search titles..."
+                       style="padding:5px 10px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem;width:160px">
+                <select x-model="ytFilterSort" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                    <option value="newest">Newest first</option>
+                    <option value="oldest">Oldest first</option>
+                    <option value="most_viewed">Most viewed</option>
+                    <option value="most_liked">Most liked</option>
+                    <option value="default">Playlist order</option>
+                </select>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">From:</label>
+                    <input type="date" x-model="ytFilterDateFrom" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">To:</label>
+                    <input type="date" x-model="ytFilterDateTo" style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem">
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                    <label style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap">Latest:</label>
+                    <input type="number" x-model.number="ytFilterLatestN" min="0" placeholder="N"
+                           style="padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:0.8rem;width:60px">
+                </div>
+                <button class="btn btn-sm" @click="ytClearFilters()" style="font-size:0.75rem"><i class="fas fa-times"></i> Clear</button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1;padding:0">
+                <div style="max-height:380px;overflow-y:auto">
+                    <template x-for="(vid, idx) in ytFilteredVideos" :key="vid.video_id">
+                        <label style="display:flex;align-items:center;gap:10px;padding:10px 20px;border-bottom:1px solid var(--border);cursor:pointer"
+                               :style="vid.selected ? 'background:var(--bg-hover,#f0f4ff)' : ''">
+                            <input type="checkbox" x-model="vid.selected" style="width:16px;height:16px;flex-shrink:0">
+                            <img :src="'https://img.youtube.com/vi/' + vid.video_id + '/default.jpg'"
+                                 style="width:60px;height:45px;object-fit:cover;border-radius:4px;flex-shrink:0"
+                                 onerror="this.style.display='none'">
+                            <div style="flex:1;min-width:0">
+                                <div style="font-size:0.85rem;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="vid.title || vid.video_id"></div>
+                                <div style="font-size:0.75rem;color:var(--text-muted);display:flex;gap:10px;flex-wrap:wrap">
+                                    <span x-text="vid.video_id"></span>
+                                    <span x-show="vid.published_at" x-text="vid.published_at ? vid.published_at.substring(0,10) : ''"></span>
+                                    <span x-show="vid.view_count" x-text="(vid.view_count||0).toLocaleString() + ' views'"></span>
+                                    <span x-show="vid.duration_seconds" x-text="ytFormatDuration(vid.duration_seconds)"></span>
+                                </div>
+                            </div>
+                        </label>
+                    </template>
+                    <div x-show="ytFilteredVideos.length === 0" style="padding:30px 20px;text-align:center;color:var(--text-muted)">
+                        No videos match your filters
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;gap:12px">
+                <span class="text-muted" style="font-size:0.85rem" x-text="ytSelectedCount + ' selected'"></span>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                    <label class="checkbox-label" style="font-size:0.8rem"><input type="checkbox" x-model="ytAutoTag"> Auto-tag</label>
+                    <button class="btn" @click="showYtSelectModal = false">Cancel</button>
+                    <button class="btn btn-primary" @click="importSelectedVideos()" :disabled="ytSelectedCount === 0">
+                        <i class="fas fa-download"></i> Import <span x-text="ytSelectedCount"></span> Video(s)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Edit Tag Modal -->
     <div class="modal-overlay" x-show="showEditModal" x-cloak @click.self="showEditModal = false">
         <div class="modal" style="max-width:450px">
@@ -211,6 +516,49 @@
         </div>
     </div>
 
+    <!-- Manage Tags modal -->
+    <div class="modal-overlay" x-show="showManageModal" x-cloak @click.self="showManageModal = false">
+        <div class="modal" style="max-width:640px;max-height:84vh;display:flex;flex-direction:column">
+            <div class="modal-header">
+                <h3><i class="fas fa-sliders-h"></i> Manage Tags</h3>
+                <button class="btn-close" @click="showManageModal = false"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body" style="overflow-y:auto;flex:1">
+                <input type="text" x-model="manageSearch" placeholder="Search tags…"
+                       style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;margin-bottom:6px">
+                <p style="font-size:0.76rem;color:var(--text-muted);margin:0 0 10px">
+                    Rename or recolor inline (saved on change). Check rows and pick a target below to merge duplicates.
+                </p>
+                <template x-for="t in filteredManageTags" :key="t.id">
+                    <div style="display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid var(--border,#eee)">
+                        <input type="checkbox" :value="t.id" x-model="mergeSourceIds" :disabled="t.id === mergeTargetId" style="width:15px;height:15px">
+                        <input type="color" :value="t.color || '#4f46e5'" @change="recolorTag(t, $event.target.value)"
+                               style="width:30px;height:30px;border:none;background:none;cursor:pointer;padding:0" title="Change color">
+                        <input type="text" :value="t.name" @change="renameTag(t, $event.target.value)"
+                               style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem" maxlength="100">
+                        <span class="badge" style="flex-shrink:0" x-text="(t.document_count || 0) + ' docs'"></span>
+                        <button class="btn btn-sm btn-danger" @click="deleteTagById(t)" title="Delete tag"><i class="fas fa-trash"></i></button>
+                    </div>
+                </template>
+                <div x-show="filteredManageTags.length === 0" style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No tags match.</div>
+            </div>
+            <div class="modal-footer" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <span style="font-size:0.82rem;color:var(--text-muted)" x-text="mergeSourceIds.length + ' selected to merge'"></span>
+                <span style="flex:1"></span>
+                <label style="font-size:0.82rem">Into:</label>
+                <select x-model="mergeTargetId" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:0.85rem;max-width:200px">
+                    <option value="">Choose target…</option>
+                    <template x-for="t in tags" :key="'tgt-' + t.id">
+                        <option :value="t.id" x-text="t.name" :disabled="mergeSourceIds.includes(t.id)"></option>
+                    </template>
+                </select>
+                <button class="btn btn-primary" :disabled="!mergeTargetId || mergeSourceIds.length === 0 || mergeBusy" @click="mergeTags()">
+                    <i class="fas" :class="mergeBusy ? 'fa-spinner fa-spin' : 'fa-code-merge'"></i> Merge
+                </button>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <script>
@@ -227,16 +575,79 @@ function knowledgeBase() {
         newTag: { name: '', color: '#4f46e5', description: '' },
         editTag: { name: '', color: '#4f46e5', description: '' },
         presetColors: ['#4f46e5', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'],
+        filterSearch: '',
+        filterFormat: '',
+        filterStatus: '',
+        filterTag: '',
+        youtubeUrl: '',
+        ytIngesting: false,
+        ytCurrentJobId: null,
+        bulkBuildingGraphs: false,
+        bulkBuildGraphStatus: '',
+        ytStatus: '',
+        ytStatusClass: '',
+        ytAutoTag: false,
+        showYtSelectModal: false,
+        ytPreviewVideos: [],
+        ytPreviewType: '',
+        ytPendingTagId: null,
+        ytFilterSearch: '',
+        ytFilterSort: 'newest',
+        ytFilterDateFrom: '',
+        ytFilterDateTo: '',
+        ytFilterLatestN: 0,
+        ytSourceName: '',
+        ytDefaultTagName: '',
+        ytApplyDefaultTag: true,
+        selectedDocIds: [],
+        showManageModal: false,
+        manageSearch: '',
+        mergeSourceIds: [],
+        mergeTargetId: '',
+        mergeBusy: false,
+        mdJob: null,
+        mdJobTimer: null,
+        mdJobLink: '/document-map',
+
+        get allVisibleSelected() {
+            const visible = this.filteredDocuments;
+            return visible.length > 0 && visible.every(d => this.selectedDocIds.includes(d.id));
+        },
 
         async init() { await this.loadData(); },
 
         async loadData() {
             const [tagRes, docRes] = await Promise.all([
                 fetch('/api/tags/'),
-                fetch('/api/documents/?limit=100')
+                fetch('/api/documents/?limit=500')
             ]);
             if (tagRes.ok) this.tags = await tagRes.json();
             if (docRes.ok) { const data = await docRes.json(); this.documents = data.items || data.documents || []; }
+        },
+
+        get filteredDocuments() {
+            let docs = this.documents;
+            const q = this.filterSearch.toLowerCase().trim();
+            if (q) docs = docs.filter(d => (d.filename || '').toLowerCase().includes(q));
+            if (this.filterFormat) docs = docs.filter(d => d.format === this.filterFormat);
+            if (this.filterStatus) docs = docs.filter(d => d.status === this.filterStatus);
+            if (this.filterTag === '__untagged__') {
+                docs = docs.filter(d => !d.tags || d.tags.length === 0);
+            } else if (this.filterTag) {
+                const tagId = this.filterTag;
+                docs = docs.filter(d => d.tags && d.tags.some(t => String(t.id) === String(tagId)));
+            }
+            return docs;
+        },
+
+        get availableFormats() {
+            const formats = new Set(this.documents.map(d => d.format).filter(Boolean));
+            return [...formats].sort();
+        },
+
+        get availableStatuses() {
+            const statuses = new Set(this.documents.map(d => d.status).filter(Boolean));
+            return [...statuses].sort();
         },
 
         async openTag(tag) {
@@ -296,6 +707,50 @@ function knowledgeBase() {
             this.tagDocuments = this.tagDocuments.filter(d => d.id !== docId);
         },
 
+        async bulkBuildTagGraphs() {
+            const eligibleDocs = this.tagDocuments.filter(d => d.status !== 'failed');
+            if (eligibleDocs.length === 0) { alert('No documents available to process.'); return; }
+            this.bulkBuildingGraphs = true;
+            const total = eligibleDocs.length;
+            let indexed = 0, built = 0, skipped = 0, failed = 0;
+            for (let i = 0; i < total; i++) {
+                const doc = eligibleDocs[i];
+                this.bulkBuildGraphStatus = `Processing ${i + 1}/${total}: ${doc.filename || doc.id.slice(0,8)}...`;
+                try {
+                    const res = await fetch('/api/graph/build-bulk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ document_ids: [doc.id] })
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        indexed += data.indexed || 0;
+                        built += data.built || 0;
+                        skipped += data.skipped || 0;
+                        failed += data.failed || 0;
+                        for (const r of (data.results || [])) {
+                            if (r.status === 'built' || r.status === 'already_built') {
+                                const td = this.tagDocuments.find(d => d.id === r.document_id);
+                                if (td) td.status = 'indexed';
+                            }
+                        }
+                    } else {
+                        failed++;
+                    }
+                } catch(e) {
+                    failed++;
+                }
+            }
+            const parts = [];
+            if (indexed > 0) parts.push(`${indexed} indexed`);
+            if (built > 0) parts.push(`${built} graphs built`);
+            if (skipped > 0) parts.push(`${skipped} already done`);
+            if (failed > 0) parts.push(`${failed} failed`);
+            this.bulkBuildGraphStatus = `Done: ${parts.join(', ')}`;
+            setTimeout(() => { this.bulkBuildGraphStatus = ''; }, 8000);
+            this.bulkBuildingGraphs = false;
+        },
+
         handleDrop(event, tagId) {
             const files = event.dataTransfer.files;
             if (files && files.length) this._uploadFiles(files, tagId);
@@ -307,20 +762,484 @@ function knowledgeBase() {
             event.target.value = '';
         },
 
+        get ytSelectedCount() {
+            return this.ytPreviewVideos.filter(v => v.selected).length;
+        },
+
+        get ytFilteredVideos() {
+            let vids = [...this.ytPreviewVideos];
+            const q = this.ytFilterSearch.toLowerCase().trim();
+            if (q) vids = vids.filter(v => (v.title || '').toLowerCase().includes(q) || (v.video_id || '').includes(q));
+            if (this.ytFilterDateFrom) {
+                const from = this.ytFilterDateFrom;
+                vids = vids.filter(v => v.published_at && v.published_at.substring(0, 10) >= from);
+            }
+            if (this.ytFilterDateTo) {
+                const to = this.ytFilterDateTo;
+                vids = vids.filter(v => v.published_at && v.published_at.substring(0, 10) <= to);
+            }
+            if (this.ytFilterSort === 'newest') vids.sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''));
+            else if (this.ytFilterSort === 'oldest') vids.sort((a, b) => (a.published_at || '').localeCompare(b.published_at || ''));
+            else if (this.ytFilterSort === 'most_viewed') vids.sort((a, b) => (b.view_count || 0) - (a.view_count || 0));
+            else if (this.ytFilterSort === 'most_liked') vids.sort((a, b) => (b.like_count || 0) - (a.like_count || 0));
+            if (this.ytFilterLatestN > 0) vids = vids.slice(0, this.ytFilterLatestN);
+            return vids;
+        },
+
+        ytSelectFiltered(val) {
+            const ids = new Set(this.ytFilteredVideos.map(v => v.video_id));
+            this.ytPreviewVideos.forEach(v => { if (ids.has(v.video_id)) v.selected = val; });
+        },
+
+        ytClearFilters() {
+            this.ytFilterSearch = '';
+            this.ytFilterSort = 'newest';
+            this.ytFilterDateFrom = '';
+            this.ytFilterDateTo = '';
+            this.ytFilterLatestN = 0;
+        },
+
+        ytFormatDuration(secs) {
+            if (!secs) return '';
+            const h = Math.floor(secs / 3600);
+            const m = Math.floor((secs % 3600) / 60);
+            const s = secs % 60;
+            if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            return `${m}:${String(s).padStart(2,'0')}`;
+        },
+
+        async ingestYouTube(tagId) {
+            const url = this.youtubeUrl.trim();
+            if (!url) return;
+            this.ytIngesting = true;
+            this.ytStatus = 'Resolving YouTube URL...';
+            this.ytStatusClass = 'text-info';
+            try {
+                const previewRes = await fetch('/api/youtube/preview', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url })
+                });
+                if (!previewRes.ok) {
+                    const err = await previewRes.json().catch(() => ({}));
+                    this.ytStatus = err.detail || 'Failed to resolve URL';
+                    this.ytStatusClass = 'text-danger';
+                    this.ytIngesting = false;
+                    return;
+                }
+                const preview = await previewRes.json();
+
+                if (preview.url_type === 'video') {
+                    this.ytStatus = '';
+                    await this._runYouTubeIngest(url, null, tagId);
+                } else {
+                    this.ytPreviewVideos = preview.videos.map(v => ({ ...v, selected: true }));
+                    this.ytPreviewType = preview.url_type;
+                    this.ytPendingTagId = tagId || null;
+                    this.ytSourceName = preview.source_name || '';
+                    this.ytDefaultTagName = (preview.source_name || '').replace(/[^\w\s-]/g, '').trim();
+                    this.ytApplyDefaultTag = true;
+                    this.ytClearFilters();
+                    this.showYtSelectModal = true;
+                    this.ytStatus = '';
+                    this.ytIngesting = false;
+                }
+            } catch (e) {
+                this.ytStatus = 'Error: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+                this.ytIngesting = false;
+            }
+        },
+
+        async importSelectedVideos() {
+            const selected = this.ytPreviewVideos.filter(v => v.selected).map(v => v.video_id);
+            if (!selected.length) return;
+            this.showYtSelectModal = false;
+            const defaultTag = (this.ytApplyDefaultTag && this.ytDefaultTagName) ? this.ytDefaultTagName : null;
+            await this._runYouTubeIngest(this.youtubeUrl.trim(), selected, this.ytPendingTagId, defaultTag);
+        },
+
+        async cancelYouTubeJob() {
+            if (!this.ytCurrentJobId) return;
+            try {
+                await fetch('/api/youtube/jobs/' + this.ytCurrentJobId + '/cancel', { method: 'POST' });
+                this.ytStatus = 'Cancelling...';
+                this.ytStatusClass = 'text-warning';
+            } catch(e) {}
+        },
+
+        async _runYouTubeIngest(url, videoIds, tagId, defaultTagName) {
+            this.ytIngesting = true;
+            this.ytCurrentJobId = null;
+            this.ytStatus = `Importing ${videoIds ? videoIds.length : 1} video(s)...`;
+            this.ytStatusClass = 'text-info';
+            try {
+                const payload = { url, auto_index: true, auto_tag: this.ytAutoTag, tag_id: tagId || null };
+                if (videoIds) payload.video_ids = videoIds;
+                if (defaultTagName && !tagId) payload.default_tag_name = defaultTagName;
+
+                const res = await fetch('/api/youtube/ingest', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    this.ytStatus = err.detail || 'Failed to start ingestion';
+                    this.ytStatusClass = 'text-danger';
+                    this.ytIngesting = false;
+                    return;
+                }
+                const data = await res.json();
+                this.ytCurrentJobId = data.job_id;
+                this.ytStatus = `Processing ${data.video_count} video(s)...`;
+
+                let attempts = 0;
+                while (attempts < 120) {
+                    await new Promise(r => setTimeout(r, 3000));
+                    const statusRes = await fetch('/api/youtube/jobs/' + data.job_id);
+                    if (statusRes.ok) {
+                        const job = await statusRes.json();
+                        if (job.status === 'completed') {
+                            const result = job.result || {};
+                            this.ytStatus = `Done! ${result.documents_created || 0} video(s) added.`;
+                            this.ytStatusClass = 'text-success';
+                            this.youtubeUrl = '';
+                            await this.loadData();
+                            if (tagId && this.view === 'detail') {
+                                await this.openTag(this.currentTag);
+                            }
+                            break;
+                        } else if (job.status === 'failed') {
+                            this.ytStatus = job.error || 'Ingestion failed';
+                            this.ytStatusClass = 'text-danger';
+                            break;
+                        } else if (job.status === 'cancelled') {
+                            const result = job.result || {};
+                            this.ytStatus = `Stopped. ${result.documents_created || 0} video(s) added before cancellation.`;
+                            this.ytStatusClass = 'text-warning';
+                            this.youtubeUrl = '';
+                            await this.loadData();
+                            if (tagId && this.view === 'detail') {
+                                await this.openTag(this.currentTag);
+                            }
+                            break;
+                        } else {
+                            const pct = job.progress || 0;
+                            const done = Math.round(pct / 100 * data.video_count);
+                            this.ytStatus = `Processing... ${done}/${data.video_count} videos (${pct}%)`;
+                        }
+                    }
+                    attempts++;
+                }
+                if (attempts >= 120) {
+                    this.ytStatus = 'Timed out waiting for completion';
+                    this.ytStatusClass = 'text-danger';
+                }
+            } catch (e) {
+                this.ytStatus = 'Error: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+            }
+            this.ytIngesting = false;
+            this.ytCurrentJobId = null;
+        },
+
+        async autoTagDoc(docId) {
+            try {
+                const res = await fetch('/api/documents/' + docId + '/auto-tag', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ apply: true })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const count = (data.applied || []).length;
+                    if (count > 0) {
+                        alert(`Applied ${count} tag(s): ${data.applied.map(a => a.name).join(', ')}`);
+                        await this.loadData();
+                    } else if (data.suggestions && data.suggestions.length > 0) {
+                        alert(`Suggested tags: ${data.suggestions.map(s => s.name).join(', ')} (none applied)`);
+                    } else {
+                        alert('No tag suggestions for this document.');
+                    }
+                }
+            } catch (e) {
+                alert('Auto-tag failed: ' + e.message);
+            }
+        },
+
+        toggleDocSelection(docId) {
+            const idx = this.selectedDocIds.indexOf(docId);
+            if (idx >= 0) {
+                this.selectedDocIds.splice(idx, 1);
+            } else {
+                this.selectedDocIds.push(docId);
+            }
+        },
+
+        toggleSelectAllVisible(checked) {
+            const visibleIds = this.filteredDocuments.map(d => d.id);
+            if (checked) {
+                visibleIds.forEach(id => {
+                    if (!this.selectedDocIds.includes(id)) this.selectedDocIds.push(id);
+                });
+            } else {
+                this.selectedDocIds = this.selectedDocIds.filter(id => !visibleIds.includes(id));
+            }
+        },
+
+        deselectAll() {
+            this.selectedDocIds = [];
+        },
+
+        // ---- Tag management ----
+        openManage() {
+            this.manageSearch = '';
+            this.mergeSourceIds = [];
+            this.mergeTargetId = '';
+            this.showManageModal = true;
+        },
+
+        get filteredManageTags() {
+            const q = (this.manageSearch || '').toLowerCase().trim();
+            let list = this.tags;
+            if (q) list = list.filter(t => (t.name || '').toLowerCase().includes(q));
+            return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        },
+
+        renameTagPrompt(tag) {
+            const name = prompt('Rename tag', tag.name);
+            if (name !== null) this.renameTag(tag, name);
+        },
+
+        async renameTag(tag, name) {
+            name = (name || '').trim();
+            if (!name || name === tag.name) return;
+            const res = await fetch('/api/tags/' + tag.id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name })
+            });
+            if (res.ok) {
+                await this.loadData();
+            } else {
+                const err = await res.text();
+                alert('Rename failed: ' + err);
+                await this.loadData();
+            }
+        },
+
+        async recolorTag(tag, color) {
+            if (!color || color === tag.color) return;
+            const res = await fetch('/api/tags/' + tag.id, {
+                method: 'PATCH',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ color })
+            });
+            if (res.ok) await this.loadData();
+        },
+
+        async deleteTagById(tag) {
+            if (!confirm(`Delete tag "${tag.name}"? Documents will not be deleted.`)) return;
+            const res = await fetch('/api/tags/' + tag.id, { method: 'DELETE' });
+            if (res.ok) {
+                this.mergeSourceIds = this.mergeSourceIds.filter(id => id !== tag.id);
+                if (this.mergeTargetId === tag.id) this.mergeTargetId = '';
+                await this.loadData();
+            }
+        },
+
+        async mergeTags() {
+            if (!this.mergeTargetId || this.mergeSourceIds.length === 0) return;
+            const sources = this.mergeSourceIds.filter(id => id !== this.mergeTargetId);
+            if (sources.length === 0) return;
+            const target = this.tags.find(t => t.id === this.mergeTargetId);
+            if (!confirm(`Merge ${sources.length} tag(s) into "${target ? target.name : 'target'}"? The merged tags will be removed.`)) return;
+            this.mergeBusy = true;
+            try {
+                const res = await fetch('/api/tags/' + this.mergeTargetId + '/merge', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ source_tag_ids: sources })
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    alert('Merge failed: ' + err);
+                } else {
+                    this.mergeSourceIds = [];
+                    this.mergeTargetId = '';
+                    await this.loadData();
+                }
+            } catch (e) {
+                alert('Merge failed: ' + e.message);
+            }
+            this.mergeBusy = false;
+        },
+
+        // ---- Add to Document Map (background metadata job) ----
+        async addSelectionToMap() {
+            if (this.selectedDocIds.length === 0) return;
+            const ids = [...this.selectedDocIds];
+            await this._startMetadataJob(
+                { scope: 'all', document_ids: ids },
+                `${ids.length} selected document(s)`,
+                '/document-map'
+            );
+        },
+
+        async addTagToMap(tag) {
+            if (!tag || !tag.id) return;
+            await this._startMetadataJob(
+                { scope: 'all', tag_ids: [tag.id] },
+                `Knowledge base: ${tag.name}`,
+                '/document-map?tag_id=' + encodeURIComponent(tag.id)
+            );
+        },
+
+        async _startMetadataJob(body, label, link) {
+            this.dismissMdJob();
+            try {
+                const res = await fetch('/api/metadata/extract-bulk', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    alert('Could not start: ' + err);
+                    return;
+                }
+                const data = await res.json();
+                if (!data.job_id || (data.total || 0) === 0) {
+                    alert('Nothing to process for this selection — these documents already have smart metadata.');
+                    return;
+                }
+                this.mdJobLink = link;
+                this.mdJob = {
+                    id: data.job_id, status: data.status || 'pending', total: data.total || 0,
+                    processed: 0, failed: 0, skipped: 0, current: '', failures: [],
+                    label: data.label || label
+                };
+                this.pollMdJob();
+            } catch (e) {
+                alert('Could not start: ' + e.message);
+            }
+        },
+
+        pollMdJob() {
+            if (this.mdJobTimer) clearInterval(this.mdJobTimer);
+            this.mdJobTimer = setInterval(async () => {
+                if (!this.mdJob || !this.mdJob.id) { clearInterval(this.mdJobTimer); return; }
+                try {
+                    const res = await fetch('/api/metadata/jobs/' + this.mdJob.id);
+                    if (!res.ok) return;
+                    const j = await res.json();
+                    this.mdJob = {
+                        id: j.job_id || this.mdJob.id, status: j.status, total: j.total || 0,
+                        processed: j.processed || 0, failed: j.failed || 0, skipped: j.skipped || 0,
+                        current: j.current || '', failures: Array.isArray(j.failures) ? j.failures : [],
+                        label: j.label || this.mdJob.label
+                    };
+                    if (j.status === 'completed' || j.status === 'failed') {
+                        clearInterval(this.mdJobTimer);
+                        this.mdJobTimer = null;
+                        await this.loadData();
+                    }
+                } catch (e) {}
+            }, 1200);
+        },
+
+        mdJobPct() {
+            if (!this.mdJob || !this.mdJob.total) return 0;
+            const done = this.mdJob.processed + this.mdJob.failed + this.mdJob.skipped;
+            return Math.min(100, Math.round((done / this.mdJob.total) * 100));
+        },
+
+        dismissMdJob() {
+            if (this.mdJobTimer) { clearInterval(this.mdJobTimer); this.mdJobTimer = null; }
+            this.mdJob = null;
+        },
+
+        async bulkTagSelected(tagId) {
+            const count = this.selectedDocIds.length;
+            const tagObj = this.tags.find(t => t.id === tagId);
+            const tagName = tagObj ? tagObj.name : 'tag';
+            this.ytStatus = `Tagging ${count} document(s) with "${tagName}"...`;
+            this.ytStatusClass = 'text-info';
+            try {
+                const res = await fetch('/api/tags/' + tagId + '/documents', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ document_ids: this.selectedDocIds })
+                });
+                if (!res.ok) {
+                    const err = await res.text();
+                    this.ytStatus = 'Failed to tag documents: ' + err;
+                    this.ytStatusClass = 'text-danger';
+                } else {
+                    this.ytStatus = `Tagged ${count} document(s) with "${tagName}"`;
+                    this.ytStatusClass = 'text-success';
+                }
+            } catch (e) {
+                this.ytStatus = 'Failed to tag documents: ' + e.message;
+                this.ytStatusClass = 'text-danger';
+            }
+            this.selectedDocIds = [];
+            await this.loadData();
+            setTimeout(() => { this.ytStatus = ''; }, 4000);
+        },
+
+        async bulkDeleteSelected() {
+            const ids = [...this.selectedDocIds];
+            const count = ids.length;
+            if (!confirm('Delete ' + count + ' selected document(s)? This cannot be undone.')) return;
+            let deleted = 0;
+            let failed = 0;
+            this.ytStatus = `Deleting 0/${count}...`;
+            this.ytStatusClass = 'text-info';
+            for (const id of ids) {
+                try {
+                    const res = await fetch('/api/documents/' + id, { method: 'DELETE' });
+                    if (res.ok) {
+                        deleted++;
+                        this.documents = this.documents.filter(d => d.id !== id);
+                        this.selectedDocIds = this.selectedDocIds.filter(sid => sid !== id);
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    failed++;
+                }
+                this.ytStatus = `Deleting ${deleted + failed}/${count}...`;
+            }
+            this.selectedDocIds = [];
+            this.ytStatus = `Deleted ${deleted} document(s)` + (failed > 0 ? `, ${failed} failed` : '');
+            this.ytStatusClass = failed > 0 ? 'text-warning' : 'text-success';
+            await this.loadData();
+            setTimeout(() => { this.ytStatus = ''; }, 4000);
+        },
+
         async _uploadFiles(files, tagId) {
             for (const file of files) {
-                const entry = { filename: file.name, status: 'uploading' };
+                const entry = { filename: file.name, status: 'uploading', stage: 'Uploading file', progress: 0 };
                 this.uploadFiles.push(entry);
                 try {
+                    entry.progress = 2;
                     const form = new FormData();
                     form.append('file', file);
                     const upRes = await fetch('/api/documents/', { method: 'POST', body: form });
-                    if (!upRes.ok) { entry.status = 'failed'; continue; }
+                    if (!upRes.ok) {
+                        entry.status = 'failed';
+                        entry.stage = 'Upload failed';
+                        continue;
+                    }
                     const doc = await upRes.json();
                     entry.status = 'indexing';
+                    entry.stage = 'File uploaded';
+                    entry.progress = 5;
 
-                    // Associate with tag if uploading into a tag
                     if (tagId) {
+                        entry.stage = 'Tagging document';
                         await fetch('/api/tags/' + tagId + '/documents', {
                             method: 'POST',
                             headers: {'Content-Type': 'application/json'},
@@ -329,36 +1248,73 @@ function knowledgeBase() {
                         this.tagDocuments.push({ id: doc.id, filename: doc.filename, format: doc.format, status: 'indexing' });
                     }
 
-                    // Trigger indexing
-                    await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                    entry.stage = 'Starting indexing';
+                    entry.progress = 8;
+                    const indexRes = await fetch('/api/indexing/documents/' + doc.id + '/index', { method: 'POST', headers: {'Content-Type': 'application/json'} });
+                    if (!indexRes.ok) {
+                        entry.status = 'failed';
+                        entry.stage = 'Failed to start indexing';
+                        continue;
+                    }
 
-                    // Poll for index completion
+                    let lastServerProgress = 0;
+                    let ticksSinceChange = 0;
+
                     let attempts = 0;
-                    while (attempts < 60) {
-                        await new Promise(r => setTimeout(r, 2000));
+                    while (attempts < 120) {
+                        await new Promise(r => setTimeout(r, 1500));
                         const statusRes = await fetch('/api/indexing/documents/' + doc.id + '/index/status');
                         if (statusRes.ok) {
                             const statusData = await statusRes.json();
-                            const st = statusData.status || statusData.index_status || '';
-                            if (st === 'indexed' || st === 'completed') {
+                            const st = statusData.status || '';
+                            const serverProgress = statusData.progress || 0;
+                            const serverStage = statusData.stage || '';
+
+                            if (serverProgress !== lastServerProgress) {
+                                lastServerProgress = serverProgress;
+                                ticksSinceChange = 0;
+                                entry.progress = serverProgress;
+                            } else {
+                                ticksSinceChange++;
+                                if (entry.progress < 95 && serverProgress < 95) {
+                                    const target = serverProgress < 20 ? 20 : (serverProgress < 70 ? 65 : 89);
+                                    const remaining = target - entry.progress;
+                                    if (remaining > 0) {
+                                        entry.progress = Math.min(target, entry.progress + Math.max(1, Math.floor(remaining / 8)));
+                                    }
+                                }
+                            }
+
+                            if (serverStage) {
+                                entry.stage = serverStage;
+                            } else if (st === 'running' && !entry.stage) {
+                                entry.stage = 'Processing...';
+                            }
+
+                            if (st === 'completed') {
                                 entry.status = 'ready';
-                                // Update tag doc list status
+                                entry.stage = 'Complete';
+                                entry.progress = 100;
                                 const td = this.tagDocuments.find(d => d.id === doc.id);
                                 if (td) td.status = 'indexed';
                                 break;
                             } else if (st === 'failed') {
                                 entry.status = 'failed';
+                                entry.stage = statusData.error ? ('Failed: ' + statusData.error.substring(0, 60)) : 'Indexing failed';
                                 break;
                             }
                         }
                         attempts++;
                     }
-                    if (attempts >= 60 && entry.status === 'indexing') entry.status = 'failed';
+                    if (attempts >= 120 && entry.status === 'indexing') {
+                        entry.status = 'failed';
+                        entry.stage = 'Timed out';
+                    }
                 } catch (e) {
                     entry.status = 'failed';
+                    entry.stage = 'Error: ' + (e.message || 'Unknown error').substring(0, 60);
                 }
             }
-            // Refresh document list
             await this.loadData();
         }
     }

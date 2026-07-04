@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Edit Template — IDP Kit{% endblock %}
+{% block content %}
+<div x-data="tplEdit('{{ template_id }}')" x-init="load()">
+  <div class="page-header">
+    <h2><i class="fas fa-clone"></i> E-Sign</h2>
+  </div>
+  {% with active="templates" %}{% include "_esign_tabs.html" %}{% endwith %}
+
+  <div style="margin-bottom:16px">
+    <a href="/esign/templates" style="color:var(--text-muted);font-size:0.88rem"><i class="fas fa-arrow-left"></i> All templates</a>
+  </div>
+
+  <div x-show="loading" style="text-align:center;padding:40px;color:var(--text-muted)">
+    <i class="fas fa-spinner fa-spin"></i> Loading…
+  </div>
+
+  <div x-show="!loading && tpl" style="display:grid;grid-template-columns:1fr 360px;gap:24px">
+    <!-- Left: PDF preview -->
+    <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:16px">
+      <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-file-pdf"></i> Template document</div>
+      <iframe :src="'/api/esign/templates/' + id + '/pdf'" style="width:100%;height:520px;border:1px solid var(--border);border-radius:8px"></iframe>
+      <div style="margin-top:8px;color:var(--text-muted);font-size:0.8rem">
+        Field placements are inherited from the original envelope. To re-place fields, create a new envelope from the template and save it as a new template.
+      </div>
+    </div>
+
+    <!-- Right: Settings -->
+    <div style="display:grid;gap:16px">
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:16px">
+        <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-cog"></i> Settings</div>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" x-model="tpl.name" class="form-input">
+        </div>
+        <div class="form-group">
+          <label>Default envelope title <span style="color:var(--text-muted);font-weight:normal">(supports <code>&#123;&#123;merge&#125;&#125;</code>)</span></label>
+          <input type="text" x-model="tpl.title" class="form-input">
+        </div>
+        <div class="form-group">
+          <label>Default email message</label>
+          <textarea x-model="tpl.message" class="form-input" rows="3"></textarea>
+        </div>
+        <div style="display:flex;gap:8px">
+          <div class="form-group" style="flex:1">
+            <label>Signing order</label>
+            <select x-model="tpl.signing_order" class="form-input">
+              <option value="parallel">Parallel</option>
+              <option value="sequential">Sequential</option>
+            </select>
+          </div>
+          <div class="form-group" style="width:120px">
+            <label>Expiry (days)</label>
+            <input type="number" x-model.number="tpl.expiry_days" class="form-input" min="1" max="365">
+          </div>
+        </div>
+      </div>
+
+      <!-- Roles -->
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:16px">
+        <div style="font-weight:600;margin-bottom:12px"><i class="fas fa-users"></i> Signer roles</div>
+        <template x-for="(r, i) in tpl.roles" :key="r.role_key">
+          <div style="display:grid;grid-template-columns:24px 1fr 70px;gap:6px;align-items:center;margin-bottom:8px">
+            <code style="font-size:0.75rem;color:var(--text-muted)" x-text="r.role_key"></code>
+            <input type="text" x-model="r.role_label" class="form-input" placeholder="Display label" style="padding:6px 8px;font-size:0.88rem">
+            <input type="number" x-model.number="r.order_index" class="form-input" min="0" style="padding:6px 8px;font-size:0.88rem" title="Order">
+          </div>
+        </template>
+      </div>
+
+      <!-- Merge fields -->
+      <div style="background:var(--bg-primary,#fff);border:1px solid var(--border);border-radius:12px;padding:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-weight:600"><i class="fas fa-tags"></i> Merge fields</div>
+          <button class="btn btn-sm" @click="addMerge()"><i class="fas fa-plus"></i> Add</button>
+        </div>
+        <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:8px">
+          Use these as <code>&#123;&#123;key&#125;&#125;</code> in the title, message, or in any pre-filled text/date field.
+        </div>
+        <template x-for="(m, idx) in tpl.merge_fields" :key="idx">
+          <div style="display:grid;grid-template-columns:1fr 1fr 24px;gap:6px;align-items:center;margin-bottom:6px">
+            <input type="text" x-model="m.key" placeholder="key" class="form-input" style="padding:6px 8px;font-size:0.85rem">
+            <input type="text" x-model="m.label" placeholder="Display label" class="form-input" style="padding:6px 8px;font-size:0.85rem">
+            <button @click="tpl.merge_fields.splice(idx,1)" class="btn btn-sm btn-danger" style="padding:4px 6px"><i class="fas fa-times"></i></button>
+          </div>
+        </template>
+        <div x-show="tpl.detected_merge_keys && tpl.detected_merge_keys.length > 0" style="margin-top:10px;padding:8px;background:var(--bg-secondary,#f9fafb);border-radius:6px;font-size:0.8rem">
+          Detected in template text:
+          <template x-for="k in tpl.detected_merge_keys" :key="k">
+            <code style="margin-right:6px" x-text="'{{' + k + '}}'"></code>
+          </template>
+        </div>
+      </div>
+
+      <button @click="save()" class="btn btn-primary" :disabled="saving">
+        <i class="fas fa-save"></i> <span x-text="saving ? 'Saving…' : 'Save changes'"></span>
+      </button>
+      <div x-show="message" :style="'padding:8px;border-radius:6px;font-size:0.85rem;background:' + (error ? '#fef2f2' : '#ecfdf5') + ';color:' + (error ? '#991b1b' : '#065f46')" x-text="message"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+function tplEdit(id) {
+  return {
+    id, loading: true, saving: false, error: false, message: '', tpl: null,
+    async load() {
+      this.loading = true;
+      const r = await fetch('/api/esign/templates/' + this.id, {credentials:'include'});
+      if (!r.ok) { this.message='Template not found'; this.error=true; this.loading=false; return; }
+      this.tpl = await r.json();
+      this.tpl.merge_fields = this.tpl.merge_fields || [];
+      this.loading = false;
+    },
+    addMerge() { this.tpl.merge_fields.push({key:'', label:'', type:'text', required:false}); },
+    async save() {
+      this.saving = true; this.message = ''; this.error = false;
+      const body = {
+        name: this.tpl.name, title: this.tpl.title, message: this.tpl.message,
+        signing_order: this.tpl.signing_order, expiry_days: this.tpl.expiry_days,
+        merge_fields: this.tpl.merge_fields.filter(m => (m.key||'').trim()),
+        roles: this.tpl.roles.map(r => ({
+          role_key: r.role_key, role_label: r.role_label, order_index: r.order_index || 0,
+          default_name: r.default_name, default_email: r.default_email,
+        })),
+      };
+      try {
+        const r = await fetch('/api/esign/templates/' + this.id, {
+          method:'PUT', credentials:'include',
+          headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+        });
+        if (r.ok) { this.tpl = await r.json(); this.message = 'Saved'; }
+        else { const j = await r.json().catch(()=>({})); this.message = 'Error: ' + (j.detail || r.status); this.error = true; }
+      } catch (e) { this.message = 'Error: ' + e; this.error = true; }
+      this.saving = false;
+    },
+  };
+}
+</script>
+{% endblock %}

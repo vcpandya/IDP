@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +17,9 @@ from idpkit.api.deps import (
     verify_password,
     create_access_token,
     generate_api_key,
+    limiter,
+    CSRF_COOKIE_NAME,
+    generate_csrf_token,
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 
@@ -77,7 +80,9 @@ class MessageResponse(BaseModel):
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user",
 )
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -122,7 +127,9 @@ async def register(
     response_model=TokenResponse,
     summary="Log in and obtain a JWT token",
 )
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     body: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
@@ -154,6 +161,17 @@ async def login(
         key="session_token",
         value=token,
         httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+    # Issue (or refresh) the CSRF double-submit cookie. Non-HttpOnly so the
+    # browser JS can read it and echo it back in the X-CSRF-Token header.
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=generate_csrf_token(),
+        httponly=False,
+        secure=True,
         samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
@@ -205,6 +223,33 @@ async def create_api_key(
 
     logger.info("API key generated for user %s", user.username)
     return ApiKeyResponse(api_key=new_key)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+
+@router.post(
+    "/change-password",
+    response_model=MessageResponse,
+    summary="Change the current user's password",
+)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    user.hashed_password = hash_password(body.new_password)
+    db.add(user)
+    await db.flush()
+    logger.info("Password changed for user %s", user.username)
+    return MessageResponse(detail="Password changed successfully")
 
 
 @router.get(

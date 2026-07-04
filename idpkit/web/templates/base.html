@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}IDP Kit{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <!-- Global 401 interceptor — must load before any page fetch() calls. -->
+    <script src="/static/js/auth_fetch.js"></script>
+    <script src="/static/js/modal_a11y.js" defer></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/alpinejs@3.14.8/dist/cdn.min.js" defer></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -36,15 +40,27 @@
                     <i class="fas fa-layer-group"></i> <span>Knowledge Base</span></a></li>
                 <li><a href="/chat" class="{% if request.url.path == '/chat' %}active{% endif %}">
                     <i class="fas fa-brain"></i> <span>IDA</span></a></li>
+                <li><a href="/graph" class="{% if request.url.path == '/graph' %}active{% endif %}">
+                    <i class="fas fa-project-diagram"></i> <span>Knowledge Graph</span></a></li>
+                <li><a href="/document-map" class="{% if request.url.path == '/document-map' %}active{% endif %}">
+                    <i class="fas fa-sitemap"></i> <span>Document Map</span></a></li>
                 <li><a href="/tools" class="{% if request.url.path == '/tools' %}active{% endif %}">
                     <i class="fas fa-tools"></i> <span>Smart Tools</span></a></li>
                 <li><a href="/batch" class="{% if request.url.path == '/batch' %}active{% endif %}">
                     <i class="fas fa-layer-group"></i> <span>Batch</span></a></li>
                 <li><a href="/templates" class="{% if request.url.path == '/templates' %}active{% endif %}">
                     <i class="fas fa-clipboard-list"></i> <span>Templates</span></a></li>
+                <li><a href="/verifier" class="{% if request.url.path == '/verifier' %}active{% endif %}">
+                    <i class="fas fa-check-double"></i> <span>Verifier</span></a></li>
+                <li><a href="/esign" class="{% if '/esign' in request.url.path or '/sign/' in request.url.path %}active{% endif %}">
+                    <i class="fas fa-file-signature"></i> <span>E-Sign</span></a></li>
+                <li><a href="/skills" class="{% if request.url.path == '/skills' %}active{% endif %}">
+                    <i class="fas fa-puzzle-piece"></i> <span>Skills</span></a></li>
+                <li><a href="/connections" class="{% if request.url.path == '/connections' %}active{% endif %}">
+                    <i class="fas fa-plug"></i> <span>Connections</span></a></li>
                 <li><a href="/settings" class="{% if request.url.path == '/settings' %}active{% endif %}">
                     <i class="fas fa-cog"></i> <span>Settings</span></a></li>
-                {% if user.role == 'admin' %}
+                {% if user.role in ('admin', 'superadmin') %}
                 <li><a href="/admin/users" class="{% if '/admin/' in request.url.path %}active{% endif %}">
                     <i class="fas fa-users-cog"></i> <span>Admin</span></a></li>
                 {% endif %}

@@ -20,6 +20,33 @@
                 <label>Role</label>
                 <span class="badge" x-text="user.role"></span>
             </div>
+            <hr style="border:none;border-top:1px solid var(--border);margin:16px 0;">
+            <h4 style="margin:0 0 12px;font-size:.95rem;color:var(--text-secondary);">
+                <i class="fas fa-lock"></i> Change Password
+            </h4>
+            <div class="form-group">
+                <label>Current Password</label>
+                <input type="password" x-model="currentPassword" placeholder="Enter current password">
+            </div>
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="password" x-model="newPassword" placeholder="Min 6 characters">
+            </div>
+            <div class="form-group">
+                <label>Confirm New Password</label>
+                <input type="password" x-model="confirmPassword" placeholder="Re-enter new password">
+            </div>
+            <div x-show="passwordError" style="color:var(--danger);font-size:.82rem;margin-bottom:8px;">
+                <i class="fas fa-exclamation-circle"></i> <span x-text="passwordError"></span>
+            </div>
+            <div x-show="passwordSuccess" style="color:var(--success);font-size:.82rem;margin-bottom:8px;">
+                <i class="fas fa-check-circle"></i> <span x-text="passwordSuccess"></span>
+            </div>
+            <button @click="changePassword()" class="btn btn-primary" :disabled="changingPassword"
+                style="width:100%;">
+                <i :class="changingPassword ? 'fas fa-spinner fa-spin' : 'fas fa-key'"></i>
+                <span x-text="changingPassword ? 'Changing...' : 'Change Password'"></span>
+            </button>
         </div>
         <div class="settings-card">
             <h3><i class="fas fa-key"></i> API Key</h3>
@@ -31,6 +58,22 @@
             <button @click="generateKey()" class="btn btn-primary">
                 <i class="fas fa-sync"></i> Generate New API Key
             </button>
+            <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+                <a href="#api-docs-section" @click.prevent="document.getElementById('api-docs-section').scrollIntoView({behavior:'smooth'})"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-book"></i> View API Documentation
+                </a>
+                <span style="margin:0 8px;color:var(--text-muted);">&middot;</span>
+                <a href="/docs" target="_blank"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-external-link-alt"></i> Swagger UI
+                </a>
+                <span style="margin:0 8px;color:var(--text-muted);">&middot;</span>
+                <a href="/redoc" target="_blank"
+                   style="font-size:.85rem;display:inline-flex;align-items:center;gap:6px;color:var(--primary);text-decoration:none;">
+                    <i class="fas fa-external-link-alt"></i> ReDoc
+                </a>
+            </div>
         </div>
         <div class="settings-card">
             <h3><i class="fas fa-brain"></i> LLM Settings</h3>
@@ -58,9 +101,9 @@
                 </label>
 
                 <!-- Search filter (shown when many models) -->
-                <div x-show="models.length > 10" class="doc-search" style="margin-bottom:6px;">
-                    <i class="fas fa-search search-icon"></i>
+                <div x-show="models.length > 10" class="doc-search model-search-right" style="margin-bottom:6px;">
                     <input type="text" x-model="modelSearch" placeholder="Filter models...">
+                    <i class="fas fa-search search-icon"></i>
                 </div>
 
                 <div x-show="loadingModels" style="padding:10px;font-size:.85rem;color:var(--text-muted);">
@@ -112,11 +155,190 @@
             <p>Powered by PageIndex vectorless RAG engine + LiteLLM</p>
         </div>
     </div>
+
+    <div id="api-docs-section" class="settings-card" style="margin-top:20px;" x-data="{ apiDocsOpen: false }">
+        <h3 @click="apiDocsOpen = !apiDocsOpen" style="cursor:pointer;user-select:none;">
+            <i class="fas fa-book"></i> API Documentation
+            <i :class="apiDocsOpen ? 'fas fa-chevron-up' : 'fas fa-chevron-down'" style="margin-left:auto;font-size:.75rem;color:var(--text-muted);"></i>
+        </h3>
+        <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:12px;">
+            Complete reference for the IDP Kit REST API. Also available at
+            <a href="/docs" target="_blank">/docs</a> (Swagger) and
+            <a href="/redoc" target="_blank">/redoc</a> (ReDoc).
+        </p>
+
+        <div x-show="apiDocsOpen" x-transition style="font-size:.85rem;line-height:1.7;">
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-bottom:16px;">
+                <h4 style="margin:0 0 8px;font-size:.92rem;"><i class="fas fa-shield-alt" style="color:var(--primary);"></i> Authentication</h4>
+                <p style="margin-bottom:8px;">All API endpoints require authentication via one of these methods:</p>
+                <ul style="padding-left:20px;margin-bottom:8px;">
+                    <li><strong>API Key</strong> &mdash; Send your key in the <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">X-API-Key</code> header.</li>
+                    <li><strong>JWT Bearer Token</strong> &mdash; Obtain a token from <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">POST /api/auth/login</code> and send it as <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">Authorization: Bearer &lt;token&gt;</code>.</li>
+                    <li><strong>Session Cookie</strong> &mdash; Browsers are automatically authenticated via the <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">session_token</code> cookie set on login.</li>
+                </ul>
+            </div>
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-bottom:16px;">
+                <h4 style="margin:0 0 8px;font-size:.92rem;"><i class="fas fa-tachometer-alt" style="color:var(--warning);"></i> Rate Limiting</h4>
+                <p>API requests are rate-limited per user. Limits vary by endpoint category and can be configured by admins. When exceeded, the API returns <code style="background:var(--primary-light);padding:1px 6px;border-radius:4px;font-size:.8rem;">429 Too Many Requests</code>.</p>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(420px, 1fr));gap:12px;">
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-sign-in-alt"></i> Auth</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/login</td><td style="padding:3px 6px;color:var(--text-secondary);">Authenticate &amp; get JWT token</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/register</td><td style="padding:3px 6px;color:var(--text-secondary);">Create a new user account</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/me</td><td style="padding:3px 6px;color:var(--text-secondary);">Get current user profile</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/apikey</td><td style="padding:3px 6px;color:var(--text-secondary);">Generate a new API key</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/auth/change-password</td><td style="padding:3px 6px;color:var(--text-secondary);">Change password</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-file-alt"></i> Documents</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/</td><td style="padding:3px 6px;color:var(--text-secondary);">Upload a document (multipart)</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/</td><td style="padding:3px 6px;color:var(--text-secondary);">List your documents</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/{id}</td><td style="padding:3px 6px;color:var(--text-secondary);">Get document details</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--danger-light);color:var(--danger);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">DEL</span></td><td style="padding:3px 6px;font-family:monospace;">/api/documents/{id}</td><td style="padding:3px 6px;color:var(--text-secondary);">Delete a document</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-search"></i> Retrieval</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/retrieval/documents/{doc_id}/query</td><td style="padding:3px 6px;color:var(--text-secondary);">Query a document with RAG</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-magic"></i> Tools</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tools/</td><td style="padding:3px 6px;color:var(--text-secondary);">List available Smart Tools</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tools/{tool_name}</td><td style="padding:3px 6px;color:var(--text-secondary);">Execute a tool on a document</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-robot"></i> Agent</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/agent/chat</td><td style="padding:3px 6px;color:var(--text-secondary);">Chat with the AI agent</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/agent/conversations</td><td style="padding:3px 6px;color:var(--text-secondary);">List conversations</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-layer-group"></i> Batch</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/</td><td style="padding:3px 6px;color:var(--text-secondary);">Create &amp; start a batch job</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/</td><td style="padding:3px 6px;color:var(--text-secondary);">List batch jobs</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/batch/{id}/start</td><td style="padding:3px 6px;color:var(--text-secondary);">Start a batch job</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-project-diagram"></i> Graph</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/documents/{id}/build</td><td style="padding:3px 6px;color:var(--text-secondary);">Build knowledge graph</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/visualization</td><td style="padding:3px 6px;color:var(--text-secondary);">Get graph visualization data</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/insights</td><td style="padding:3px 6px;color:var(--text-secondary);">Generate AI insights</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/graph/smart-focus</td><td style="padding:3px 6px;color:var(--text-secondary);">AI-powered graph focus</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-tags"></i> Tags</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tags/</td><td style="padding:3px 6px;color:var(--text-secondary);">List tags</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/tags/</td><td style="padding:3px 6px;color:var(--text-secondary);">Create a tag</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-sliders-h"></i> Settings</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/settings/providers</td><td style="padding:3px 6px;color:var(--text-secondary);">List LLM providers</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--info-light);color:var(--info);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">GET</span></td><td style="padding:3px 6px;font-family:monospace;">/api/settings/models?provider=X</td><td style="padding:3px 6px;color:var(--text-secondary);">List models for provider</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div style="background:var(--bg);border-radius:var(--radius);padding:14px;">
+                    <h4 style="margin:0 0 8px;font-size:.9rem;color:var(--primary);"><i class="fas fa-check-double"></i> Verifier</h4>
+                    <table style="width:100%;font-size:.8rem;">
+                        <tbody>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/verify</td><td style="padding:3px 6px;color:var(--text-secondary);">Verify documents (SSE for multi-file)</td></tr>
+                            <tr><td style="padding:3px 6px;"><span style="background:var(--success-light);color:var(--success);padding:1px 6px;border-radius:4px;font-weight:600;font-size:.72rem;">POST</span></td><td style="padding:3px 6px;font-family:monospace;">/api/verify/single</td><td style="padding:3px 6px;color:var(--text-secondary);">Verify a single document (JSON)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+
+            <div style="background:var(--bg);border-radius:var(--radius);padding:16px;margin-top:16px;">
+                <h4 style="margin:0 0 10px;font-size:.92rem;"><i class="fas fa-code" style="color:var(--primary);"></i> Quick Start Examples</h4>
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Login and get a JWT token:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "you", "password": "pass"}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Upload a document (using API key):</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/documents/ \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -F "file=@document.pdf"</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Query a document:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/retrieval/documents/{doc_id}/query \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "What are the key findings?"}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Execute a Smart Tool:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;margin-bottom:12px;">curl -X POST /api/tools/smart_summary \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"document_id": "DOC_ID", "options": {}}'</pre>
+
+                <p style="font-size:.82rem;color:var(--text-secondary);margin-bottom:8px;">Verify a document:</p>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:12px;border-radius:var(--radius);font-size:.78rem;line-height:1.5;overflow-x:auto;">curl -X POST /api/verify/single \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -F "file=@aadhaar_card.jpg" \
+  -F 'expectations=["This should be an Aadhaar card"]'</pre>
+            </div>
+
+        </div>
+    </div>
 </div>
 <script>
 function settingsPage() {
     return {
         user: {}, apiKey: '', version: '2.0.0',
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+        passwordError: '',
+        passwordSuccess: '',
+        changingPassword: false,
         // Provider / Model state
         providers: [],
         loadingProviders: false,
@@ -138,9 +360,16 @@ function settingsPage() {
             const res = await fetch('/api/auth/me');
             if (res.ok) this.user = await res.json();
             await this.loadProviders();
-            // Restore saved provider/model from localStorage
-            const savedProvider = localStorage.getItem('idpkit_provider');
-            const savedModel = localStorage.getItem('idpkit_model');
+            let savedProvider = localStorage.getItem('idpkit_provider');
+            let savedModel = localStorage.getItem('idpkit_model');
+            try {
+                const dmRes = await fetch('/api/settings/default-model');
+                if (dmRes.ok) {
+                    const dm = await dmRes.json();
+                    if (dm.provider) { savedProvider = dm.provider; localStorage.setItem('idpkit_provider', dm.provider); }
+                    if (dm.model) { savedModel = dm.model; localStorage.setItem('idpkit_model', dm.model); }
+                }
+            } catch(e) { console.error('Error loading default model:', e); }
             if (savedProvider) {
                 this.selectedProvider = savedProvider;
                 await this.fetchModels();
@@ -197,6 +426,40 @@ function settingsPage() {
         selectModel(m) {
             this.defaultModel = m.id;
             localStorage.setItem('idpkit_model', m.id);
+            fetch('/api/settings/default-model', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ provider: this.selectedProvider, model: m.id }),
+            }).catch(e => console.error('Error saving default model:', e));
+        },
+
+        async changePassword() {
+            this.passwordError = '';
+            this.passwordSuccess = '';
+            if (!this.currentPassword) { this.passwordError = 'Please enter your current password'; return; }
+            if (!this.newPassword || this.newPassword.length < 6) { this.passwordError = 'New password must be at least 6 characters'; return; }
+            if (this.newPassword !== this.confirmPassword) { this.passwordError = 'New passwords do not match'; return; }
+            this.changingPassword = true;
+            try {
+                const res = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ current_password: this.currentPassword, new_password: this.newPassword }),
+                });
+                if (res.ok) {
+                    this.passwordSuccess = 'Password changed successfully';
+                    this.currentPassword = '';
+                    this.newPassword = '';
+                    this.confirmPassword = '';
+                } else {
+                    const err = await res.json();
+                    this.passwordError = err.detail || 'Failed to change password';
+                }
+            } catch(e) {
+                this.passwordError = 'Network error';
+            } finally {
+                this.changingPassword = false;
+            }
         },
 
         async generateKey() {

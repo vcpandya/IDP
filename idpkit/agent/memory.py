@@ -49,11 +49,17 @@ class ConversationMemory:
     def get_messages(self, limit: int = 20) -> list[dict]:
         """Return the most recent *limit* messages.
 
-        Only the ``role`` and ``content`` keys are included so the list can
-        be passed directly to the LLM as ``chat_history``.
+        Only ``user`` and ``assistant`` messages are included so the list
+        can be passed directly to the LLM as ``chat_history``.  Tool
+        messages are excluded because they require a preceding assistant
+        message with ``tool_calls`` metadata — replaying them from
+        persisted history would cause an API error.
         """
-        recent = self._messages[-limit:] if limit else self._messages
-        # Return only LLM-compatible keys
+        filtered = [
+            m for m in self._messages
+            if m["role"] in ("user", "assistant")
+        ]
+        recent = filtered[-limit:] if limit else filtered
         return [{"role": m["role"], "content": m["content"]} for m in recent]
 
     def get_full_messages(self, limit: int = 20) -> list[dict]:

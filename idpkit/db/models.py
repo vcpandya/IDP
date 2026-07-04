@@ -7,6 +7,7 @@ from sqlalchemy import (
     Column,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -55,7 +56,16 @@ document_tags = Table(
 )
 
 
+conversation_tags = Table(
+    "conversation_tags",
+    Base.metadata,
+    Column("conversation_id", String, ForeignKey("conversations.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", String, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class UserRole(str, enum.Enum):
+    SUPERADMIN = "superadmin"
     ADMIN = "admin"
     USER = "user"
 
@@ -71,6 +81,8 @@ class User(Base):
     api_key = Column(String(64), unique=True, nullable=True, index=True)
     is_active = Column(Integer, default=1)
     created_at = Column(TZDateTime, default=utcnow)
+    default_provider = Column(String(50), nullable=True)
+    default_model = Column(String(200), nullable=True)
 
     documents = relationship("Document", back_populates="owner", cascade="all, delete-orphan")
     tags = relationship("Tag", back_populates="owner", cascade="all, delete-orphan")
@@ -79,6 +91,7 @@ class User(Base):
     processing_templates = relationship("ProcessingTemplate", back_populates="owner", cascade="all, delete-orphan")
     batch_jobs = relationship("BatchJob", back_populates="owner", cascade="all, delete-orphan")
     conversations = relationship("Conversation", back_populates="owner", cascade="all, delete-orphan")
+    skills = relationship("Skill", back_populates="owner", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -86,15 +99,20 @@ class Document(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     filename = Column(String(500), nullable=False)
-    format = Column(String(20))  # pdf, docx, md, html, xlsx, csv, pptx, image
+    format = Column(String(20))  # pdf, docx, md, html, xlsx, csv, pptx, image, youtube
     file_path = Column(String(1000))
+    source_url = Column(String(1000), nullable=True)
+    source_type = Column(String(20), nullable=True)  # upload, youtube
     file_size = Column(Integer, default=0)
     page_count = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
-    status = Column(String(20), default="uploaded")  # uploaded, indexing, indexed, failed
+    status = Column(String(20), default="uploaded", index=True)  # uploaded, indexing, indexed, failed
     tree_index = Column(JSON, nullable=True)
     description = Column(Text, nullable=True)
     metadata_json = Column(JSON, nullable=True)
+    doc_category = Column(String(100), nullable=True, index=True)  # smart-metadata category
+    doc_category_confidence = Column(Integer, nullable=True)  # 0-100
+    smart_metadata = Column(JSON, nullable=True)  # {category, confidence, fields}
     owner_id = Column(String, ForeignKey("users.id"), nullable=False)
     created_at = Column(TZDateTime, default=utcnow)
     updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
@@ -102,6 +120,10 @@ class Document(Base):
     owner = relationship("User", back_populates="documents")
     tags = relationship("Tag", secondary=document_tags, back_populates="documents")
     jobs = relationship("Job", back_populates="document", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_documents_owner_created", "owner_id", "created_at"),
+    )
 
 
 class Job(Base):
@@ -111,10 +133,12 @@ class Job(Base):
     job_type = Column(String(50), nullable=False)  # index, extract, convert, tool, batch
     status = Column(String(20), default="pending")  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
+    stage = Column(String(100), nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     params = Column(JSON, nullable=True)
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
+    logs = Column(JSON, nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
     completed_at = Column(TZDateTime, nullable=True)
 
@@ -168,6 +192,12 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="ConversationMessage.created_at",
     )
+    tags = relationship("Tag", secondary=conversation_tags, back_populates="conversations")
+
+    __table_args__ = (
+        Index("ix_conversations_owner_created", "owner_id", "created_at"),
+        Index("ix_conversations_owner_updated", "owner_id", "updated_at"),
+    )
 
 
 class ConversationMessage(Base):
@@ -183,11 +213,16 @@ class ConversationMessage(Base):
     tool_calls = Column(JSON, nullable=True)
     tool_name = Column(String(100), nullable=True)
     sources_json = Column(JSON, nullable=True)
-    source_type = Column(String(20), nullable=True)  # documents, general_knowledge, mixed
+    source_type = Column(String(20), nullable=True)
+    computations_json = Column(JSON, nullable=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
+
+    __table_args__ = (
+        Index("ix_conv_messages_conv_created", "conversation_id", "created_at"),
+    )
 
 
 class ProcessingTemplate(Base):
@@ -232,6 +267,8 @@ class BatchJob(Base):
     options = Column(JSON, nullable=True)
     model = Column(String(200), nullable=True)
     concurrency = Column(Integer, default=3)
+    reference_doc_ids = Column(JSON, nullable=True)
+    generated_schema = Column(JSON, nullable=True)
     result_summary = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
     created_at = Column(TZDateTime, default=utcnow)
@@ -260,6 +297,10 @@ class BatchItem(Base):
     started_at = Column(TZDateTime, nullable=True)
     completed_at = Column(TZDateTime, nullable=True)
 
+    __table_args__ = (
+        Index("ix_batch_items_job_status", "batch_job_id", "status"),
+    )
+
     batch_job = relationship("BatchJob", back_populates="items")
     document = relationship("Document")
 
@@ -279,8 +320,127 @@ class Tag(Base):
 
     owner = relationship("User", back_populates="tags")
     documents = relationship("Document", secondary=document_tags, back_populates="tags")
+    conversations = relationship("Conversation", secondary=conversation_tags, back_populates="tags")
+
+
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+
+class Skill(Base):
+    """User-uploaded agent skill following the Anthropic Agent Skills spec."""
+
+    __tablename__ = "skills"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(64), nullable=False, index=True)
+    description = Column(Text, nullable=True)
+    skill_content = Column(Text, nullable=False)
+    scripts = Column(JSON, nullable=True)
+    requirements = Column(JSON, nullable=True)
+    is_active = Column(Integer, default=1)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    owner = relationship("User", back_populates="skills")
+
+    __table_args__ = (
+        Index("ix_skills_owner_name", "owner_id", "name", unique=True),
+    )
+
+
+class OAuthState(Base):
+    """Short-lived CSRF state token for OAuth2 authorization-code flows.
+
+    Stored in the database (instead of an in-process dict) so multi-worker
+    deployments can complete callbacks regardless of which worker began the
+    flow. Rows are deleted on consume; stale rows are pruned on each access.
+    """
+
+    __tablename__ = "oauth_states"
+
+    token = Column(String(64), primary_key=True)
+    payload = Column(JSON, nullable=False)
+    expires_at = Column(TZDateTime, nullable=False, index=True)
+    created_at = Column(TZDateTime, default=utcnow)
+
+
+class Connection(Base):
+    """A user's authenticated connection to an external SaaS connector.
+
+    Credentials are stored encrypted (Fernet, key derived from SECRET_KEY).
+    Plaintext creds never leave the connector executor and are never logged
+    or sent to the LLM.
+    """
+
+    __tablename__ = "connections"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    connector_id = Column(String(50), nullable=False, index=True)
+    display_name = Column(String(200), nullable=True)
+    encrypted_credentials = Column(Text, nullable=False)
+    connection_metadata = Column(JSON, nullable=True)
+    status = Column(String(20), default="active", index=True)
+    last_checked_at = Column(TZDateTime, nullable=True)
+    last_error = Column(Text, nullable=True)
+    expires_at = Column(TZDateTime, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow)
+    updated_at = Column(TZDateTime, default=utcnow, onupdate=utcnow)
+
+    # Sharing scope: "private" (default — only owner) or "org"
+    # (any user in this deployment may use it via runtime executors).
+    scope = Column(String(20), default="private", nullable=False, index=True)
+    # When scope=="org", this records the org/tenant identifier the connection
+    # is shared with. Single-tenant deployments use the literal "default".
+    owner_org = Column(String(100), nullable=True, index=True)
+    # When scope=="org" and ``allowed_user_ids`` is a non-empty list, only the
+    # owner plus those users may resolve this shared connection at runtime.
+    # When None or [], the connection is shared with everyone in ``owner_org``
+    # (the original org-wide behavior — preserved for backward compatibility).
+    allowed_user_ids = Column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_connections_owner_connector", "owner_id", "connector_id"),
+        Index("ix_connections_scope_connector", "scope", "connector_id"),
+    )
+
+
+class ConnectionAuditLog(Base):
+    """Audit trail for shared (org-level) connection usage.
+
+    One row is written each time a non-owner user invokes a tool through a
+    connection whose scope is "org". This satisfies the task requirement to
+    record *who* used a shared connection for each call.
+    """
+
+    __tablename__ = "connection_audit_log"
+
+    id = Column(String, primary_key=True, default=generate_uuid)
+    connection_id = Column(
+        String, ForeignKey("connections.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    connector_id = Column(String(50), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name = Column(String(100), nullable=True)
+    success = Column(Integer, default=1)
+    error = Column(Text, nullable=True)
+    created_at = Column(TZDateTime, default=utcnow, index=True)
+
+    __table_args__ = (
+        Index("ix_conn_audit_conn_created", "connection_id", "created_at"),
+    )
 
 
 # Import graph models so Base.metadata.create_all() picks up their tables.
 # Placed at the bottom to avoid circular imports (graph.models imports from here).
 import idpkit.graph.models as _graph_models  # noqa: F401, E402
+
+# Import e-signature models so they are registered with Base.metadata.
+import idpkit.esign.models as _esign_models  # noqa: F401, E402

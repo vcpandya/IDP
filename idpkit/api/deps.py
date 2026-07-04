@@ -7,17 +7,109 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+import jwt as _jwt
+from jwt.exceptions import InvalidTokenError as JWTError
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import json
+
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 from idpkit.db.session import get_db
-from idpkit.db.models import User
-from idpkit.core.storage import LocalStorageBackend
+from idpkit.db.models import User, SystemSetting, UserRole
+from idpkit.core.storage import LocalStorageBackend, GCSStorageBackend, StorageBackend
 from idpkit.core.llm import LLMClient, get_default_client
 
-SECRET_KEY = os.getenv("IDP_SECRET_KEY", "dev-secret-change-in-production")
+DEFAULT_RATE_LIMITS = {
+    "agent_chat": "30/minute",
+    "batch_create": "10/minute",
+}
+
+_rate_limit_cache: dict[str, str] = {}
+
+
+def get_rate_limit(key: str) -> str:
+    if key in _rate_limit_cache:
+        return _rate_limit_cache[key]
+    return DEFAULT_RATE_LIMITS.get(key, "60/minute")
+
+
+def update_rate_limit_cache(limits: dict[str, str]):
+    _rate_limit_cache.update(limits)
+
+
+def _admin_exempt_key_func(request: Request) -> str:
+    user_role = getattr(request.state, "_user_role", None)
+    if user_role in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value):
+        return "__admin_exempt__"
+    return get_remote_address(request)
+
+
+limiter = Limiter(
+    key_func=_admin_exempt_key_func,
+    default_limits=[],
+)
+
+import logging as _logging
+
+_deps_logger = _logging.getLogger(__name__)
+
+
+def is_production() -> bool:
+    """Heuristic: are we running in a production deployment?
+
+    We treat the presence of ``DEPLOYED_DOMAIN`` (set automatically by Replit
+    deployments) or ``ENVIRONMENT=production`` as the signal. Anything else
+    (local dev, CI tests) is treated as dev so the ephemeral-secret fallback
+    keeps working.
+    """
+    if os.getenv("ENVIRONMENT", "").strip().lower() == "production":
+        return True
+    if os.getenv("DEPLOYED_DOMAIN", "").strip():
+        return True
+    return False
+
+
+def _load_secret_key() -> str:
+    """Resolve SECRET_KEY from env. Fail-closed in production, ephemeral in dev."""
+    secret = (
+        os.getenv("SECRET_KEY")
+        or os.getenv("SESSION_SECRET")
+        or os.getenv("IDP_SECRET_KEY")
+    )
+    if secret:
+        return secret
+    if is_production():
+        raise RuntimeError(
+            "SECRET_KEY env var is required in production deployments "
+            "(detected via DEPLOYED_DOMAIN or ENVIRONMENT=production). "
+            "Without it the Fernet key used to encrypt connector "
+            "credentials would be regenerated on every restart, "
+            "making every stored connection unreadable. "
+            "Set SECRET_KEY to a stable, random value of at least 32 "
+            "characters in your deployment secrets."
+        )
+    _deps_logger.warning(
+        "No SECRET_KEY env var set — using an ephemeral random key. "
+        "Sessions will not survive server restarts."
+    )
+    return secrets.token_urlsafe(64)
+
+
+SECRET_KEY = _load_secret_key()
+
+
+# --- CSRF (double-submit cookie) ---
+
+CSRF_COOKIE_NAME = "csrftoken"
+CSRF_HEADER_NAME = "X-CSRF-Token"
+
+
+def generate_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
@@ -39,12 +131,12 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(user_id: str, expires_delta: Optional[timedelta] = None) -> str:
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+    return _jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
 
 def decode_token(token: str) -> Optional[str]:
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = _jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload.get("sub")
     except JWTError:
         return None
@@ -108,21 +200,52 @@ async def get_current_user_optional(
         return None
 
 
-def get_storage() -> LocalStorageBackend:
-    path = os.getenv("IDP_STORAGE_PATH", "./storage")
-    return LocalStorageBackend(path)
+_storage_instance: Optional[StorageBackend] = None
+
+
+def get_storage() -> StorageBackend:
+    global _storage_instance
+    if _storage_instance is not None:
+        return _storage_instance
+
+    bucket_id = os.getenv("DEFAULT_OBJECT_STORAGE_BUCKET_ID")
+    private_dir = os.getenv("PRIVATE_OBJECT_DIR")
+    if bucket_id and private_dir:
+        _storage_instance = GCSStorageBackend(bucket_id=bucket_id, private_dir=private_dir)
+    else:
+        path = os.getenv("IDP_STORAGE_PATH", "./storage")
+        _storage_instance = LocalStorageBackend(path)
+    return _storage_instance
 
 
 async def require_admin(
     user: User = Depends(get_current_user),
 ) -> User:
-    """Require the current user to have admin role."""
-    if user.role != "admin":
+    """Require the current user to have admin or superadmin role."""
+    if user.role not in (UserRole.ADMIN.value, UserRole.SUPERADMIN.value):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
         )
     return user
+
+
+async def require_superadmin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Require the current user to have superadmin role."""
+    if user.role != UserRole.SUPERADMIN.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Superadmin access required",
+        )
+    return user
+
+
+def get_llm_for_user(user: User) -> LLMClient:
+    if user.default_model:
+        return get_default_client(model=user.default_model)
+    return get_default_client()
 
 
 def get_llm() -> LLMClient:

@@ -4,7 +4,7 @@
 <div class="page-header">
     <h2><i class="fas fa-users-cog"></i> User Management</h2>
 </div>
-<div x-data="adminUsersPage()" x-init="loadUsers()">
+<div x-data="adminUsersPage()" x-init="loadUsers(); loadRateLimits()">
     <div class="admin-stats" style="display: flex; gap: 1rem; margin-bottom: 1.5rem;">
         <div class="stat-card" style="flex: 1; background: var(--bg-card); border-radius: 8px; padding: 1rem; border: 1px solid var(--border-color);">
             <div style="font-size: 0.85rem; color: var(--text-muted);">Total Users</div>
@@ -23,7 +23,7 @@
     <div x-show="message" class="alert alert-success" x-text="message" style="margin-bottom: 1rem;"></div>
     <div x-show="error" class="alert alert-error" x-text="error" style="margin-bottom: 1rem;"></div>
 
-    <div style="background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); overflow: hidden;">
+    <div style="background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); overflow: hidden; margin-bottom: 2rem;">
         <table style="width: 100%; border-collapse: collapse;">
             <thead>
                 <tr style="border-bottom: 1px solid var(--border-color); background: var(--bg-hover);">
@@ -48,8 +48,8 @@
                         <td style="padding: 0.75rem 1rem; color: var(--text-muted);" x-text="u.email || '—'"></td>
                         <td style="padding: 0.75rem 1rem;">
                             <span class="badge"
-                                  :style="u.role === 'admin' ? 'background: rgba(99, 102, 241, 0.1); color: #818cf8;' : 'background: rgba(107, 114, 128, 0.1); color: #9ca3af;'"
-                                  x-text="u.role"></span>
+                                  :style="u.role === 'superadmin' ? 'background: rgba(234, 88, 12, 0.1); color: #f97316; font-weight: 600;' : u.role === 'admin' ? 'background: rgba(99, 102, 241, 0.1); color: #818cf8;' : 'background: rgba(107, 114, 128, 0.1); color: #9ca3af;'"
+                                  x-text="u.role === 'superadmin' ? 'Superadmin' : u.role === 'admin' ? 'Admin' : 'User'"></span>
                         </td>
                         <td style="padding: 0.75rem 1rem;">
                             <span x-show="u.is_active"
@@ -64,28 +64,43 @@
                         <td style="padding: 0.75rem 1rem; color: var(--text-muted); font-size: 0.85rem;"
                             x-text="new Date(u.created_at).toLocaleDateString()"></td>
                         <td style="padding: 0.75rem 1rem; text-align: right;">
-                            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;"
-                                 x-show="u.username !== '{{ user.username }}'">
+                            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap;"
+                                 x-show="u.id !== currentUserId && u.role !== 'superadmin'">
                                 <button x-show="!u.is_active"
                                         @click="approveUser(u.id)"
                                         class="btn btn-sm"
                                         style="background: var(--success-color, #22c55e); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
                                     <i class="fas fa-check"></i> Approve
                                 </button>
-                                <button x-show="u.is_active"
+                                <button x-show="u.is_active && u.role === 'user'"
+                                        @click="promoteUser(u.id)"
+                                        class="btn btn-sm"
+                                        style="background: #6366f1; color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                                    <i class="fas fa-arrow-up"></i> Promote
+                                </button>
+                                <button x-show="u.is_active && u.role === 'admin' && isSuperadmin"
+                                        @click="demoteUser(u.id)"
+                                        class="btn btn-sm"
+                                        style="background: #8b5cf6; color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
+                                    <i class="fas fa-arrow-down"></i> Demote
+                                </button>
+                                <button x-show="u.is_active && (u.role !== 'admin' || isSuperadmin)"
                                         @click="deactivateUser(u.id)"
                                         class="btn btn-sm"
                                         style="background: var(--warning-color, #f59e0b); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
                                     <i class="fas fa-ban"></i> Deactivate
                                 </button>
-                                <button @click="confirmDelete(u)"
+                                <button x-show="u.role !== 'admin' || isSuperadmin"
+                                        @click="confirmDelete(u)"
                                         class="btn btn-sm"
                                         style="background: var(--danger-color, #ef4444); color: white; border: none; padding: 0.35rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.8rem;">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </div>
-                            <span x-show="u.username === '{{ user.username }}'"
+                            <span x-show="u.id === currentUserId"
                                   style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">You</span>
+                            <span x-show="u.id !== currentUserId && u.role === 'superadmin'"
+                                  style="color: var(--text-muted); font-size: 0.8rem; font-style: italic;">Protected</span>
                         </td>
                     </tr>
                 </template>
@@ -94,6 +109,32 @@
         <div x-show="users.length === 0" style="padding: 2rem; text-align: center; color: var(--text-muted);">
             No users found.
         </div>
+    </div>
+
+    <div style="background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-color); padding: 1.5rem;">
+        <h3 style="margin: 0 0 1rem 0;"><i class="fas fa-tachometer-alt"></i> Rate Limits</h3>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+            Configure request rate limits for API endpoints. Admins and superadmins are exempt from rate limiting.
+            Format: <code>number/unit</code> (e.g. <code>30/minute</code>, <code>100/hour</code>)
+        </p>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; max-width: 600px;">
+            <div>
+                <label style="display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem;">Agent Chat</label>
+                <input type="text" x-model="rateLimits.agent_chat"
+                       style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-main); color: var(--text-color);"
+                       placeholder="30/minute">
+            </div>
+            <div>
+                <label style="display: block; font-size: 0.85rem; font-weight: 500; margin-bottom: 0.25rem;">Batch Create</label>
+                <input type="text" x-model="rateLimits.batch_create"
+                       style="width: 100%; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-main); color: var(--text-color);"
+                       placeholder="10/minute">
+            </div>
+        </div>
+        <button @click="saveRateLimits()" class="btn btn-primary" style="margin-top: 1rem; padding: 0.5rem 1.5rem;">
+            <i class="fas fa-save"></i> Save Rate Limits
+        </button>
+        <span x-show="rateLimitSaved" style="color: var(--success-color, #22c55e); font-size: 0.85rem; margin-left: 0.5rem;">Saved!</span>
     </div>
 
     <div x-show="deleteTarget" @click.self="deleteTarget = null"
@@ -119,6 +160,10 @@ function adminUsersPage() {
         message: '',
         error: '',
         deleteTarget: null,
+        currentUserId: '{{ user.id }}',
+        isSuperadmin: {{ 'true' if user.role == 'superadmin' else 'false' }},
+        rateLimits: { agent_chat: '', batch_create: '' },
+        rateLimitSaved: false,
         get pendingCount() { return this.users.filter(u => !u.is_active).length; },
         get activeCount() { return this.users.filter(u => u.is_active).length; },
         async loadUsers() {
@@ -129,6 +174,14 @@ function adminUsersPage() {
                 this.users = data.users;
                 this.total = data.total;
             } catch(e) { this.error = 'Network error'; }
+        },
+        async loadRateLimits() {
+            try {
+                const res = await fetch('/api/admin/rate-limits');
+                if (res.ok) {
+                    this.rateLimits = await res.json();
+                }
+            } catch(e) {}
         },
         async approveUser(id) {
             this.message = ''; this.error = '';
@@ -148,6 +201,24 @@ function adminUsersPage() {
                 else { this.error = data.detail || 'Failed to deactivate user'; }
             } catch(e) { this.error = 'Network error'; }
         },
+        async promoteUser(id) {
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch(`/api/admin/users/${id}/promote`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) { this.message = data.detail; await this.loadUsers(); }
+                else { this.error = data.detail || 'Failed to promote user'; }
+            } catch(e) { this.error = 'Network error'; }
+        },
+        async demoteUser(id) {
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch(`/api/admin/users/${id}/demote`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) { this.message = data.detail; await this.loadUsers(); }
+                else { this.error = data.detail || 'Failed to demote user'; }
+            } catch(e) { this.error = 'Network error'; }
+        },
         confirmDelete(user) { this.deleteTarget = user; },
         async deleteUser(id) {
             this.message = ''; this.error = '';
@@ -156,6 +227,24 @@ function adminUsersPage() {
                 const data = await res.json();
                 if (res.ok) { this.message = data.detail; this.deleteTarget = null; await this.loadUsers(); }
                 else { this.error = data.detail || 'Failed to delete user'; }
+            } catch(e) { this.error = 'Network error'; }
+        },
+        async saveRateLimits() {
+            this.rateLimitSaved = false;
+            this.message = ''; this.error = '';
+            try {
+                const res = await fetch('/api/admin/rate-limits', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(this.rateLimits),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    this.rateLimitSaved = true;
+                    setTimeout(() => this.rateLimitSaved = false, 3000);
+                } else {
+                    this.error = data.detail || 'Failed to save rate limits';
+                }
             } catch(e) { this.error = 'Network error'; }
         }
     }

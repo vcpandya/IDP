@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 import time
 import json
-import PyPDF2
+import pypdf
 import copy
 import asyncio
 import pymupdf
@@ -18,45 +18,63 @@ from types import SimpleNamespace as config
 
 from idpkit.core.llm import get_default_client
 
-CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
+def _get_encoding(model=None):
+    if model:
+        try:
+            return tiktoken.encoding_for_model(model)
+        except KeyError:
+            pass
+    return tiktoken.get_encoding("o200k_base")
 
 def count_tokens(text, model=None):
     if not text:
         return 0
-    enc = tiktoken.encoding_for_model(model)
+    enc = _get_encoding(model)
     tokens = enc.encode(text)
     return len(tokens)
 
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+def ChatGPT_API_with_finish_reason(model, prompt, api_key=None, chat_history=None, response_format=None):
     """Synchronous LLM completion returning (content, finish_reason).
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         return client.complete_with_finish_reason(
             prompt=prompt,
             model=model,
             chat_history=chat_history,
+            **kwargs,
         )
     except Exception as e:
         logging.error(f"Max retries reached: {e}")
         return "Error"
 
 
-def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+JSON_OUTPUT = {"type": "json_object"}
+
+def ChatGPT_API(model, prompt, api_key=None, chat_history=None, response_format=None):
     """Synchronous LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         response = client.complete(
             prompt=prompt,
             model=model,
             chat_history=chat_history,
+            **kwargs,
         )
         return response.content
     except Exception as e:
@@ -64,17 +82,22 @@ def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
         return "Error"
 
 
-async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
+async def ChatGPT_API_async(model, prompt, api_key=None, response_format=None):
     """Async LLM completion returning content string.
 
     Now powered by LiteLLM via idpkit.core.llm — supports OpenAI, Anthropic,
     Gemini, Ollama, OpenRouter, and 100+ other providers.
+    API key is auto-resolved per model when not explicitly provided.
     """
     try:
-        client = get_default_client(api_key=api_key)
+        client = get_default_client(api_key=api_key) if api_key else get_default_client()
+        kwargs = {}
+        if response_format:
+            kwargs["response_format"] = response_format
         response = await client.acomplete(
             prompt=prompt,
             model=model,
+            **kwargs,
         )
         return response.content
     except Exception as e:
@@ -128,6 +151,32 @@ def extract_json(content):
     except Exception as e:
         logging.error(f"Unexpected error while extracting JSON: {e}")
         return {}
+
+def extract_json_array(content):
+    """Parse `content` as JSON and return a list.
+
+    Handles both legacy lenient models that return a bare top-level array
+    and strict models constrained by ``response_format={"type":"json_object"}``
+    that wrap the array inside a single-key object such as
+    ``{"sections": [...]}`` or ``{"items": [...]}``.
+
+    Returns ``[]`` on any parse failure or unrecognised shape.
+    """
+    parsed = extract_json(content)
+    if isinstance(parsed, list):
+        return parsed
+    if isinstance(parsed, dict):
+        # Common wrapper keys, in priority order.
+        for key in ("sections", "items", "toc", "structure", "results", "data"):
+            value = parsed.get(key)
+            if isinstance(value, list):
+                return value
+        # Fallback: if there's exactly one list-valued field, unwrap it.
+        list_values = [v for v in parsed.values() if isinstance(v, list)]
+        if len(list_values) == 1:
+            return list_values[0]
+    return []
+
 
 def write_node_id(data, node_id=0):
     if isinstance(data, dict):
@@ -219,7 +268,7 @@ def get_last_node(structure):
 
 
 def extract_text_from_pdf(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     ###return text not list 
     text=""
     for page_num in range(len(pdf_reader.pages)):
@@ -228,13 +277,13 @@ def extract_text_from_pdf(pdf_path):
     return text
 
 def get_pdf_title(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     meta = pdf_reader.metadata
     title = meta.title if meta and meta.title else 'Untitled'
     return title
 
 def get_text_of_pages(pdf_path, start_page, end_page, tag=True):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     text = ""
     for page_num in range(start_page-1, end_page):
         page = pdf_reader.pages[page_num]
@@ -273,7 +322,7 @@ def get_pdf_name(pdf_path):
     if isinstance(pdf_path, str):
         pdf_name = os.path.basename(pdf_path)
     elif isinstance(pdf_path, BytesIO):
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
+        pdf_reader = pypdf.PdfReader(pdf_path)
         meta = pdf_reader.metadata
         pdf_name = meta.title if meta and meta.title else 'Untitled'
         pdf_name = sanitize_filename(pdf_name)
@@ -281,26 +330,29 @@ def get_pdf_name(pdf_path):
 
 
 class JsonLogger:
-    def __init__(self, file_path):
-        # Extract PDF name for logger name
+    def __init__(self, file_path, on_log=None):
         pdf_name = get_pdf_name(file_path)
             
         current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.filename = f"{pdf_name}_{current_time}.json"
         os.makedirs("./logs", exist_ok=True)
-        # Initialize empty list to store all messages
         self.log_data = []
+        self._on_log = on_log
 
     def log(self, level, message, **kwargs):
+        ts = datetime.now().strftime("%H:%M:%S")
         if isinstance(message, dict):
-            self.log_data.append(message)
+            entry = {**message, "_level": level, "_ts": ts}
         else:
-            self.log_data.append({'message': message})
-        # Add new message to the log data
+            entry = {"message": str(message), "_level": level, "_ts": ts}
+        self.log_data.append(entry)
         
-        # Write entire log data to file
         with open(self._filepath(), "w") as f:
             json.dump(self.log_data, f, indent=2)
+
+        if self._on_log:
+            display = entry.get("message", json.dumps({k: v for k, v in entry.items() if not k.startswith("_")}, default=str)[:500])
+            self._on_log(level, display)
 
     def info(self, message, **kwargs):
         self.log("INFO", message, **kwargs)
@@ -384,10 +436,10 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
-    if pdf_parser == "PyPDF2":
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
+def get_page_tokens(pdf_path, model="gpt-5.2", pdf_parser="pypdf"):
+    enc = _get_encoding(model)
+    if pdf_parser == "pypdf":
+        pdf_reader = pypdf.PdfReader(pdf_path)
         page_list = []
         for page_num in range(len(pdf_reader.pages)):
             page = pdf_reader.pages[page_num]
@@ -425,7 +477,7 @@ def get_text_of_pdf_pages_with_labels(pdf_pages, start_page, end_page):
     return text
 
 def get_number_of_pages(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
+    pdf_reader = pypdf.PdfReader(pdf_path)
     num = len(pdf_reader.pages)
     return num
 

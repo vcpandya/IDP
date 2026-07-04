@@ -1,0 +1,501 @@
+{% extends "base.html" %}
+{% block title %}Document Map - IDP Kit{% endblock %}
+{% block head %}
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+.dm-layout { display: grid; grid-template-columns: 340px 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; flex: 1; min-height: 0; overflow: hidden; }
+.dm-sidebar { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.dm-main { background: var(--card-bg, #fff); border-radius: 12px; border: 1px solid var(--border, #e5e7eb); position: relative; overflow: hidden; display: flex; flex-direction: column; }
+.dm-section { display: flex; flex-direction: column; gap: 8px; }
+.dm-section h4 { margin: 0; font-size: 0.8rem; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.5px; }
+.dm-input, .dm-select { width: 100%; padding: 8px 12px; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; font-size: 0.9rem; background: var(--bg, #f9fafb); }
+.dm-input:focus, .dm-select:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 2px rgba(124,58,237,0.15); }
+.facet-group { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.facet-group-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; cursor: pointer; background: var(--bg, #f9fafb); font-size: 0.82rem; font-weight: 600; }
+.facet-group-head .count { font-weight: 400; color: var(--text-muted, #6b7280); font-size: 0.72rem; }
+.facet-values { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; }
+.facet-value { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 10px; cursor: pointer; font-size: 0.82rem; border-top: 1px solid var(--border, #f1f1f1); }
+.facet-value:hover { background: #f5f3ff; }
+.facet-value.selected { background: #ede9fe; color: #5b21b6; font-weight: 600; }
+.facet-value .fv-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facet-value .fv-count { font-size: 0.7rem; color: var(--text-muted, #6b7280); background: var(--bg,#f3f4f6); border-radius: 10px; padding: 1px 7px; flex-shrink: 0; }
+.match-toggle { display: inline-flex; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.match-toggle button { padding: 5px 12px; border: none; background: transparent; cursor: pointer; font-size: 0.78rem; }
+.match-toggle button.active { background: #7c3aed; color: #fff; }
+.crit-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.crit-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 14px; font-size: 0.76rem; background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.crit-chip .ck { opacity: 0.7; font-size: 0.68rem; text-transform: uppercase; }
+.crit-chip button { background: none; border: none; cursor: pointer; color: #7c3aed; padding: 0; line-height: 1; }
+.crit-chip button:hover { color: #e11d48; }
+.dm-toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border, #e5e7eb); flex-wrap: wrap; }
+.dm-result-count { font-weight: 600; font-size: 0.92rem; }
+.dm-tabs { display: inline-flex; border: 1px solid var(--border, #e5e7eb); border-radius: 8px; overflow: hidden; }
+.dm-tabs button { padding: 5px 14px; border: none; background: transparent; cursor: pointer; font-size: 0.82rem; }
+.dm-tabs button.active { background: #7c3aed; color: #fff; }
+.dm-body { flex: 1; position: relative; overflow: hidden; }
+.dm-canvas { position: absolute; inset: 0; }
+.dm-canvas svg { width: 100%; height: 100%; }
+.dm-list { position: absolute; inset: 0; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
+.doc-card { border: 1px solid var(--border, #e5e7eb); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.doc-card-top { display: flex; align-items: center; gap: 8px; }
+.doc-card-top .fname { font-weight: 600; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.doc-cat { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.4px; color: #6d28d9; background: #ede9fe; border-radius: 10px; padding: 2px 8px; }
+.matched-facets { display: flex; flex-wrap: wrap; gap: 4px; }
+.matched-facet { font-size: 0.72rem; background: var(--bg,#f3f4f6); border: 1px solid var(--border,#e5e7eb); border-radius: 8px; padding: 1px 8px; }
+.matched-facet b { color: #5b21b6; }
+.dm-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted, #6b7280); text-align: center; padding: 30px; }
+.dm-empty i { font-size: 2.4rem; opacity: 0.4; }
+.btn-cta { background: #7c3aed; color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 0.84rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.btn-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-ghost { background: transparent; color: var(--text, #374151); border: 1px solid var(--border,#e5e7eb); border-radius: 8px; padding: 7px 12px; font-size: 0.84rem; cursor: pointer; }
+.stat-pill { font-size: 0.74rem; color: var(--text-muted,#6b7280); }
+.node-doc circle { fill: #7c3aed; }
+.node-facet circle { fill: #f59e0b; }
+.dm-link { stroke: #cbd5e1; stroke-width: 1.2px; }
+.dm-node-label { font-size: 10px; fill: var(--text, #374151); pointer-events: none; }
+.spinner-sm { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff; border-radius: 50%; display: inline-block; animation: dmspin 0.7s linear infinite; }
+@keyframes dmspin { to { transform: rotate(360deg); } }
+</style>
+{% endblock %}
+{% block content %}
+<div x-data="documentMap()" x-init="init()" style="display:contents">
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+    <div>
+        <h2 style="margin:0"><i class="fas fa-sitemap"></i> Document Map</h2>
+        <p style="margin:4px 0 0;color:var(--text-muted,#6b7280);font-size:0.88rem">
+            Browse documents by their smart metadata. Combine facets to pre-filter a set, then send it to IDA.
+        </p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="stat-pill" x-show="stats && !job">
+            <i class="fas fa-database"></i>
+            <span x-text="stats ? (stats.profiled_documents + ' of ' + stats.total_documents + ' documents profiled') : ''"></span>
+        </span>
+        <button class="btn-ghost" @click="reprocess('missing')" :disabled="reprocessing" x-show="!job">
+            <i class="fas fa-magic"></i> <span x-text="tagId ? 'Process this KB (unprocessed)' : 'Process unprocessed'"></span>
+        </button>
+        <button class="btn-ghost" @click="reprocess(tagId ? 'tag' : 'all')" :disabled="reprocessing" x-show="!job"
+                :title="tagId ? 'Re-extract metadata for this knowledge base' : 'Re-extract metadata for all documents'">
+            <i class="fas fa-sync"></i> <span x-text="tagId ? 'Reprocess this KB' : 'Reprocess all'"></span>
+        </button>
+    </div>
+</div>
+
+<!-- ===== Background job progress ===== -->
+<div x-show="job" x-cloak class="dm-job"
+     style="margin:10px 0 4px;padding:12px 16px;border:1px solid #c4b5fd;background:#f5f3ff;border-radius:10px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;font-size:0.88rem">
+            <span class="spinner-sm" x-show="job && (job.status==='running' || job.status==='pending')"
+                  style="border-top-color:#7c3aed;border-color:rgba(124,58,237,0.3)"></span>
+            <i class="fas fa-check-circle" x-show="job && job.status==='completed'" style="color:#16a34a"></i>
+            <i class="fas fa-exclamation-circle" x-show="job && job.status==='failed'" style="color:#dc2626"></i>
+            <strong x-text="job ? job.label : ''"></strong>
+            <span style="color:var(--text-muted,#6b7280)"
+                  x-text="job ? ('· ' + (job.processed + job.failed + job.skipped) + ' of ' + job.total) : ''"></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+            <span class="stat-pill" x-text="job ? ('✓ ' + job.processed + '  ⚠ ' + job.failed + '  ⤼ ' + job.skipped) : ''"></span>
+            <button class="btn-ghost" style="padding:3px 10px;font-size:0.76rem"
+                    x-show="job && (job.status==='completed' || job.status==='failed')" @click="dismissJob()">Dismiss</button>
+        </div>
+    </div>
+    <div style="margin-top:8px;height:8px;border-radius:6px;background:#ede9fe;overflow:hidden">
+        <div style="height:100%;background:#7c3aed;transition:width 0.3s"
+             :style="{ width: jobPct() + '%' }"></div>
+    </div>
+    <div x-show="job && job.current && job.status==='running'" style="margin-top:6px;font-size:0.74rem;color:var(--text-muted,#6b7280)">
+        <i class="fas fa-file-alt"></i> <span x-text="job ? job.current : ''"></span>
+    </div>
+    <div x-show="job && job.failures && job.failures.length" x-data="{ openFail: false }" style="margin-top:8px">
+        <button class="btn-ghost" style="padding:2px 8px;font-size:0.74rem;color:#b91c1c;border:1px solid #fecaca;background:#fef2f2;border-radius:6px"
+                @click="openFail = !openFail">
+            <i class="fas" :class="openFail ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.68rem"></i>
+            <span x-text="(job.failed) + ' file' + (job.failed === 1 ? '' : 's') + ' failed — see why'"></span>
+        </button>
+        <div x-show="openFail" style="margin-top:6px;max-height:170px;overflow:auto;border:1px solid var(--border,#e5e7eb);border-radius:8px;background:#fff">
+            <template x-for="(f, i) in job.failures" :key="i">
+                <div style="padding:5px 8px;border-bottom:1px solid var(--border,#f1f1f1);font-size:0.74rem">
+                    <strong x-text="f.filename"></strong>
+                    <span style="color:var(--text-muted,#6b7280)" x-text="': ' + f.error"></span>
+                </div>
+            </template>
+            <div x-show="job.failed > job.failures.length" style="padding:5px 8px;font-size:0.74rem;color:var(--text-muted,#6b7280)"
+                 x-text="'+ ' + (job.failed - job.failures.length) + ' more not shown'"></div>
+        </div>
+    </div>
+</div>
+
+<div class="dm-layout">
+    <!-- ===== Facet sidebar ===== -->
+    <aside class="dm-sidebar">
+        <div class="dm-section">
+            <h4>Knowledge base</h4>
+            <select class="dm-select" x-model="tagId" @change="onScopeChange()">
+                <option value="">All documents</option>
+                <template x-for="t in tags" :key="t.id">
+                    <option :value="t.id" x-text="t.name + ' (' + (t.document_count ?? 0) + ')'"></option>
+                </template>
+            </select>
+            <p style="margin:0;font-size:0.72rem;color:var(--text-muted,#6b7280)"
+               x-show="tagId">Scoped to a single knowledge base. Facets, results and reprocessing apply only to it.</p>
+        </div>
+
+        <div class="dm-section">
+            <h4>Category</h4>
+            <select class="dm-select" x-model="category" @change="loadFacets()">
+                <option value="">All categories</option>
+                <template x-for="c in categories" :key="c.key">
+                    <option :value="c.key" x-text="c.label + (stats && stats.by_category[c.key] ? ' (' + stats.by_category[c.key] + ')' : '')"></option>
+                </template>
+            </select>
+        </div>
+
+        <div class="dm-section">
+            <h4>Search facets</h4>
+            <input type="text" class="dm-input" placeholder="e.g. a judge, a court, a party…"
+                   x-model="search" @input.debounce.350ms="loadFacets()">
+        </div>
+
+        <div class="dm-section">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+                <h4>Match</h4>
+                <div class="match-toggle">
+                    <button :class="{active: match==='all'}" @click="setMatch('all')">All</button>
+                    <button :class="{active: match==='any'}" @click="setMatch('any')">Any</button>
+                </div>
+            </div>
+            <p style="margin:0;font-size:0.72rem;color:var(--text-muted,#6b7280)"
+               x-text="match==='all' ? 'Documents must match every selected facet.' : 'Documents matching at least one facet.'"></p>
+        </div>
+
+        <div class="dm-section" style="flex:1;min-height:0">
+            <h4>Facets</h4>
+            <div x-show="loadingFacets" style="color:var(--text-muted,#6b7280);font-size:0.85rem;padding:8px 0">
+                <span class="spinner-sm" style="border-top-color:#7c3aed;border-color:rgba(124,58,237,0.3)"></span> Loading facets…
+            </div>
+            <div x-show="!loadingFacets && facetGroups.length === 0" style="color:var(--text-muted,#6b7280);font-size:0.85rem;padding:8px 0">
+                No shared facets to group by yet. Facets appear once a value is found in 2+ documents — try a search above, or reprocess documents to (re)extract metadata.
+            </div>
+            <template x-for="grp in facetGroups" :key="grp.key">
+                <div class="facet-group">
+                    <div class="facet-group-head" @click="toggleGroup(grp.key)">
+                        <span><span x-text="grp.label"></span> <span class="count" x-text="'· ' + grp.values.length"></span></span>
+                        <i class="fas" :class="isGroupOpen(grp.key) ? 'fa-chevron-up' : 'fa-chevron-down'" style="font-size:0.7rem"></i>
+                    </div>
+                    <div class="facet-values" x-show="isGroupOpen(grp.key)" x-collapse>
+                        <template x-for="v in grp.values" :key="grp.key + '::' + v.value_norm">
+                            <div class="facet-value" :class="{selected: isSelected(grp.key, v.value_norm)}"
+                                 @click="toggleCriterion(grp, v)">
+                                <span class="fv-name" x-text="v.value" :title="v.value"></span>
+                                <span class="fv-count" x-text="v.document_count"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </aside>
+
+    <!-- ===== Main panel ===== -->
+    <section class="dm-main">
+        <div class="dm-toolbar">
+            <span class="dm-result-count" x-text="results.length + ' document' + (results.length === 1 ? '' : 's')"></span>
+            <div class="crit-chips" style="flex:1">
+                <template x-for="(c, i) in criteria" :key="c.key + '::' + c.value_norm">
+                    <span class="crit-chip">
+                        <span class="ck" x-text="c.label + ':'"></span>
+                        <span x-text="c.value"></span>
+                        <button @click="removeCriterion(i)" aria-label="Remove">&times;</button>
+                    </span>
+                </template>
+                <button class="btn-ghost" style="padding:2px 10px;font-size:0.74rem" x-show="criteria.length > 0" @click="clearCriteria()">Clear</button>
+            </div>
+            <div class="dm-tabs">
+                <button :class="{active: view==='graph'}" @click="view='graph'; $nextTick(() => renderGraph())"><i class="fas fa-project-diagram"></i> Graph</button>
+                <button :class="{active: view==='list'}" @click="view='list'"><i class="fas fa-list"></i> List</button>
+            </div>
+            <button class="btn-cta" :disabled="results.length === 0" @click="askIda()">
+                <i class="fas fa-brain"></i> Ask IDA about these
+            </button>
+        </div>
+
+        <div class="dm-body">
+            <!-- Empty state -->
+            <div class="dm-empty" x-show="criteria.length === 0">
+                <i class="fas fa-hand-pointer"></i>
+                <div>
+                    <strong>Pick one or more facets</strong> on the left to find documents.<br>
+                    <span style="font-size:0.85rem">e.g. select a judge to find every case where they appear.</span>
+                </div>
+            </div>
+
+            <!-- Graph view -->
+            <div class="dm-canvas" x-show="criteria.length > 0 && view==='graph'">
+                <div class="dm-empty" x-show="!loadingResults && results.length === 0">
+                    <i class="fas fa-inbox"></i><div>No documents match this combination.</div>
+                </div>
+                <svg x-ref="svg"></svg>
+            </div>
+
+            <!-- List view -->
+            <div class="dm-list" x-show="criteria.length > 0 && view==='list'">
+                <div class="dm-empty" x-show="!loadingResults && results.length === 0" style="position:static;padding:40px">
+                    <i class="fas fa-inbox"></i><div>No documents match this combination.</div>
+                </div>
+                <template x-for="d in results" :key="d.id">
+                    <div class="doc-card">
+                        <div class="doc-card-top">
+                            <i class="fas fa-file-alt" style="color:#7c3aed"></i>
+                            <span class="fname" x-text="d.filename" :title="d.filename"></span>
+                            <span class="doc-cat" x-show="d.category" x-text="catLabel(d.category)"></span>
+                            <a :href="'/documents/' + d.id" target="_blank" class="btn-ghost" style="padding:3px 8px;font-size:0.74rem">Open</a>
+                        </div>
+                        <div class="matched-facets" x-show="d.matched && d.matched.length">
+                            <template x-for="m in d.matched" :key="m.key + m.value">
+                                <span class="matched-facet"><b x-text="m.label + ':'"></b> <span x-text="m.value"></span></span>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </section>
+</div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function documentMap() {
+    return {
+        categories: [],
+        stats: null,
+        category: '',
+        search: '',
+        match: 'all',
+        facetGroups: [],
+        openGroups: {},
+        criteria: [],
+        results: [],
+        view: 'graph',
+        loadingFacets: false,
+        loadingResults: false,
+        reprocessing: false,
+        tags: [],
+        tagId: '',
+        job: null,
+        _poll: null,
+        _sim: null,
+
+        async init() {
+            // Honor ?tag_id= so the "Add to Document Map" handoff lands scoped.
+            const qp = new URLSearchParams(window.location.search);
+            if (qp.get('tag_id')) this.tagId = qp.get('tag_id');
+            await Promise.all([this.loadCategories(), this.loadTags(), this.loadStats(), this.loadFacets()]);
+        },
+        async loadCategories() {
+            const r = await fetch('/api/metadata/categories');
+            if (r.ok) this.categories = await r.json();
+        },
+        async loadTags() {
+            const r = await fetch('/api/tags/');
+            if (r.ok) {
+                const data = await r.json();
+                this.tags = Array.isArray(data) ? data : (data.tags || data.items || []);
+            }
+        },
+        scopeParam(params) {
+            if (this.tagId) params.set('tag_id', this.tagId);
+            return params;
+        },
+        onScopeChange() {
+            // Reset the working selection — facet value_norms differ per scope.
+            this.criteria = [];
+            this.results = [];
+            this.openGroups = {};
+            this.renderGraph();
+            return Promise.all([this.loadStats(), this.loadFacets()]);
+        },
+        async loadStats() {
+            const r = await fetch('/api/metadata/stats?' + this.scopeParam(new URLSearchParams()).toString());
+            if (r.ok) this.stats = await r.json();
+        },
+        async loadFacets() {
+            this.loadingFacets = true;
+            try {
+                const params = new URLSearchParams();
+                if (this.category) params.set('category', this.category);
+                if (this.search.trim()) params.set('search', this.search.trim());
+                this.scopeParam(params);
+                const r = await fetch('/api/metadata/facets?' + params.toString());
+                this.facetGroups = r.ok ? await r.json() : [];
+                // Auto-open the first couple of groups for discoverability.
+                if (Object.keys(this.openGroups).length === 0) {
+                    this.facetGroups.slice(0, 2).forEach(g => this.openGroups[g.key] = true);
+                }
+            } finally {
+                this.loadingFacets = false;
+            }
+        },
+        catLabel(key) {
+            const c = this.categories.find(c => c.key === key);
+            return c ? c.label : key;
+        },
+        toggleGroup(key) { this.openGroups[key] = !this.openGroups[key]; },
+        isGroupOpen(key) { return !!this.openGroups[key]; },
+        isSelected(key, vnorm) {
+            return this.criteria.some(c => c.key === key && c.value_norm === vnorm);
+        },
+        toggleCriterion(grp, v) {
+            const idx = this.criteria.findIndex(c => c.key === grp.key && c.value_norm === v.value_norm);
+            if (idx >= 0) {
+                this.criteria.splice(idx, 1);
+            } else {
+                this.criteria.push({ key: grp.key, label: grp.label, value: v.value, value_norm: v.value_norm });
+            }
+            this.refreshResults();
+        },
+        removeCriterion(i) { this.criteria.splice(i, 1); this.refreshResults(); },
+        clearCriteria() { this.criteria = []; this.results = []; this.renderGraph(); },
+        setMatch(m) { this.match = m; if (this.criteria.length) this.refreshResults(); },
+        async refreshResults() {
+            if (this.criteria.length === 0) { this.results = []; this.renderGraph(); return; }
+            this.loadingResults = true;
+            try {
+                const body = JSON.stringify({
+                    criteria: this.criteria.map(c => ({ key: c.key, value_norm: c.value_norm })),
+                    match: this.match,
+                    tag_id: this.tagId || null,
+                });
+                const r = await fetch('/api/metadata/filter', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+                });
+                this.results = r.ok ? await r.json() : [];
+                // Always refresh graph data so switching List -> Graph is instant
+                // (otherwise the graph is empty until the next criteria change).
+                const g = await fetch('/api/metadata/graph', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+                });
+                this._graphData = g.ok ? await g.json() : { nodes: [], edges: [] };
+                if (this.view === 'graph') this.$nextTick(() => this.renderGraph());
+            } finally {
+                this.loadingResults = false;
+            }
+        },
+        askIda() {
+            if (!this.results.length) return;
+            const ids = this.results.map(d => d.id).join(',');
+            const desc = this.criteria.map(c => c.label + ' = ' + c.value).join(', ');
+            const prompt = 'I have pre-selected ' + this.results.length + ' document(s) filtered by ' + desc + '. ';
+            window.location.href = '/chat?doc_ids=' + encodeURIComponent(ids) + '&prompt=' + encodeURIComponent(prompt);
+        },
+        jobPct() {
+            if (!this.job || !this.job.total) return this.job && this.job.status === 'completed' ? 100 : 0;
+            const done = (this.job.processed || 0) + (this.job.failed || 0) + (this.job.skipped || 0);
+            return Math.min(100, Math.round((done / this.job.total) * 100));
+        },
+        async reprocess(scope) {
+            // scope: 'all' | 'missing' | 'tag' (tag uses the selected KB)
+            let body, label;
+            if (scope === 'tag') {
+                if (!this.tagId) return;
+                body = { tag_ids: [this.tagId], scope: 'all' };
+                label = 'this knowledge base';
+            } else {
+                body = { scope };
+                label = scope === 'all'
+                    ? (this.tagId ? 'this knowledge base' : 'ALL documents')
+                    : (this.tagId ? 'unprocessed documents in this KB' : 'unprocessed documents');
+                // When a KB is selected, "missing"/"all" should still scope to it
+                // — keep the scope so the backend filters unprocessed docs within the KB.
+                if (this.tagId) { body = { tag_ids: [this.tagId], scope }; }
+            }
+            if (!confirm('Re-extract smart metadata for ' + label + '? This runs in the background — you can keep working.')) return;
+            this.reprocessing = true;
+            try {
+                const r = await fetch('/api/metadata/extract-bulk', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                if (!r.ok) { alert('Could not start reprocessing.'); return; }
+                const res = await r.json();
+                if (!res.total) {
+                    alert('Nothing to process for this selection.');
+                    return;
+                }
+                this.job = { job_id: res.job_id, status: 'pending', label: res.label,
+                             total: res.total, processed: 0, failed: 0, skipped: 0, current: null };
+                this.pollJob(res.job_id);
+            } finally {
+                this.reprocessing = false;
+            }
+        },
+        pollJob(jobId) {
+            if (this._poll) clearInterval(this._poll);
+            this._poll = setInterval(async () => {
+                try {
+                    const r = await fetch('/api/metadata/jobs/' + jobId);
+                    if (!r.ok) return;
+                    this.job = await r.json();
+                    if (this.job.status === 'completed' || this.job.status === 'failed') {
+                        clearInterval(this._poll); this._poll = null;
+                        await Promise.all([this.loadStats(), this.loadFacets()]);
+                        if (this.criteria.length) this.refreshResults();
+                    }
+                } catch (e) { /* transient — keep polling */ }
+            }, 1200);
+        },
+        dismissJob() {
+            if (this._poll) { clearInterval(this._poll); this._poll = null; }
+            this.job = null;
+        },
+        renderGraph() {
+            const svgEl = this.$refs.svg;
+            if (!svgEl) return;
+            const data = this._graphData || { nodes: [], edges: [] };
+            const svg = d3.select(svgEl);
+            svg.selectAll('*').remove();
+            if (this._sim) { this._sim.stop(); this._sim = null; }
+            if (!data.nodes.length) return;
+
+            const width = svgEl.clientWidth || 600;
+            const height = svgEl.clientHeight || 400;
+            const g = svg.append('g');
+            svg.call(d3.zoom().scaleExtent([0.2, 4]).on('zoom', (e) => g.attr('transform', e.transform)));
+
+            const links = data.edges.map(e => ({ ...e }));
+            const nodes = data.nodes.map(n => ({ ...n }));
+
+            const link = g.append('g').selectAll('line').data(links).enter()
+                .append('line').attr('class', 'dm-link');
+
+            const node = g.append('g').selectAll('g').data(nodes).enter()
+                .append('g').attr('class', d => d.type === 'document' ? 'node-doc' : 'node-facet')
+                .style('cursor', 'pointer')
+                .call(d3.drag()
+                    .on('start', (e, d) => { if (!e.active) this._sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+                    .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+                    .on('end', (e, d) => { if (!e.active) this._sim.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+            node.append('circle').attr('r', d => d.type === 'document' ? 9 : 13)
+                .attr('stroke', '#fff').attr('stroke-width', 1.5);
+            node.append('text').attr('class', 'dm-node-label').attr('x', 14).attr('y', 4)
+                .text(d => (d.label || '').length > 26 ? d.label.slice(0, 26) + '…' : d.label);
+            node.append('title').text(d => (d.type === 'facet' ? (d.facet_label + ': ') : '') + d.label);
+            node.on('click', (e, d) => { if (d.type === 'document' && d.document_id) window.open('/documents/' + d.document_id, '_blank'); });
+
+            this._sim = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(70))
+                .force('charge', d3.forceManyBody().strength(-180))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collide', d3.forceCollide().radius(22))
+                .on('tick', () => {
+                    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                    node.attr('transform', d => `translate(${d.x},${d.y})`);
+                });
+        },
+    };
+}
+</script>
+{% endblock %}

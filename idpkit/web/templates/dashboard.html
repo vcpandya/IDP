@@ -6,7 +6,36 @@
     <a href="/knowledge-base" class="btn btn-primary"><i class="fas fa-plus"></i> Upload Document</a>
 </div>
 
-<div x-data="dashboard()" x-init="loadDocuments()">
+<div x-data="dashboard()" x-init="loadAll()">
+
+    <!-- First-run "Get started" empty state -->
+    <div x-show="loaded && documents.length === 0 && connectionsCount === 0 && skillsCount === 0"
+         class="dashboard-section" x-cloak>
+        <div class="dashboard-section-header"><i class="fas fa-rocket"></i> Get started</div>
+        <div class="quick-actions-grid">
+            <a href="/knowledge-base" class="feature-tile quick-action">
+                <div class="tile-icon" style="background:#eef2ff;color:#4f46e5">
+                    <i class="fas fa-file-upload"></i>
+                </div>
+                <h4>1. Upload a document</h4>
+                <p>Add your first PDF, DOCX, or other file so IDA has something to work with.</p>
+            </a>
+            <a href="/connections" class="feature-tile quick-action">
+                <div class="tile-icon" style="background:#ecfdf5;color:#059669">
+                    <i class="fas fa-plug"></i>
+                </div>
+                <h4>2. Connect an integration</h4>
+                <p>Hook up Slack, Notion, GitHub, Google or any of the supported apps.</p>
+            </a>
+            <a href="/skills" class="feature-tile quick-action">
+                <div class="tile-icon" style="background:#f3e8ff;color:#7c3aed">
+                    <i class="fas fa-puzzle-piece"></i>
+                </div>
+                <h4>3. Install a skill</h4>
+                <p>Browse the skill library to teach IDA new domain-specific workflows.</p>
+            </a>
+        </div>
+    </div>
 
     <!-- Stats Row -->
     <div class="stats-grid">
@@ -66,6 +95,13 @@
                 </div>
                 <h4>Batch Processing</h4>
                 <p>Process multiple documents at once</p>
+            </a>
+            <a href="/esign" class="feature-tile quick-action">
+                <div class="tile-icon" style="background: #ecfdf5; color: #059669">
+                    <i class="fas fa-file-signature"></i>
+                </div>
+                <h4>E-Sign</h4>
+                <p>Send documents for electronic signature with audit trail</p>
             </a>
         </div>
     </div>
@@ -151,17 +187,17 @@
                 <h4>IDA Chat</h4>
                 <p>Conversational AI with access to all tools and documents</p>
             </a>
-            <a href="/chat" class="feature-tile">
+            <a href="/graph" class="feature-tile">
                 <div class="tile-icon" style="background: #ecfdf5; color: #059669"><i class="fas fa-project-diagram"></i></div>
                 <h4>Knowledge Graph</h4>
                 <p>Explore entities and relationships across documents</p>
             </a>
-            <a href="/chat" class="feature-tile">
+            <a href="/chat?prompt=Search%20across%20all%20my%20documents%20for%20mentions%20of%20" class="feature-tile">
                 <div class="tile-icon" style="background: #eff6ff; color: #2563eb"><i class="fas fa-search"></i></div>
                 <h4>Cross-Document Search</h4>
                 <p>Find topics and entities mentioned across all documents</p>
             </a>
-            <a href="/chat" class="feature-tile">
+            <a href="/chat?prompt=Discover%20and%20list%20the%20key%20entities%20(people%2C%20organizations%2C%20concepts)%20across%20my%20documents" class="feature-tile">
                 <div class="tile-icon" style="background: #ecfeff; color: #0891b2"><i class="fas fa-sitemap"></i></div>
                 <h4>Entity Discovery</h4>
                 <p>Discover and track people, organizations, and key concepts</p>
@@ -173,7 +209,7 @@
     <div class="dashboard-section">
         <div class="dashboard-section-header"><i class="fas fa-file-export"></i> Generation & Processing</div>
         <div class="feature-grid">
-            <a href="/chat" class="feature-tile">
+            <a href="/chat?prompt=Generate%20a%20structured%20report%20from%20my%20document%20covering%20the%20key%20findings%20and%20conclusions" class="feature-tile">
                 <div class="tile-icon" style="background: #eef2ff; color: #4f46e5"><i class="fas fa-file-pdf"></i></div>
                 <h4>Report Generation</h4>
                 <p>Generate structured reports in Markdown or DOCX format</p>
@@ -244,12 +280,42 @@
 function dashboard() {
     return {
         documents: [],
+        connectionsCount: 0,
+        skillsCount: 0,
+        loaded: false,
+        async loadAll() {
+            await Promise.all([
+                this.loadDocuments(),
+                this.loadConnectionsCount(),
+                this.loadSkillsCount(),
+            ]);
+            this.loaded = true;
+        },
         async loadDocuments() {
             const res = await fetch('/api/documents/?limit=50');
             if (res.ok) {
                 const data = await res.json();
                 this.documents = data.items || data.documents || [];
             }
+        },
+        async loadConnectionsCount() {
+            try {
+                const res = await fetch('/api/connectors/connections');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.connectionsCount = (data.connections || []).length;
+                }
+            } catch (e) { /* keep zero */ }
+        },
+        async loadSkillsCount() {
+            try {
+                const res = await fetch('/api/skills/');
+                if (res.ok) {
+                    const data = await res.json();
+                    const list = Array.isArray(data) ? data : (data.skills || data.items || []);
+                    this.skillsCount = list.length;
+                }
+            } catch (e) { /* keep zero */ }
         },
         async indexDoc(docId) {
             await fetch(`/api/indexing/documents/${docId}/index`, { method: 'POST' });

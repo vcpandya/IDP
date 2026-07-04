@@ -4,6 +4,7 @@ import logging
 
 from sqlalchemy import select, and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from idpkit.db.models import Document
 from .models import Entity, EntityMention, GraphEdge
@@ -20,20 +21,27 @@ async def search_entities(
     name: str | None = None,
     entity_type: str | None = None,
     limit: int = _DEFAULT_LIMIT,
-) -> list[Entity]:
-    """Search entities by name (partial match) and/or type."""
-    stmt = select(Entity)
+) -> list[dict]:
+    """Search entities by name (partial match) and/or type, with mention counts."""
+    stmt = (
+        select(Entity, func.count(EntityMention.id).label("mention_count"))
+        .outerjoin(EntityMention, Entity.id == EntityMention.entity_id)
+        .group_by(Entity.id)
+    )
 
     if name:
-        # Truncate search term to prevent oversized queries
         search_term = name[:200].lower()
         stmt = stmt.where(func.lower(Entity.canonical_name).contains(search_term))
     if entity_type:
         stmt = stmt.where(Entity.entity_type == entity_type.upper()[:50])
 
-    stmt = stmt.order_by(Entity.document_count.desc()).limit(min(limit, 200))
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    stmt = stmt.order_by(Entity.document_count.desc()).limit(limit)
+    rows = (await db.execute(stmt)).all()
+    results = []
+    for entity, mc in rows:
+        entity.mention_count = mc
+        results.append(entity)
+    return results
 
 
 async def get_entity_detail(
@@ -48,14 +56,32 @@ async def get_entity_detail(
     if not entity:
         return None
 
-    mentions = (await db.execute(
-        select(EntityMention)
+    mention_rows = (await db.execute(
+        select(EntityMention, Document.filename, Document.format, Document.source_url)
+        .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(_DEFAULT_LIMIT)
-    )).scalars().all()
+    )).all()
 
-    edges = (await db.execute(
-        select(GraphEdge)
+    enriched_mentions = []
+    for mention, doc_filename, doc_format, doc_source_url in mention_rows:
+        mention.document_filename = doc_filename
+        mention.document_format = doc_format
+        mention.source_url = doc_source_url
+        enriched_mentions.append(mention)
+
+    SourceEntity = aliased(Entity)
+    TargetEntity = aliased(Entity)
+    edge_rows = (await db.execute(
+        select(
+            GraphEdge,
+            SourceEntity.canonical_name.label("source_entity_name"),
+            SourceEntity.entity_type.label("source_entity_type"),
+            TargetEntity.canonical_name.label("target_entity_name"),
+            TargetEntity.entity_type.label("target_entity_type"),
+        )
+        .outerjoin(SourceEntity, GraphEdge.source_entity_id == SourceEntity.id)
+        .outerjoin(TargetEntity, GraphEdge.target_entity_id == TargetEntity.id)
         .where(
             or_(
                 GraphEdge.source_entity_id == entity_id,
@@ -63,9 +89,17 @@ async def get_entity_detail(
             )
         )
         .limit(_DEFAULT_LIMIT)
-    )).scalars().all()
+    )).all()
 
-    return {"entity": entity, "mentions": list(mentions), "edges": list(edges)}
+    enriched_edges = []
+    for edge, src_name, src_type, tgt_name, tgt_type in edge_rows:
+        edge.source_entity_name = src_name
+        edge.source_entity_type = src_type
+        edge.target_entity_name = tgt_name
+        edge.target_entity_type = tgt_type
+        enriched_edges.append(edge)
+
+    return {"entity": entity, "mentions": enriched_mentions, "edges": enriched_edges}
 
 
 async def get_entity_mentions(
@@ -74,12 +108,20 @@ async def get_entity_mentions(
     limit: int = _DEFAULT_LIMIT,
 ) -> list[EntityMention]:
     """Get all tree nodes where an entity is mentioned."""
-    result = await db.execute(
-        select(EntityMention)
+    rows = (await db.execute(
+        select(EntityMention, Document.filename, Document.format, Document.source_url)
+        .join(Document, EntityMention.document_id == Document.id)
         .where(EntityMention.entity_id == entity_id)
         .limit(min(limit, 200))
-    )
-    return list(result.scalars().all())
+    )).all()
+
+    enriched = []
+    for mention, doc_filename, doc_format, doc_source_url in rows:
+        mention.document_filename = doc_filename
+        mention.document_format = doc_format
+        mention.source_url = doc_source_url
+        enriched.append(mention)
+    return enriched
 
 
 async def get_entity_neighbors(
@@ -92,8 +134,6 @@ async def get_entity_neighbors(
 
     Returns list of {"entity": Entity, "edge": GraphEdge} dicts.
     """
-    capped_limit = min(limit, 200)
-
     # Outgoing edges
     stmt_out = select(GraphEdge, Entity).join(
         Entity, GraphEdge.target_entity_id == Entity.id
@@ -108,8 +148,8 @@ async def get_entity_neighbors(
         stmt_out = stmt_out.where(GraphEdge.relation_type == relation_type)
         stmt_in = stmt_in.where(GraphEdge.relation_type == relation_type)
 
-    stmt_out = stmt_out.limit(capped_limit)
-    stmt_in = stmt_in.limit(capped_limit)
+    stmt_out = stmt_out.limit(limit)
+    stmt_in = stmt_in.limit(limit)
 
     out_results = (await db.execute(stmt_out)).all()
     in_results = (await db.execute(stmt_in)).all()
@@ -127,32 +167,36 @@ async def get_entity_neighbors(
             neighbors.append({"entity": entity, "edge": edge})
             seen_ids.add(entity.id)
 
-    return neighbors[:capped_limit]
+    return neighbors[:limit]
 
 
 async def get_document_entities(
     db: AsyncSession,
     document_id: str,
-    limit: int = _DEFAULT_LIMIT,
+    limit: int = 1000,
 ) -> list[Entity]:
-    """Get all entities found in a specific document."""
+    """Get all entities found in a specific document, with mention counts."""
     stmt = (
-        select(Entity)
+        select(Entity, func.count(EntityMention.id).label("mention_count"))
         .join(EntityMention, Entity.id == EntityMention.entity_id)
         .where(EntityMention.document_id == document_id)
-        .distinct()
+        .group_by(Entity.id)
         .order_by(Entity.canonical_name)
-        .limit(min(limit, 500))
+        .limit(limit)
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+    rows = (await db.execute(stmt)).all()
+    results = []
+    for entity, mc in rows:
+        entity.mention_count = mc
+        results.append(entity)
+    return results
 
 
 async def get_document_edges(
     db: AsyncSession,
     document_id: str,
     scope: str | None = None,
-    limit: int = 200,
+    limit: int = 2000,
 ) -> list[GraphEdge]:
     """Get all edges involving a specific document."""
     stmt = select(GraphEdge).where(
@@ -164,7 +208,7 @@ async def get_document_edges(
     if scope:
         stmt = stmt.where(GraphEdge.scope == scope)
 
-    stmt = stmt.limit(min(limit, 500))
+    stmt = stmt.limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -388,11 +432,11 @@ async def get_document_graph_summary(
 async def get_visualization_data(
     db: AsyncSession,
     document_id: str,
-    limit: int = 200,
+    limit: int = 1000,
 ) -> dict:
     """Generate nodes+edges JSON for D3/visualization of a document's graph."""
     entities = await get_document_entities(db, document_id, limit=limit)
-    edges = await get_document_edges(db, document_id, limit=limit * 2)
+    edges = await get_document_edges(db, document_id, limit=limit * 3)
 
     vis_nodes = []
     entity_ids = set()
@@ -404,6 +448,66 @@ async def get_visualization_data(
             "document_id": e.first_document_id,
         })
         entity_ids.add(e.id)
+
+    vis_edges = []
+    for edge in edges:
+        if edge.source_entity_id in entity_ids and edge.target_entity_id in entity_ids:
+            vis_edges.append({
+                "source": edge.source_entity_id,
+                "target": edge.target_entity_id,
+                "relation_type": edge.relation_type,
+                "weight": edge.weight or 1,
+            })
+
+    return {"nodes": vis_nodes, "edges": vis_edges}
+
+
+async def get_multi_doc_visualization_data(
+    db: AsyncSession,
+    document_ids: list[str],
+    limit: int = 1000,
+) -> dict:
+    """Generate nodes+edges JSON for D3 visualization across multiple documents."""
+    if not document_ids:
+        return {"nodes": [], "edges": []}
+
+    distinct_entity_ids_subq = (
+        select(EntityMention.entity_id)
+        .where(EntityMention.document_id.in_(document_ids))
+        .distinct()
+        .limit(limit)
+        .subquery()
+    )
+    stmt_entities = (
+        select(Entity)
+        .where(Entity.id.in_(select(distinct_entity_ids_subq)))
+    )
+    entities = list((await db.execute(stmt_entities)).scalars().all())
+
+    entity_ids = {e.id for e in entities}
+    if not entity_ids:
+        return {"nodes": [], "edges": []}
+
+    stmt_edges = (
+        select(GraphEdge)
+        .where(
+            or_(
+                GraphEdge.source_document_id.in_(document_ids),
+                GraphEdge.target_document_id.in_(document_ids),
+            )
+        )
+        .limit(limit * 3)
+    )
+    edges = list((await db.execute(stmt_edges)).scalars().all())
+
+    vis_nodes = []
+    for e in entities:
+        vis_nodes.append({
+            "id": e.id,
+            "label": e.canonical_name,
+            "type": e.entity_type,
+            "document_id": e.first_document_id,
+        })
 
     vis_edges = []
     for edge in edges:

@@ -171,6 +171,65 @@ async def _fetch_openrouter_models() -> list[dict]:
         return []
 
 
+async def _fetch_anthropic_models() -> list[dict]:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                },
+            )
+            if resp.status_code != 200:
+                logger.warning("Anthropic models API returned %s", resp.status_code)
+                return []
+            data = resp.json()
+            models = []
+            for m in data.get("data", []):
+                mid = m.get("id", "")
+                display = m.get("display_name", mid)
+                models.append({"id": mid, "name": display, "provider": "anthropic"})
+            models.sort(key=lambda x: x["name"])
+            return models
+    except Exception as exc:
+        logger.warning("Failed to fetch Anthropic models: %s", exc)
+        return []
+
+
+async def _fetch_google_models() -> list[dict]:
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                params={"key": api_key},
+            )
+            if resp.status_code != 200:
+                logger.warning("Google models API returned %s", resp.status_code)
+                return []
+            data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                display = m.get("displayName", name)
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" not in methods:
+                    continue
+                model_id = f"gemini/{name.replace('models/', '')}" if name.startswith("models/") else f"gemini/{name}"
+                models.append({"id": model_id, "name": display, "provider": "google"})
+            models.sort(key=lambda x: x["name"])
+            return models
+    except Exception as exc:
+        logger.warning("Failed to fetch Google models: %s", exc)
+        return []
+
+
 async def _fetch_ollama_models() -> list[dict]:
     base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     try:
@@ -202,7 +261,6 @@ async def list_models(
     if provider == "openai":
         models = await _fetch_openai_models()
         if not models:
-            # Fallback curated list
             models = [
                 {"id": "gpt-4o", "name": "gpt-4o", "provider": "openai"},
                 {"id": "gpt-4o-mini", "name": "gpt-4o-mini", "provider": "openai"},
@@ -212,9 +270,13 @@ async def list_models(
                 {"id": "o4-mini", "name": "o4-mini", "provider": "openai"},
             ]
     elif provider == "anthropic":
-        models = CURATED_MODELS["anthropic"]
+        models = await _fetch_anthropic_models()
+        if not models:
+            models = CURATED_MODELS["anthropic"]
     elif provider == "google":
-        models = CURATED_MODELS["google"]
+        models = await _fetch_google_models()
+        if not models:
+            models = CURATED_MODELS["google"]
     elif provider == "openrouter":
         models = await _fetch_openrouter_models()
         if not models:
@@ -231,6 +293,44 @@ async def list_models(
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
     return models
+
+
+# ---------------------------------------------------------------------------
+# Default model preference
+# ---------------------------------------------------------------------------
+
+class DefaultModelRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.get("/default-model")
+async def get_default_model(
+    user: User = Depends(get_current_user),
+):
+    return {
+        "provider": user.default_provider,
+        "model": user.default_model,
+    }
+
+
+@router.post("/default-model")
+async def set_default_model(
+    body: DefaultModelRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    db_user.default_provider = body.provider
+    db_user.default_model = body.model
+    await db.commit()
+    return {
+        "provider": db_user.default_provider,
+        "model": db_user.default_model,
+    }
 
 
 # ---------------------------------------------------------------------------
