@@ -1,30 +1,51 @@
-openai==1.101.0
+# Core LLM / tokenization
+openai>=2.8.0
+litellm>=1.83.10
+tiktoken>=0.11.0
+
+# PDF / document parsing
 pymupdf==1.26.4
-PyPDF2==3.0.1
-python-dotenv==1.1.0
-tiktoken==0.11.0
-pyyaml==6.0.2
-aiofiles
+PyPDF2==3.0.1          # used by idpkit/engine/utils.py
+pypdf>=6.0.0           # used by idpkit/esign (pdf_utils, merge)
+python-docx
+python-pptx
+openpyxl
+beautifulsoup4
+
+# Web framework
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+itsdangerous
+httpx
+pydantic
+slowapi                # rate limiting
+
+# Auth
+passlib[bcrypt]
+bcrypt>=4.0.0,<4.1
+python-jose[cryptography]   # used by idpkit/api/deps.py
+PyJWT>=2.13.0
+
+# Data / storage
+sqlalchemy[asyncio]
 aiosqlite
 alembic
-beautifulsoup4
-fastapi
-httpx
-itsdangerous
-jinja2
-litellm
-openai
-openpyxl
-passlib[bcrypt]
-pydantic
-pymupdf
-PyPDF2
-python-docx
-python-dotenv
-python-jose[cryptography]
-python-multipart
-python-pptx
-pyyaml
-sqlalchemy[asyncio]
-tiktoken
-uvicorn[standard]
+aiofiles
+redis>=5.0.0           # optional: caching / rate-limit backend
+
+# Analytics
+networkx
+
+# Integrations / feature deps
+google-api-python-client
+google-genai
+youtube-transcript-api
+qrcode[pil]
+e2b
+e2b-code-interpreter
+
+# Config
+python-dotenv>=1.2.0
+pyyaml==6.0.2

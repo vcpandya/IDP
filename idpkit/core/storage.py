@@ -1,26 +1,61 @@
-"""IDP Kit storage backend interface and implementations."""
+"""IDP Kit storage backend interface and implementations.
 
-import os
+Self-hosted build: local filesystem only. The Replit-hosted GCS/object-storage
+backend lives on the `replit` branch.
+"""
+
+import logging
 import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import BinaryIO, Optional
+from typing import BinaryIO, Iterator, Optional
 
 from .exceptions import StorageError
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(ABC):
     """Abstract interface for file storage operations."""
+
+    @property
+    def supports_signed_urls(self) -> bool:
+        return False
+
+    def get_signed_upload_url(self, key: str, content_type: str = "application/octet-stream", ttl_sec: int = 900) -> Optional[str]:
+        return None
 
     @abstractmethod
     def save(self, key: str, data: bytes | BinaryIO) -> str:
         """Save data and return the storage path/key."""
         ...
 
+    async def put(self, key: str, data: bytes | BinaryIO) -> str:
+        """Async alias for save()."""
+        return self.save(key, data)
+
     @abstractmethod
     def load(self, key: str) -> bytes:
         """Load data by key."""
         ...
+
+    def iter_bytes(self, key: str, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        """Yield the object's bytes in chunks without buffering the entire file.
+
+        Default implementation falls back to ``load(key)`` so subclasses that
+        cannot stream remain functional. Override for true streaming.
+        """
+        data = self.load(key)
+        for offset in range(0, len(data), chunk_size):
+            yield data[offset:offset + chunk_size]
+
+    def peek_bytes(self, key: str, n: int = 512) -> bytes:
+        """Return up to ``n`` leading bytes without poisoning any download
+        cache. The default implementation uses ``load(key)`` and slices, which
+        is safe for in-memory backends; backends that lazily cache to disk
+        MUST override this so a partial fetch does not leave a truncated cache
+        file behind that subsequent reads would serve."""
+        return self.load(key)[:n]
 
     @abstractmethod
     def delete(self, key: str) -> None:
@@ -71,6 +106,24 @@ class LocalStorageBackend(StorageBackend):
         if not path.exists():
             raise StorageError(f"File not found: {key}")
         return path.read_bytes()
+
+    def iter_bytes(self, key: str, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+        path = self._resolve(key)
+        if not path.exists():
+            raise StorageError(f"File not found: {key}")
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+
+    def peek_bytes(self, key: str, n: int = 512) -> bytes:
+        path = self._resolve(key)
+        if not path.exists():
+            raise StorageError(f"File not found: {key}")
+        with open(path, "rb") as f:
+            return f.read(n)
 
     def delete(self, key: str) -> None:
         path = self._resolve(key)

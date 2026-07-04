@@ -20,7 +20,7 @@ from slowapi.util import get_remote_address
 
 from idpkit.db.session import get_db
 from idpkit.db.models import User, SystemSetting, UserRole
-from idpkit.core.storage import LocalStorageBackend, GCSStorageBackend, StorageBackend
+from idpkit.core.storage import LocalStorageBackend, StorageBackend
 from idpkit.core.llm import LLMClient, get_default_client
 
 DEFAULT_RATE_LIMITS = {
@@ -208,13 +208,9 @@ def get_storage() -> StorageBackend:
     if _storage_instance is not None:
         return _storage_instance
 
-    bucket_id = os.getenv("DEFAULT_OBJECT_STORAGE_BUCKET_ID")
-    private_dir = os.getenv("PRIVATE_OBJECT_DIR")
-    if bucket_id and private_dir:
-        _storage_instance = GCSStorageBackend(bucket_id=bucket_id, private_dir=private_dir)
-    else:
-        path = os.getenv("IDP_STORAGE_PATH", "./storage")
-        _storage_instance = LocalStorageBackend(path)
+    # Self-hosted: always local filesystem storage (GCS/object-storage lives on the `replit` branch)
+    path = os.getenv("IDP_STORAGE_PATH", "./storage")
+    _storage_instance = LocalStorageBackend(path)
     return _storage_instance
 
 

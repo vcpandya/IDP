@@ -6,7 +6,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+# Self-hosted uses SQLite; its dialect supports the same on_conflict_do_nothing() API.
+from sqlalchemy.dialects.sqlite import insert as _dialect_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -343,7 +344,7 @@ async def merge_tags(
         ]
         if src_doc_ids:
             res = await db.execute(
-                pg_insert(document_tags)
+                _dialect_insert(document_tags)
                 .values(
                     [
                         {"document_id": did, "tag_id": target.id}
@@ -370,7 +371,7 @@ async def merge_tags(
         ]
         if src_conv_ids:
             await db.execute(
-                pg_insert(conversation_tags)
+                _dialect_insert(conversation_tags)
                 .values(
                     [
                         {"conversation_id": cid, "tag_id": target.id}
